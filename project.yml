@@ -9,12 +9,11 @@ settings:
   base:
     SWIFT_VERSION: "5.0"
     MACOSX_DEPLOYMENT_TARGET: "14.0"
-    CODE_SIGN_STYLE: Automatic
-    # Ad-hoc sign by default so the project builds without a configured team.
-    # Override to your team in Xcode for distribution.
-    DEVELOPMENT_TEAM: ""
-    CODE_SIGN_IDENTITY: "-"
-    ENABLE_HARDENED_RUNTIME: NO
+    CODE_SIGN_STYLE: Manual
+    DEVELOPMENT_TEAM: Z84U66EYPZ
+    CODE_SIGN_IDENTITY: "Developer ID Application"
+    OTHER_CODE_SIGN_FLAGS: "--timestamp --options=runtime"
+    ENABLE_HARDENED_RUNTIME: YES
 
 targets:
   InkIt:
@@ -48,4 +47,4 @@ targets:
         # No App Sandbox: synthesized Cmd+V via Accessibility requires an
         # unsandboxed binary.
         ENABLE_APP_SANDBOX: NO
-        # No entitlements file — sandbox off, hardened runtime off for local dev.
+        CODE_SIGN_ENTITLEMENTS: InkIt/InkIt.entitlements

@@ -47,13 +47,6 @@ struct InkItApp: App {
             CommandGroup(replacing: .windowList) {}
             CommandGroup(replacing: .help) {}
         }
-
-        Settings {
-            SettingsView()
-                .environmentObject(coordinator)
-                .environmentObject(settings)
-                .frame(width: 520, height: 620)
-        }
     }
 }
 
@@ -75,6 +68,7 @@ struct MainWindowView: View {
     @EnvironmentObject var settings: SettingsStore
     @EnvironmentObject var history: TranscriptHistoryStore
     @State private var copiedID: UUID?
+    @State private var showingSettings = false
 
     private struct TranscriptGroup: Identifiable {
         let id: Date
@@ -113,7 +107,9 @@ struct MainWindowView: View {
         VStack(spacing: 0) {
             header
             Divider()
-            if history.entries.isEmpty {
+            if showingSettings {
+                SettingsView()
+            } else if history.entries.isEmpty {
                 emptyState
             } else {
                 transcriptList
@@ -124,17 +120,46 @@ struct MainWindowView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            Circle()
-                .fill(coordinator.statusColor)
-                .frame(width: 8, height: 8)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("InkIt")
+            if showingSettings {
+                Button {
+                    withAnimation(.easeOut(duration: 0.15)) { showingSettings = false }
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Back")
+                Text("Settings")
                     .font(.headline)
-                Text("Hold \(settings.hotkeyDisplayString) to dictate · \(coordinator.statusText)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            } else {
+                Circle()
+                    .fill(coordinator.statusColor)
+                    .frame(width: 8, height: 8)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("InkIt")
+                        .font(.headline)
+                    Text("Hold \(settings.hotkeyDisplayString) to dictate · \(coordinator.statusText)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             Spacer()
+            if !showingSettings {
+                Button {
+                    withAnimation(.easeOut(duration: 0.15)) { showingSettings = true }
+                } label: {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 15, weight: .regular))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Settings")
+            }
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 14)

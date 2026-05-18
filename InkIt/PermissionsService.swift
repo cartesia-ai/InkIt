@@ -60,13 +60,52 @@ final class PermissionsService: ObservableObject {
         if ax != hasAccessibility { hasAccessibility = ax }
     }
 
-    func requestMicrophone(_ completion: @escaping (Bool) -> Void) {
-        AVCaptureDevice.requestAccess(for: .audio) { granted in
-            DispatchQueue.main.async {
-                self.refresh()
-                completion(granted)
-            }
+    var microphoneStatusString: String {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .notDetermined: return "Not determined"
+        case .denied:        return "Denied"
+        case .restricted:    return "Restricted"
+        case .authorized:    return "Authorized"
+        @unknown default:    return "Unknown"
         }
+    }
+
+    func requestMicrophone(_ completion: @escaping (Bool) -> Void) {
+        let status = AVCaptureDevice.authorizationStatus(for: .audio)
+        switch status {
+        case .denied, .restricted:
+            openMicrophoneSettings()
+            completion(false)
+        case .authorized:
+            refresh()
+            completion(true)
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { granted in
+                DispatchQueue.main.async {
+                    self.refresh()
+                    completion(granted)
+                }
+            }
+            // Also kick the audio engine — AVCaptureDevice.requestAccess
+            // doesn't always surface a prompt on its own with hardened runtime;
+            // touching AVAudioEngine.start forces TCC to evaluate.
+            DispatchQueue.global(qos: .userInitiated).async {
+                let engine = AVAudioEngine()
+                _ = engine.inputNode.inputFormat(forBus: 0)
+                try? engine.start()
+                engine.stop()
+            }
+        @unknown default:
+            openMicrophoneSettings()
+            completion(false)
+        }
+    }
+
+    private func openMicrophoneSettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") else {
+            return
+        }
+        NSWorkspace.shared.open(url)
     }
 
     var appIdentityDescription: String {

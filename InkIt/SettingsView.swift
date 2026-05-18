@@ -31,6 +31,7 @@ struct SettingsView: View {
                 Text("Hold the hotkey to dictate. Release to paste.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Toggle("Play sound on press and release", isOn: $settings.playFeedbackSounds)
                 if case .fn = settings.hotkey {
                     Text("Fn caveat: macOS reserves 🌐 by default for dictation/emoji. " +
                          "Set System Settings → Keyboard → Press 🌐 key to → Do Nothing.")
@@ -43,6 +44,9 @@ struct SettingsView: View {
                 PermissionRow(label: "Microphone", granted: permissions.hasMicrophone) {
                     permissions.requestMicrophone { _ in }
                 }
+                Text("Status: \(permissions.microphoneStatusString)")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
                 PermissionRow(label: "Accessibility", granted: permissions.hasAccessibility) {
                     permissions.requestAccessibility()
                 }

@@ -202,6 +202,7 @@ final class AppCoordinator: ObservableObject {
         state = .recording
         lastError = nil
         liveTranscript = ""
+        if settings.playFeedbackSounds { FeedbackSoundPlayer.shared.playStart() }
         let frontmostApp = NSWorkspace.shared.frontmostApplication
         let ownBundleID = Bundle.main.bundleIdentifier
         pasteTargetApp = {
@@ -266,6 +267,7 @@ final class AppCoordinator: ObservableObject {
     func stopDictation() {
         guard case .recording = state else { return }
         state = .finalizing
+        if settings.playFeedbackSounds { FeedbackSoundPlayer.shared.playStop() }
         audio.stop()
         client?.finalizeAndClose()
     }
