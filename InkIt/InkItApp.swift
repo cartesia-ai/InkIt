@@ -255,26 +255,23 @@ private struct CopyTranscriptButton: View {
         Button(action: action) {
             ZStack {
                 Circle()
-                    .fill(copied ? Color.green.opacity(0.18) : Color.accentColor.opacity(hovering ? 0.12 : 0))
-                    .frame(width: 34, height: 34)
-                    .scaleEffect(hovering || copied ? 1 : 0.72)
+                    .fill(copied ? Color.green.opacity(0.15) : Color.primary.opacity(hovering ? 0.06 : 0))
+                    .frame(width: 24, height: 24)
 
                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                    .font(.system(size: 16, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(copied ? .green : .secondary)
-                    .scaleEffect(copied ? 1.08 : (hovering ? 1.12 : 1))
-                    .rotationEffect(.degrees(hovering && !copied ? -5 : 0))
             }
-            .frame(width: 34, height: 34)
+            .frame(width: 24, height: 24)
             .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .help(copied ? "Copied" : "Copy")
         .onHover { isHovering in
-            withAnimation(.spring(response: 0.22, dampingFraction: 0.62)) {
+            withAnimation(.easeOut(duration: 0.12)) {
                 hovering = isHovering
             }
         }
-        .animation(.spring(response: 0.24, dampingFraction: 0.68), value: copied)
+        .animation(.easeOut(duration: 0.15), value: copied)
     }
 }

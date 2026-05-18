@@ -18,7 +18,7 @@ final class NotchHUDController: NSObject {
     private var dragStartPosition: Double?
 
     private static let panelSize = NSSize(width: 96, height: 24)
-    fileprivate static let transcriptPanelSize = NSSize(width: 320, height: 150)
+    fileprivate static let transcriptPanelSize = NSSize(width: 320, height: 300)
 
     init(coordinator: AppCoordinator, history: TranscriptHistoryStore) {
         self.coordinator = coordinator
@@ -67,7 +67,7 @@ final class NotchHUDController: NSObject {
                 self?.drag(translationX: translation)
             },
             onDragEnded: { [weak self] in
-                self?.dragStartPosition = nil
+                self?.commitDrag()
             }
         )
             .environmentObject(coordinator)
@@ -85,14 +85,10 @@ final class NotchHUDController: NSObject {
         guard let screen = NSScreen.main else { return }
         let size = panel.frame.size
         let x = xOrigin(for: settings.notchHorizontalPosition, on: screen, panelWidth: size.width)
-        // On notched Macs, the physical notch occupies the top ~32pt of
-        // screen.frame and isn't actual display pixels — so a panel drawn
-        // up there is invisible. Position the pill so its top edge sits at
-        // the bottom of the notch (or just below the menu bar on a
-        // non-notched display), making it appear to hang from the notch.
-        let topInset = max(screen.safeAreaInsets.top,
-                           screen.frame.maxY - screen.visibleFrame.maxY)
-        let y = screen.frame.maxY - topInset - size.height
+        // Top of pill flush with top of screen — same vertical strip as the
+        // menu bar. On notched Macs the user can drag horizontally to avoid
+        // the camera notch.
+        let y = screen.frame.maxY - size.height
         panel.setFrameOrigin(NSPoint(x: x, y: y))
         if transcriptPanel?.isVisible == true {
             positionTranscriptPanel()
@@ -121,7 +117,21 @@ final class NotchHUDController: NSObject {
         let start = dragStartPosition ?? settings.notchHorizontalPosition
         let startX = xOrigin(for: start, on: screen, panelWidth: panel.frame.width)
         let nextX = startX + translationX
-        settings.notchHorizontalPosition = normalizedPosition(for: nextX, on: screen, panelWidth: panel.frame.width)
+        let clampedX = min(max(nextX, screen.frame.minX + 8),
+                           screen.frame.maxX - panel.frame.width - 8)
+        let y = screen.frame.maxY - panel.frame.height
+        panel.setFrameOrigin(NSPoint(x: clampedX, y: y))
+    }
+
+    private func commitDrag() {
+        defer { dragStartPosition = nil }
+        guard let panel, let screen = panel.screen ?? NSScreen.main else { return }
+        let finalPosition = normalizedPosition(for: panel.frame.origin.x,
+                                               on: screen,
+                                               panelWidth: panel.frame.width)
+        if settings.notchHorizontalPosition != finalPosition {
+            settings.notchHorizontalPosition = finalPosition
+        }
     }
 
     private func toggleTranscriptPanel() {
@@ -331,69 +341,80 @@ private struct HUDWaveform: View {
 
 private struct LatestTranscriptPanelView: View {
     @EnvironmentObject var history: TranscriptHistoryStore
-    @State private var copied = false
-
-    private var latest: TranscriptHistoryStore.Entry? {
-        history.entries.first
-    }
+    @State private var copiedID: TranscriptHistoryStore.Entry.ID?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Recent Transcript")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button {
-                    copyLatest()
-                } label: {
-                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                        .font(.system(size: 13, weight: .medium))
-                        .frame(width: 26, height: 24)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(copied ? .green : .secondary)
-                .disabled(latest == nil)
-                .help(copied ? "Copied" : "Copy")
-            }
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Transcripts")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.6))
+                .padding(.horizontal, 14)
+                .padding(.top, 12)
+                .padding(.bottom, 8)
 
-            if let latest {
-                ScrollView {
-                    Text(latest.text)
-                        .font(.system(size: 13))
-                        .foregroundStyle(.primary)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(maxHeight: .infinity)
-            } else {
+            if history.entries.isEmpty {
                 Text("No transcripts yet")
                     .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.white.opacity(0.5))
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 4) {
+                        ForEach(history.entries) { entry in
+                            transcriptRow(entry)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 10)
+                }
             }
         }
-        .padding(14)
         .frame(width: NotchHUDController.transcriptPanelSize.width, height: NotchHUDController.transcriptPanelSize.height)
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color(NSColor.windowBackgroundColor))
-                .shadow(color: .black.opacity(0.22), radius: 14, y: 7)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.black)
+                .shadow(color: .black.opacity(0.4), radius: 16, y: 8)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(.white.opacity(0.12), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(.white.opacity(0.08), lineWidth: 0.5)
         )
     }
 
-    private func copyLatest() {
-        guard let latest else { return }
+    private func transcriptRow(_ entry: TranscriptHistoryStore.Entry) -> some View {
+        let isCopied = copiedID == entry.id
+        return HStack(alignment: .top, spacing: 8) {
+            Text(entry.text)
+                .font(.system(size: 12))
+                .foregroundStyle(.white.opacity(0.92))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                copy(entry)
+            } label: {
+                Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(isCopied ? .green : .white.opacity(0.55))
+                    .frame(width: 20, height: 20)
+            }
+            .buttonStyle(.plain)
+            .help(isCopied ? "Copied" : "Copy")
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(.white.opacity(0.04))
+        )
+    }
+
+    private func copy(_ entry: TranscriptHistoryStore.Entry) {
         let pb = NSPasteboard.general
         pb.declareTypes([.string], owner: nil)
-        pb.setString(latest.text, forType: .string)
-        copied = true
+        pb.setString(entry.text, forType: .string)
+        copiedID = entry.id
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-            copied = false
+            if copiedID == entry.id { copiedID = nil }
         }
     }
 }

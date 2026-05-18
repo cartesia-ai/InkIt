@@ -34,97 +34,95 @@ func drawIcon(size: CGFloat) -> NSImage {
     let outerRadius = s(228)
     let outer = NSBezierPath(roundedRect: rect.insetBy(dx: s(24), dy: s(24)), xRadius: outerRadius, yRadius: outerRadius)
     NSGradient(colors: [
-        NSColor(calibratedRed: 0.055, green: 0.060, blue: 0.075, alpha: 1),
-        NSColor(calibratedRed: 0.105, green: 0.095, blue: 0.115, alpha: 1),
-        NSColor(calibratedRed: 0.018, green: 0.024, blue: 0.038, alpha: 1),
-    ])?.draw(in: outer, angle: 45)
+        NSColor(calibratedRed: 1.000, green: 0.976, blue: 0.918, alpha: 1),
+        NSColor(calibratedRed: 0.965, green: 0.925, blue: 0.835, alpha: 1),
+        NSColor(calibratedRed: 0.920, green: 0.855, blue: 0.725, alpha: 1),
+    ])?.draw(in: outer, angle: -35)
 
-    context.saveGState()
-    outer.addClip()
-
-    let glow = NSBezierPath(ovalIn: CGRect(x: s(520), y: s(555), width: s(410), height: s(330)))
-    NSGradient(colors: [
-        NSColor(calibratedRed: 0.440, green: 0.400, blue: 0.500, alpha: 0.30),
-        NSColor(calibratedRed: 0.440, green: 0.400, blue: 0.500, alpha: 0.00),
-    ])?.draw(in: glow, relativeCenterPosition: NSPoint(x: 0.18, y: 0.12))
-
-    let warmGlow = NSBezierPath(ovalIn: CGRect(x: s(-70), y: s(-75), width: s(500), height: s(420)))
-    NSGradient(colors: [
-        NSColor(calibratedRed: 0.920, green: 0.600, blue: 0.240, alpha: 0.26),
-        NSColor(calibratedRed: 1.000, green: 0.670, blue: 0.290, alpha: 0.00),
-    ])?.draw(in: warmGlow, relativeCenterPosition: NSPoint(x: -0.12, y: -0.10))
-
-    context.restoreGState()
-
-    NSColor(calibratedWhite: 1, alpha: 0.16).setStroke()
-    outer.lineWidth = s(9)
+    NSColor(calibratedWhite: 1, alpha: 0.72).setStroke()
+    outer.lineWidth = s(8)
     outer.stroke()
 
-    let nibShadow = NSBezierPath()
-    nibShadow.move(to: NSPoint(x: s(340), y: s(760)))
-    nibShadow.line(to: NSPoint(x: s(692), y: s(760)))
-    nibShadow.line(to: NSPoint(x: s(812), y: s(420)))
-    nibShadow.curve(to: NSPoint(x: s(512), y: s(185)), controlPoint1: NSPoint(x: s(738), y: s(318)), controlPoint2: NSPoint(x: s(640), y: s(225)))
-    nibShadow.curve(to: NSPoint(x: s(212), y: s(420)), controlPoint1: NSPoint(x: s(384), y: s(225)), controlPoint2: NSPoint(x: s(286), y: s(318)))
-    nibShadow.close()
+    let paper = NSBezierPath(roundedRect: CGRect(x: s(184), y: s(120), width: s(656), height: s(694)), xRadius: s(72), yRadius: s(72))
     context.saveGState()
-    context.setShadow(offset: CGSize(width: 0, height: -s(22)), blur: s(34), color: NSColor.black.withAlphaComponent(0.34).cgColor)
-    NSColor(calibratedRed: 0.010, green: 0.030, blue: 0.060, alpha: 0.58).setFill()
-    nibShadow.fill()
+    context.setShadow(offset: CGSize(width: s(10), height: -s(18)), blur: s(34), color: NSColor.black.withAlphaComponent(0.16).cgColor)
+    NSGradient(colors: [
+        NSColor(calibratedRed: 1.000, green: 0.996, blue: 0.965, alpha: 1),
+        NSColor(calibratedRed: 0.990, green: 0.955, blue: 0.850, alpha: 1),
+    ])?.draw(in: paper, angle: -72)
     context.restoreGState()
 
-    let nib = NSBezierPath()
-    nib.move(to: NSPoint(x: s(350), y: s(782)))
-    nib.line(to: NSPoint(x: s(674), y: s(782)))
-    nib.line(to: NSPoint(x: s(792), y: s(420)))
-    nib.curve(to: NSPoint(x: s(512), y: s(206)), controlPoint1: NSPoint(x: s(726), y: s(318)), controlPoint2: NSPoint(x: s(628), y: s(232)))
-    nib.curve(to: NSPoint(x: s(232), y: s(420)), controlPoint1: NSPoint(x: s(396), y: s(232)), controlPoint2: NSPoint(x: s(298), y: s(318)))
-    nib.close()
-    NSGradient(colors: [
-        NSColor(calibratedRed: 1.000, green: 0.975, blue: 0.885, alpha: 1),
-        NSColor(calibratedRed: 0.960, green: 0.835, blue: 0.590, alpha: 1),
-        NSColor(calibratedRed: 0.720, green: 0.520, blue: 0.285, alpha: 1),
-    ])?.draw(in: nib, angle: -65)
+    NSColor(calibratedRed: 0.790, green: 0.710, blue: 0.570, alpha: 0.38).setStroke()
+    paper.lineWidth = s(8)
+    paper.stroke()
 
-    NSColor(calibratedWhite: 1, alpha: 0.78).setStroke()
-    nib.lineWidth = s(12)
-    nib.stroke()
-
-    let slit = NSBezierPath()
-    slit.move(to: NSPoint(x: s(512), y: s(702)))
-    slit.line(to: NSPoint(x: s(512), y: s(396)))
-    NSColor(calibratedRed: 0.020, green: 0.022, blue: 0.035, alpha: 0.86).setStroke()
-    slit.lineWidth = s(34)
-    slit.lineCapStyle = .round
-    slit.stroke()
-
-    let dot = NSBezierPath(ovalIn: CGRect(x: s(454), y: s(550), width: s(116), height: s(116)))
-    NSGradient(colors: [
-        NSColor(calibratedRed: 0.010, green: 0.012, blue: 0.022, alpha: 1),
-        NSColor(calibratedRed: 0.050, green: 0.042, blue: 0.070, alpha: 1),
-    ])?.draw(in: dot, angle: 90)
-
-    let waveColor = NSColor(calibratedRed: 1.000, green: 0.575, blue: 0.185, alpha: 1)
-    waveColor.setStroke()
-    for (index, height) in [118, 190, 268, 190, 118].enumerated() {
-        let x = s(362 + CGFloat(index) * 75)
+    let lineColor = NSColor(calibratedRed: 0.130, green: 0.140, blue: 0.190, alpha: 1)
+    lineColor.setStroke()
+    for (y, width) in [(610, 330), (504, 258), (398, 250)] {
         let path = NSBezierPath()
-        path.move(to: NSPoint(x: x, y: s(332) - s(CGFloat(height) / 2)))
-        path.line(to: NSPoint(x: x, y: s(332) + s(CGFloat(height) / 2)))
+        path.move(to: NSPoint(x: s(270), y: s(CGFloat(y))))
+        path.line(to: NSPoint(x: s(270 + CGFloat(width)), y: s(CGFloat(y))))
         path.lineCapStyle = .round
-        path.lineWidth = s(34)
+        path.lineWidth = s(42)
         path.stroke()
     }
 
-    let inkDrop = NSBezierPath()
-    inkDrop.move(to: NSPoint(x: s(703), y: s(728)))
-    inkDrop.curve(to: NSPoint(x: s(750), y: s(626)), controlPoint1: NSPoint(x: s(742), y: s(676)), controlPoint2: NSPoint(x: s(750), y: s(656)))
-    inkDrop.curve(to: NSPoint(x: s(693), y: s(568)), controlPoint1: NSPoint(x: s(750), y: s(591)), controlPoint2: NSPoint(x: s(725), y: s(568)))
-    inkDrop.curve(to: NSPoint(x: s(636), y: s(626)), controlPoint1: NSPoint(x: s(660), y: s(568)), controlPoint2: NSPoint(x: s(636), y: s(591)))
-    inkDrop.curve(to: NSPoint(x: s(703), y: s(728)), controlPoint1: NSPoint(x: s(636), y: s(657)), controlPoint2: NSPoint(x: s(663), y: s(681)))
-    inkDrop.close()
-    NSColor(calibratedRed: 0.012, green: 0.014, blue: 0.028, alpha: 0.88).setFill()
-    inkDrop.fill()
+    let pen = NSBezierPath()
+    pen.move(to: NSPoint(x: s(660), y: s(646)))
+    pen.line(to: NSPoint(x: s(800), y: s(506)))
+    pen.line(to: NSPoint(x: s(522), y: s(228)))
+    pen.line(to: NSPoint(x: s(346), y: s(192)))
+    pen.line(to: NSPoint(x: s(382), y: s(368)))
+    pen.close()
+    context.saveGState()
+    context.setShadow(offset: CGSize(width: s(8), height: -s(10)), blur: s(18), color: NSColor.black.withAlphaComponent(0.20).cgColor)
+    NSGradient(colors: [
+        NSColor(calibratedRed: 0.070, green: 0.075, blue: 0.105, alpha: 1),
+        NSColor(calibratedRed: 0.135, green: 0.145, blue: 0.190, alpha: 1),
+    ])?.draw(in: pen, angle: 45)
+    context.restoreGState()
+
+    let penAccent = NSBezierPath()
+    penAccent.move(to: NSPoint(x: s(660), y: s(646)))
+    penAccent.line(to: NSPoint(x: s(800), y: s(506)))
+    penAccent.line(to: NSPoint(x: s(732), y: s(438)))
+    penAccent.line(to: NSPoint(x: s(592), y: s(578)))
+    penAccent.close()
+    NSColor(calibratedRed: 1.000, green: 0.580, blue: 0.170, alpha: 1).setFill()
+    penAccent.fill()
+
+    NSColor(calibratedRed: 0.070, green: 0.075, blue: 0.105, alpha: 1).setStroke()
+    pen.lineWidth = s(8)
+    pen.stroke()
+
+    let bubble = NSBezierPath()
+    bubble.move(to: NSPoint(x: s(650), y: s(386)))
+    bubble.line(to: NSPoint(x: s(804), y: s(386)))
+    bubble.curve(to: NSPoint(x: s(908), y: s(282)), controlPoint1: NSPoint(x: s(862), y: s(386)), controlPoint2: NSPoint(x: s(908), y: s(340)))
+    bubble.curve(to: NSPoint(x: s(804), y: s(178)), controlPoint1: NSPoint(x: s(908), y: s(224)), controlPoint2: NSPoint(x: s(862), y: s(178)))
+    bubble.line(to: NSPoint(x: s(744), y: s(178)))
+    bubble.line(to: NSPoint(x: s(652), y: s(100)))
+    bubble.line(to: NSPoint(x: s(652), y: s(182)))
+    bubble.curve(to: NSPoint(x: s(542), y: s(282)), controlPoint1: NSPoint(x: s(590), y: s(187)), controlPoint2: NSPoint(x: s(542), y: s(231)))
+    bubble.curve(to: NSPoint(x: s(650), y: s(386)), controlPoint1: NSPoint(x: s(542), y: s(340)), controlPoint2: NSPoint(x: s(588), y: s(386)))
+    bubble.close()
+
+    context.saveGState()
+    context.setShadow(offset: CGSize(width: 0, height: -s(10)), blur: s(24), color: NSColor.black.withAlphaComponent(0.20).cgColor)
+    NSGradient(colors: [
+        NSColor(calibratedRed: 1.000, green: 0.640, blue: 0.230, alpha: 1),
+        NSColor(calibratedRed: 1.000, green: 0.500, blue: 0.110, alpha: 1),
+    ])?.draw(in: bubble, angle: -72)
+    context.restoreGState()
+
+    NSColor(calibratedRed: 1.000, green: 0.820, blue: 0.500, alpha: 0.80).setStroke()
+    bubble.lineWidth = s(7)
+    bubble.stroke()
+
+    NSColor(calibratedRed: 0.090, green: 0.095, blue: 0.130, alpha: 1).setFill()
+    for x in [688, 752, 816] {
+        NSBezierPath(ovalIn: CGRect(x: s(CGFloat(x - 15)), y: s(267), width: s(30), height: s(30))).fill()
+    }
 
     image.unlockFocus()
     return image
