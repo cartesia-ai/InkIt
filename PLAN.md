@@ -1,4 +1,4 @@
-# Inksper Plan
+# InkIt Plan
 
 ## Goal
 
@@ -215,7 +215,7 @@ UX rule:
 
 Suggested structure:
 
-- `InksperApp.swift`
+- `InkItApp.swift`
 - `AppCoordinator.swift`
 - `HotkeyManager.swift`
 - `AudioCaptureService.swift`

@@ -1,4 +1,4 @@
-# Inksper
+# InkIt
 
 Push-to-talk macOS dictation app. Hold a global hotkey, speak, release. The transcript from Cartesia STT (`ink-whisper`) is pasted into the focused text field of the frontmost app.
 
@@ -9,13 +9,13 @@ Phase 1–4 of `PLAN.md` are implemented in source form. You must wire the files
 ## Building (one-time Xcode setup)
 
 1. Open Xcode → **File → New → Project… → macOS → App**.
-   - Product Name: `Inksper`
+   - Product Name: `InkIt`
    - Interface: **SwiftUI**
    - Language: **Swift**
    - Uncheck Core Data / Tests.
-2. Delete the auto-generated `InksperApp.swift` and `ContentView.swift`.
-3. Drag every file from the `Inksper/` directory in this repo into the new target.
-   - Replace the auto-generated `Info.plist` with the one in `Inksper/Info.plist`, or merge these keys into the existing one:
+2. Delete the auto-generated `InkItApp.swift` and `ContentView.swift`.
+3. Drag every file from the `InkIt/` directory in this repo into the new target.
+   - Replace the auto-generated `Info.plist` with the one in `InkIt/Info.plist`, or merge these keys into the existing one:
      - `LSUIElement = true` (menu bar only, no Dock icon)
      - `NSMicrophoneUsageDescription`
 4. In the target's **Signing & Capabilities** tab:
@@ -36,7 +36,7 @@ Phase 1–4 of `PLAN.md` are implemented in source form. You must wire the files
 
 | File | Role |
 |------|------|
-| `InksperApp.swift` | App entry point, menu bar UI |
+| `InkItApp.swift` | App entry point, menu bar UI |
 | `AppCoordinator.swift` | State machine for the dictation lifecycle |
 | `HotkeyManager.swift` | Carbon-based global press/release hotkey |
 | `AudioCaptureService.swift` | `AVAudioEngine` mic capture |

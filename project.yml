@@ -1,4 +1,4 @@
-name: Inksper
+name: InkIt
 options:
   bundleIdPrefix: com.aiqiliu
   deploymentTarget:
@@ -17,18 +17,20 @@ settings:
     ENABLE_HARDENED_RUNTIME: NO
 
 targets:
-  Inksper:
+  InkIt:
     type: application
     platform: macOS
     sources:
-      - path: Inksper
+      - path: InkIt
         excludes:
           - Info.plist
+    resources:
+      - path: InkIt/Assets.xcassets
     info:
-      path: Inksper/Info.plist
+      path: InkIt/Info.plist
       properties:
-        CFBundleDisplayName: Inksper
-        CFBundleName: Inksper
+        CFBundleDisplayName: InkIt
+        CFBundleName: InkIt
         CFBundlePackageType: APPL
         CFBundleShortVersionString: "0.1.0"
         CFBundleVersion: "1"
@@ -38,11 +40,11 @@ targets:
         # systems don't render the menu bar item reliably.)
         LSUIElement: false
         NSHighResolutionCapable: true
-        NSMicrophoneUsageDescription: "Inksper records your voice while you hold the dictation hotkey and streams it to Cartesia STT for transcription."
-        NSAppleEventsUsageDescription: "Inksper pastes the transcribed text into the focused app."
+        NSMicrophoneUsageDescription: "InkIt records your voice while you hold the dictation hotkey and streams it to Cartesia STT for transcription."
+        NSAppleEventsUsageDescription: "InkIt pastes the transcribed text into the focused app."
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.aiqiliu.Inksper
+        PRODUCT_BUNDLE_IDENTIFIER: com.aiqiliu.InkIt
         # No App Sandbox: synthesized Cmd+V via Accessibility requires an
         # unsandboxed binary.
         ENABLE_APP_SANDBOX: NO
