@@ -1,0 +1,328 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		11FD40757C4B4835786A96C8 /* CartesiaStreamingClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B039716177A714D296574FD /* CartesiaStreamingClient.swift */; };
+		3FEA60670BB32CFAC4E2A328 /* AppCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEDBEC21D8C08ABFED2510CF /* AppCoordinator.swift */; };
+		4561ADEFB6F7145CC58E3882 /* AudioPCMConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 097E2E1C208812679D3E5DE4 /* AudioPCMConverter.swift */; };
+		4EE0E868C9B5D2E2C320D6B7 /* HotkeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12EDB370A874CEC2076B2859 /* HotkeyManager.swift */; };
+		5ADA436AFED2DA119E6D1B84 /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A4D6A7FF061DCE8DDD6781C /* SettingsStore.swift */; };
+		67DFFADD6E9F1C3ED9378EC8 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 666940583D2399AE255A69F4 /* SettingsView.swift */; };
+		92992D0F9FD8BB390DF9FA4D /* AudioCaptureService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 227377AA1B0F4785665701C5 /* AudioCaptureService.swift */; };
+		CA63BF0210A9DC314AE2CFEC /* PasteService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6087D9E5923A4419FA63C3BD /* PasteService.swift */; };
+		EA70F8DECD4F0618BC01054D /* PermissionsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFF29BE9BF89245CB17D9912 /* PermissionsService.swift */; };
+		F141BB797774A9860AE4B55F /* InksperApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = E844686B4B90EE91A4A16FBA /* InksperApp.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		097E2E1C208812679D3E5DE4 /* AudioPCMConverter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPCMConverter.swift; sourceTree = "<group>"; };
+		12EDB370A874CEC2076B2859 /* HotkeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyManager.swift; sourceTree = "<group>"; };
+		1A4D6A7FF061DCE8DDD6781C /* SettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsStore.swift; sourceTree = "<group>"; };
+		227377AA1B0F4785665701C5 /* AudioCaptureService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCaptureService.swift; sourceTree = "<group>"; };
+		6087D9E5923A4419FA63C3BD /* PasteService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteService.swift; sourceTree = "<group>"; };
+		666940583D2399AE255A69F4 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		6B039716177A714D296574FD /* CartesiaStreamingClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CartesiaStreamingClient.swift; sourceTree = "<group>"; };
+		87226D96527E2BB15347D7D3 /* Inksper.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Inksper.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AFF29BE9BF89245CB17D9912 /* PermissionsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionsService.swift; sourceTree = "<group>"; };
+		E844686B4B90EE91A4A16FBA /* InksperApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InksperApp.swift; sourceTree = "<group>"; };
+		EEDBEC21D8C08ABFED2510CF /* AppCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCoordinator.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		60FFB46804F164C040F843F3 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				87226D96527E2BB15347D7D3 /* Inksper.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		BCE4D9D58E12C36B14910927 /* Inksper */ = {
+			isa = PBXGroup;
+			children = (
+				EEDBEC21D8C08ABFED2510CF /* AppCoordinator.swift */,
+				227377AA1B0F4785665701C5 /* AudioCaptureService.swift */,
+				097E2E1C208812679D3E5DE4 /* AudioPCMConverter.swift */,
+				6B039716177A714D296574FD /* CartesiaStreamingClient.swift */,
+				12EDB370A874CEC2076B2859 /* HotkeyManager.swift */,
+				E844686B4B90EE91A4A16FBA /* InksperApp.swift */,
+				6087D9E5923A4419FA63C3BD /* PasteService.swift */,
+				AFF29BE9BF89245CB17D9912 /* PermissionsService.swift */,
+				1A4D6A7FF061DCE8DDD6781C /* SettingsStore.swift */,
+				666940583D2399AE255A69F4 /* SettingsView.swift */,
+			);
+			path = Inksper;
+			sourceTree = "<group>";
+		};
+		FBEF74635F75DAEFFDA9C5AD = {
+			isa = PBXGroup;
+			children = (
+				BCE4D9D58E12C36B14910927 /* Inksper */,
+				60FFB46804F164C040F843F3 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		F4A0ACE7707F57722C52FA39 /* Inksper */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3F8941987C8F0E4F30D8DA6F /* Build configuration list for PBXNativeTarget "Inksper" */;
+			buildPhases = (
+				4E40BC3792AE7A7B1CD9E077 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Inksper;
+			packageProductDependencies = (
+			);
+			productName = Inksper;
+			productReference = 87226D96527E2BB15347D7D3 /* Inksper.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		8B08472195D1AEFCE26B212B /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					F4A0ACE7707F57722C52FA39 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = DD7120DC80637375BAEC2FD4 /* Build configuration list for PBXProject "Inksper" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = FBEF74635F75DAEFFDA9C5AD;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 60FFB46804F164C040F843F3 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				F4A0ACE7707F57722C52FA39 /* Inksper */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		4E40BC3792AE7A7B1CD9E077 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3FEA60670BB32CFAC4E2A328 /* AppCoordinator.swift in Sources */,
+				92992D0F9FD8BB390DF9FA4D /* AudioCaptureService.swift in Sources */,
+				4561ADEFB6F7145CC58E3882 /* AudioPCMConverter.swift in Sources */,
+				11FD40757C4B4835786A96C8 /* CartesiaStreamingClient.swift in Sources */,
+				4EE0E868C9B5D2E2C320D6B7 /* HotkeyManager.swift in Sources */,
+				F141BB797774A9860AE4B55F /* InksperApp.swift in Sources */,
+				CA63BF0210A9DC314AE2CFEC /* PasteService.swift in Sources */,
+				EA70F8DECD4F0618BC01054D /* PermissionsService.swift in Sources */,
+				5ADA436AFED2DA119E6D1B84 /* SettingsStore.swift in Sources */,
+				67DFFADD6E9F1C3ED9378EC8 /* SettingsView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		06C1F89E0D9BE9B0951AF645 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_APP_SANDBOX = NO;
+				INFOPLIST_FILE = Inksper/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.aiqiliu.Inksper;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		5674B11216642711ECFF26C2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = NO;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		5E8233D55B74093602829440 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		8FCD7039311B779D13715B5E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_APP_SANDBOX = NO;
+				INFOPLIST_FILE = Inksper/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.aiqiliu.Inksper;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		3F8941987C8F0E4F30D8DA6F /* Build configuration list for PBXNativeTarget "Inksper" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8FCD7039311B779D13715B5E /* Debug */,
+				06C1F89E0D9BE9B0951AF645 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		DD7120DC80637375BAEC2FD4 /* Build configuration list for PBXProject "Inksper" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5E8233D55B74093602829440 /* Debug */,
+				5674B11216642711ECFF26C2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 8B08472195D1AEFCE26B212B /* Project object */;
+}

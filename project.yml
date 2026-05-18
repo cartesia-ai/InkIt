@@ -1,0 +1,49 @@
+name: Inksper
+options:
+  bundleIdPrefix: com.aiqiliu
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    CODE_SIGN_STYLE: Automatic
+    # Ad-hoc sign by default so the project builds without a configured team.
+    # Override to your team in Xcode for distribution.
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_IDENTITY: "-"
+    ENABLE_HARDENED_RUNTIME: NO
+
+targets:
+  Inksper:
+    type: application
+    platform: macOS
+    sources:
+      - path: Inksper
+        excludes:
+          - Info.plist
+    info:
+      path: Inksper/Info.plist
+      properties:
+        CFBundleDisplayName: Inksper
+        CFBundleName: Inksper
+        CFBundlePackageType: APPL
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        LSMinimumSystemVersion: "14.0"
+        # Show in Dock so users can always click the icon to bring up the
+        # control window. (Was LSUIElement=true earlier; reverted because some
+        # systems don't render the menu bar item reliably.)
+        LSUIElement: false
+        NSHighResolutionCapable: true
+        NSMicrophoneUsageDescription: "Inksper records your voice while you hold the dictation hotkey and streams it to Cartesia STT for transcription."
+        NSAppleEventsUsageDescription: "Inksper pastes the transcribed text into the focused app."
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.aiqiliu.Inksper
+        # No App Sandbox: synthesized Cmd+V via Accessibility requires an
+        # unsandboxed binary.
+        ENABLE_APP_SANDBOX: NO
+        # No entitlements file — sandbox off, hardened runtime off for local dev.
