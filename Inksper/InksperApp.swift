@@ -7,13 +7,20 @@ struct InksperApp: App {
 
     var body: some Scene {
         // Primary window. Shows onboarding on first launch; otherwise the
-        // settings/control surface.
-        WindowGroup("Inksper") {
+        // app runs from the notch/menu bar without a persistent window.
+        WindowGroup("Inksper", id: "main") {
             RootView()
                 .environmentObject(coordinator)
                 .environmentObject(settings)
         }
         .windowResizability(.contentSize)
+
+        Settings {
+            SettingsView()
+                .environmentObject(coordinator)
+                .environmentObject(settings)
+                .frame(width: 520, height: 620)
+        }
 
         // Menu bar entry as a secondary surface — fine if it's visible, fine
         // if it isn't (the main window covers everything).
@@ -33,8 +40,7 @@ struct RootView: View {
     var body: some View {
         Group {
             if settings.hasCompletedOnboarding {
-                SettingsView()
-                    .frame(minWidth: 480, minHeight: 580)
+                WindowCloser()
             } else {
                 OnboardingRootView()
                     .frame(width: 720, height: 560)
@@ -43,9 +49,26 @@ struct RootView: View {
     }
 }
 
+private struct WindowCloser: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async {
+            view.window?.close()
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            nsView.window?.close()
+        }
+    }
+}
+
 struct MenuBarContent: View {
     @EnvironmentObject var coordinator: AppCoordinator
     @EnvironmentObject var settings: SettingsStore
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -69,11 +92,12 @@ struct MenuBarContent: View {
             }
             Divider()
             Button("Settings…") {
-                openMainWindow()
+                openSettingsWindow()
             }
             Button("Show onboarding…") {
                 settings.hasCompletedOnboarding = false
-                openMainWindow()
+                NSApp.activate(ignoringOtherApps: true)
+                openWindow(id: "main")
             }
             Button("Quit Inksper") {
                 NSApp.terminate(nil)
@@ -83,13 +107,8 @@ struct MenuBarContent: View {
         .frame(width: 280)
     }
 
-    private func openMainWindow() {
+    private func openSettingsWindow() {
         NSApp.activate(ignoringOtherApps: true)
-        // Bring an existing window forward, or open one if none exist.
-        if let win = NSApp.windows.first(where: { $0.title == "Inksper" || $0.title.isEmpty == false }) {
-            win.makeKeyAndOrderFront(nil)
-        } else if #available(macOS 14.0, *) {
-            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-        }
+        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
     }
 }

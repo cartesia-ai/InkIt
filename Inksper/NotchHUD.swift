@@ -110,6 +110,10 @@ private struct NotchHUDView: View {
                 NotchPill(mode: mode)
                     .frame(width: mode.width, height: mode.height)
                     .overlay(content)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        openHistoryIfAvailable()
+                    }
             }
             .animation(.spring(response: 0.42, dampingFraction: 0.82), value: mode)
             Spacer(minLength: 0)
@@ -149,28 +153,19 @@ private struct NotchHUDView: View {
             Text("Inksper").font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.white.opacity(0.65))
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .padding(.top, 6)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            guard !isRecording, !isFinalizing else { return }
-            withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
-                showHistory = true
-            }
-        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 
     private var recordingContent: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 7) {
             Circle()
                 .fill(.red)
-                .frame(width: 6, height: 6)
+                .frame(width: 5, height: 5)
                 .shadow(color: .red.opacity(0.7), radius: 4)
             HUDWaveform(level: coordinator.inputLevel)
-                .frame(width: 26, height: 12)
+                .frame(width: 22, height: 10)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .padding(.top, 5)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 
     private var finalizingContent: some View {
@@ -183,8 +178,7 @@ private struct NotchHUDView: View {
                 .font(.system(size: 9, weight: .medium))
                 .foregroundStyle(.white.opacity(0.82))
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .padding(.top, 4)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 
     private var historyContent: some View {
@@ -202,12 +196,6 @@ private struct NotchHUDView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                if !history.entries.isEmpty {
-                    Button(action: { history.clear() }) {
-                        Text("Clear").font(.system(size: 11)).foregroundStyle(.white.opacity(0.6))
-                    }
-                    .buttonStyle(.plain)
-                }
             }
             .padding(.horizontal, 16)
             .padding(.top, 14)
@@ -237,8 +225,24 @@ private struct NotchHUDView: View {
                         }
                     }
                     .padding(.horizontal, 10)
-                    .padding(.bottom, 14)
+                    .padding(.bottom, 8)
                 }
+
+                Divider()
+                    .overlay(.white.opacity(0.08))
+                    .padding(.horizontal, 12)
+
+                HStack {
+                    Spacer()
+                    Button(role: .destructive, action: { history.clear() }) {
+                        Label("Clear transcripts", systemImage: "trash")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.68))
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
             }
         }
     }
@@ -256,6 +260,13 @@ private struct NotchHUDView: View {
     private func closeHistory() {
         withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
             showHistory = false
+        }
+    }
+
+    private func openHistoryIfAvailable() {
+        guard !showHistory, !isRecording, !isFinalizing else { return }
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+            showHistory = true
         }
     }
 }
@@ -324,18 +335,19 @@ private struct NotchPill: View {
 private struct HUDWaveform: View {
     let level: Float
     @State private var phase: CGFloat = 0
-    private let barCount = 16
+    private let dotCount = 5
 
     var body: some View {
         GeometryReader { geo in
-            HStack(spacing: 3) {
-                ForEach(0..<barCount, id: \.self) { i in
-                    let t = (CGFloat(i) / CGFloat(barCount)) + phase
+            HStack(spacing: 2.5) {
+                ForEach(0..<dotCount, id: \.self) { i in
+                    let t = (CGFloat(i) / CGFloat(dotCount)) + phase
                     let wobble = (sin(t * .pi * 2) + 1) / 2
-                    let lvl = CGFloat(max(0.1, level)) * (0.4 + 0.6 * wobble)
-                    Capsule()
+                    let loudness = CGFloat(min(1, max(0.15, level)))
+                    let diameter = 2.5 + (geo.size.height - 2.5) * loudness * (0.35 + 0.65 * wobble)
+                    Circle()
                         .fill(.white.opacity(0.95))
-                        .frame(width: 3, height: max(3, geo.size.height * lvl))
+                        .frame(width: diameter, height: diameter)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
