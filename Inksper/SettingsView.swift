@@ -46,6 +46,15 @@ struct SettingsView: View {
                 PermissionRow(label: "Accessibility", granted: permissions.hasAccessibility) {
                     permissions.requestAccessibility()
                 }
+                if !permissions.hasAccessibility {
+                    Button("I granted Accessibility") {
+                        permissions.confirmAccessibilityGrant()
+                    }
+                    Text("Grant access to: \(permissions.appIdentityDescription)")
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
             }
 
             Section("Status") {

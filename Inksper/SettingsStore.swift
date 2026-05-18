@@ -22,6 +22,7 @@ final class SettingsStore: ObservableObject {
         static let hotkeyKind = "hotkeyKind"           // "carbon" | "fn"
         static let hotkeyKeyCode = "hotkeyKeyCode"
         static let hotkeyModifiers = "hotkeyModifiers"
+        static let hasCompletedOnboarding = "hasCompletedOnboarding"
     }
 
     @Published var cartesiaAPIKey: String {
@@ -30,6 +31,10 @@ final class SettingsStore: ObservableObject {
 
     @Published var hotkey: HotkeyBinding {
         didSet { saveHotkey() }
+    }
+
+    @Published var hasCompletedOnboarding: Bool {
+        didSet { defaults.set(hasCompletedOnboarding, forKey: Keys.hasCompletedOnboarding) }
     }
 
     var hotkeyDisplayString: String {
@@ -43,17 +48,19 @@ final class SettingsStore: ObservableObject {
 
     private init() {
         self.cartesiaAPIKey = defaults.string(forKey: Keys.apiKey) ?? ""
+        self.hasCompletedOnboarding = defaults.bool(forKey: Keys.hasCompletedOnboarding)
         switch defaults.string(forKey: Keys.hotkeyKind) {
-        case "fn":
-            self.hotkey = .fn
-        default:
+        case "carbon":
             let storedKey = defaults.object(forKey: Keys.hotkeyKeyCode) as? Int
             let storedMods = defaults.object(forKey: Keys.hotkeyModifiers) as? Int
-            // Default: ⌃⌥ Space
             self.hotkey = .carbon(
                 keyCode: UInt32(storedKey ?? kVK_Space),
                 modifiers: UInt32(storedMods ?? (controlKey | optionKey))
             )
+        default:
+            // Default to the Fn / 🌐 key — claimed via a CGEventTap that
+            // suppresses the system Globe action while Inksper is running.
+            self.hotkey = .fn
         }
     }
 

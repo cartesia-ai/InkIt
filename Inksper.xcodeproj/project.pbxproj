@@ -14,16 +14,22 @@
 		5ADA436AFED2DA119E6D1B84 /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A4D6A7FF061DCE8DDD6781C /* SettingsStore.swift */; };
 		67DFFADD6E9F1C3ED9378EC8 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 666940583D2399AE255A69F4 /* SettingsView.swift */; };
 		92992D0F9FD8BB390DF9FA4D /* AudioCaptureService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 227377AA1B0F4785665701C5 /* AudioCaptureService.swift */; };
+		CA03046D226563499DF80917 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 021C24AE508B6C1C5004FE67 /* OnboardingView.swift */; };
 		CA63BF0210A9DC314AE2CFEC /* PasteService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6087D9E5923A4419FA63C3BD /* PasteService.swift */; };
+		D11D606FE0E58B9A2C7310D6 /* TranscriptHistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55643CD8862E8117DDE32D24 /* TranscriptHistoryStore.swift */; };
+		E61990BC7844F5633AFA2597 /* NotchHUD.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C20DC91387DF507BF3457AD /* NotchHUD.swift */; };
 		EA70F8DECD4F0618BC01054D /* PermissionsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFF29BE9BF89245CB17D9912 /* PermissionsService.swift */; };
 		F141BB797774A9860AE4B55F /* InksperApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = E844686B4B90EE91A4A16FBA /* InksperApp.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		021C24AE508B6C1C5004FE67 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		097E2E1C208812679D3E5DE4 /* AudioPCMConverter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPCMConverter.swift; sourceTree = "<group>"; };
 		12EDB370A874CEC2076B2859 /* HotkeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyManager.swift; sourceTree = "<group>"; };
 		1A4D6A7FF061DCE8DDD6781C /* SettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsStore.swift; sourceTree = "<group>"; };
 		227377AA1B0F4785665701C5 /* AudioCaptureService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCaptureService.swift; sourceTree = "<group>"; };
+		2C20DC91387DF507BF3457AD /* NotchHUD.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotchHUD.swift; sourceTree = "<group>"; };
+		55643CD8862E8117DDE32D24 /* TranscriptHistoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptHistoryStore.swift; sourceTree = "<group>"; };
 		6087D9E5923A4419FA63C3BD /* PasteService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteService.swift; sourceTree = "<group>"; };
 		666940583D2399AE255A69F4 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		6B039716177A714D296574FD /* CartesiaStreamingClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CartesiaStreamingClient.swift; sourceTree = "<group>"; };
@@ -51,10 +57,13 @@
 				6B039716177A714D296574FD /* CartesiaStreamingClient.swift */,
 				12EDB370A874CEC2076B2859 /* HotkeyManager.swift */,
 				E844686B4B90EE91A4A16FBA /* InksperApp.swift */,
+				2C20DC91387DF507BF3457AD /* NotchHUD.swift */,
+				021C24AE508B6C1C5004FE67 /* OnboardingView.swift */,
 				6087D9E5923A4419FA63C3BD /* PasteService.swift */,
 				AFF29BE9BF89245CB17D9912 /* PermissionsService.swift */,
 				1A4D6A7FF061DCE8DDD6781C /* SettingsStore.swift */,
 				666940583D2399AE255A69F4 /* SettingsView.swift */,
+				55643CD8862E8117DDE32D24 /* TranscriptHistoryStore.swift */,
 			);
 			path = Inksper;
 			sourceTree = "<group>";
@@ -132,10 +141,13 @@
 				11FD40757C4B4835786A96C8 /* CartesiaStreamingClient.swift in Sources */,
 				4EE0E868C9B5D2E2C320D6B7 /* HotkeyManager.swift in Sources */,
 				F141BB797774A9860AE4B55F /* InksperApp.swift in Sources */,
+				E61990BC7844F5633AFA2597 /* NotchHUD.swift in Sources */,
+				CA03046D226563499DF80917 /* OnboardingView.swift in Sources */,
 				CA63BF0210A9DC314AE2CFEC /* PasteService.swift in Sources */,
 				EA70F8DECD4F0618BC01054D /* PermissionsService.swift in Sources */,
 				5ADA436AFED2DA119E6D1B84 /* SettingsStore.swift in Sources */,
 				67DFFADD6E9F1C3ED9378EC8 /* SettingsView.swift in Sources */,
+				D11D606FE0E58B9A2C7310D6 /* TranscriptHistoryStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

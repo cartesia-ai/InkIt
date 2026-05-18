@@ -8,11 +8,12 @@ import Carbon.HIToolbox
 ///   combinations. Press and release events arrive without key repeat, even
 ///   when another app is frontmost.
 ///
-/// - `.fn`: The Fn / 🌐 key is not a real modifier in Carbon. We detect it via
-///   an `NSEvent` global monitor for `.flagsChanged`, looking at the
-///   `.function` flag transition. (Note: macOS may steal Fn for system
-///   dictation / emoji unless the user sets
-///   System Settings → Keyboard → "Press 🌐 key to → Do Nothing".)
+/// - `.fn`: The Fn / 🌐 key isn't a real modifier in Carbon. We install a
+///   `CGEventTap` at `cghidEventTap` with active suppression: when Fn
+///   transitions, the callback returns `nil` and the event never reaches the
+///   OS Globe handler (so Emoji / Dictation don't fire). This requires
+///   Accessibility permission. If the tap can't be created we fall back to a
+///   passive `NSEvent` monitor that observes Fn but can't suppress it.
 final class HotkeyManager {
     var onPress: (() -> Void)?
     var onRelease: (() -> Void)?
@@ -22,10 +23,14 @@ final class HotkeyManager {
     private var eventHandler: EventHandlerRef?
     private let hotKeyID = EventHotKeyID(signature: OSType(0x494E4B53 /* "INKS" */), id: 1)
 
-    // Fn path
+    // Fn path — event tap
+    private var fnEventTap: CFMachPort?
+    private var fnRunLoopSource: CFRunLoopSource?
+    private var fnIsDown = false
+
+    // Fn path — passive fallback
     private var fnGlobalMonitor: Any?
     private var fnLocalMonitor: Any?
-    private var fnIsDown = false
 
     init() {
         installCarbonHandler()
@@ -50,6 +55,14 @@ final class HotkeyManager {
         if let ref = hotKeyRef {
             UnregisterEventHotKey(ref)
             hotKeyRef = nil
+        }
+        if let tap = fnEventTap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+            if let src = fnRunLoopSource {
+                CFRunLoopRemoveSource(CFRunLoopGetMain(), src, .commonModes)
+            }
+            fnEventTap = nil
+            fnRunLoopSource = nil
         }
         if let m = fnGlobalMonitor { NSEvent.removeMonitor(m); fnGlobalMonitor = nil }
         if let m = fnLocalMonitor { NSEvent.removeMonitor(m); fnLocalMonitor = nil }
@@ -90,7 +103,66 @@ final class HotkeyManager {
 
     // MARK: - Fn path
 
+    /// Try the suppressing CGEventTap first; if that fails (no Accessibility
+    /// permission yet, or otherwise), fall back to a passive NSEvent monitor.
     private func registerFn() {
+        if installFnEventTap() { return }
+        installFnPassiveMonitor()
+    }
+
+    private func installFnEventTap() -> Bool {
+        let mask: CGEventMask = (1 << CGEventType.flagsChanged.rawValue)
+        let selfPtr = Unmanaged.passUnretained(self).toOpaque()
+
+        let callback: CGEventTapCallBack = { _, type, event, userInfo in
+            guard let userInfo else { return Unmanaged.passUnretained(event) }
+            let manager = Unmanaged<HotkeyManager>.fromOpaque(userInfo).takeUnretainedValue()
+
+            // System may disable the tap (timeout, user input excess). Re-enable.
+            if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                if let tap = manager.fnEventTap { CGEvent.tapEnable(tap: tap, enable: true) }
+                return Unmanaged.passUnretained(event)
+            }
+
+            guard type == .flagsChanged else { return Unmanaged.passUnretained(event) }
+
+            let fnDown = event.flags.contains(.maskSecondaryFn)
+            // Only react (and consume) when this event actually toggles Fn —
+            // other flag-change events (Cmd, Shift, …) must pass through.
+            if fnDown != manager.fnIsDown {
+                manager.fnIsDown = fnDown
+                if fnDown {
+                    DispatchQueue.main.async { manager.onPress?() }
+                } else {
+                    DispatchQueue.main.async { manager.onRelease?() }
+                }
+                // Swallow the event so macOS doesn't fire Globe / Dictation / Emoji.
+                return nil
+            }
+            return Unmanaged.passUnretained(event)
+        }
+
+        guard let tap = CGEvent.tapCreate(
+            tap: .cghidEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: mask,
+            callback: callback,
+            userInfo: selfPtr
+        ) else {
+            return false
+        }
+
+        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+
+        fnEventTap = tap
+        fnRunLoopSource = source
+        return true
+    }
+
+    private func installFnPassiveMonitor() {
         let handler: (NSEvent) -> Void = { [weak self] event in
             guard let self else { return }
             let fnDown = event.modifierFlags.contains(.function)
@@ -103,7 +175,6 @@ final class HotkeyManager {
             }
         }
         fnGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { handler($0) }
-        // Local monitor so the press is also seen when our own window is key.
         fnLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
             handler(event)
             return event

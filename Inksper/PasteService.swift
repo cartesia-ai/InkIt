@@ -5,7 +5,7 @@ import Carbon.HIToolbox
 /// Pastes a string into the frontmost application by swapping the pasteboard
 /// and synthesizing Cmd+V, then restoring the previous clipboard contents.
 final class PasteService {
-    func paste(text: String, completion: @escaping (Bool) -> Void) {
+    func paste(text: String, targetApp: NSRunningApplication?, completion: @escaping (Bool) -> Void) {
         let pb = NSPasteboard.general
         // Snapshot existing items so non-string content is preserved when possible.
         let saved = pb.pasteboardItems?.compactMap { item -> [NSPasteboard.PasteboardType: Data]? in
@@ -24,7 +24,14 @@ final class PasteService {
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            self.synthesizeCmdV()
+            if let targetApp, !targetApp.isTerminated {
+                targetApp.activate(options: [.activateIgnoringOtherApps])
+            }
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                self.synthesizeCmdV()
+            }
+
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 pb.clearContents()
                 if !saved.isEmpty {

@@ -6,13 +6,12 @@ struct InksperApp: App {
     @StateObject private var settings = SettingsStore.shared
 
     var body: some Scene {
-        // Main window: doubles as the settings/control surface. Shows on launch
-        // and when the user clicks the Dock icon.
+        // Primary window. Shows onboarding on first launch; otherwise the
+        // settings/control surface.
         WindowGroup("Inksper") {
-            SettingsView()
+            RootView()
                 .environmentObject(coordinator)
                 .environmentObject(settings)
-                .frame(minWidth: 480, minHeight: 580)
         }
         .windowResizability(.contentSize)
 
@@ -26,6 +25,21 @@ struct InksperApp: App {
             Text(coordinator.menuBarLabel)
         }
         .menuBarExtraStyle(.window)
+    }
+}
+
+struct RootView: View {
+    @EnvironmentObject var settings: SettingsStore
+    var body: some View {
+        Group {
+            if settings.hasCompletedOnboarding {
+                SettingsView()
+                    .frame(minWidth: 480, minHeight: 580)
+            } else {
+                OnboardingRootView()
+                    .frame(width: 720, height: 560)
+            }
+        }
     }
 }
 
@@ -55,12 +69,11 @@ struct MenuBarContent: View {
             }
             Divider()
             Button("Settings…") {
-                NSApp.activate(ignoringOtherApps: true)
-                if #available(macOS 14.0, *) {
-                    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-                } else {
-                    NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
-                }
+                openMainWindow()
+            }
+            Button("Show onboarding…") {
+                settings.hasCompletedOnboarding = false
+                openMainWindow()
             }
             Button("Quit Inksper") {
                 NSApp.terminate(nil)
@@ -68,5 +81,15 @@ struct MenuBarContent: View {
         }
         .padding(14)
         .frame(width: 280)
+    }
+
+    private func openMainWindow() {
+        NSApp.activate(ignoringOtherApps: true)
+        // Bring an existing window forward, or open one if none exist.
+        if let win = NSApp.windows.first(where: { $0.title == "Inksper" || $0.title.isEmpty == false }) {
+            win.makeKeyAndOrderFront(nil)
+        } else if #available(macOS 14.0, *) {
+            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        }
     }
 }
