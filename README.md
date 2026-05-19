@@ -1,55 +1,37 @@
 # InkIt
 
-Push-to-talk macOS dictation app. Hold a global hotkey, speak, release. The transcript from Cartesia STT (`ink-whisper`) is pasted into the focused text field of the frontmost app.
+Push-to-talk dictation for macOS. Hold a hotkey, speak, release — your words get transcribed by Cartesia's `ink-2` and pasted wherever your cursor is.
 
-## Status
+## Use it
 
-Phase 1–4 of `PLAN.md` are implemented in source form. You must wire the files into an Xcode project to build.
+1. Hold the **Fn 🌐** key.
+2. Speak. The notch HUD shows you're recording.
+3. Release. Transcript pastes at your cursor.
 
-## Building (one-time Xcode setup)
+Works in any text field — Slack, Mail, your IDE, browser, anywhere.
 
-1. Open Xcode → **File → New → Project… → macOS → App**.
-   - Product Name: `InkIt`
-   - Interface: **SwiftUI**
-   - Language: **Swift**
-   - Uncheck Core Data / Tests.
-2. Delete the auto-generated `InkItApp.swift` and `ContentView.swift`.
-3. Drag every file from the `InkIt/` directory in this repo into the new target.
-   - Replace the auto-generated `Info.plist` with the one in `InkIt/Info.plist`, or merge these keys into the existing one:
-     - `LSUIElement = true` (menu bar only, no Dock icon)
-     - `NSMicrophoneUsageDescription`
-4. In the target's **Signing & Capabilities** tab:
-   - Set a Development Team.
-   - Set the deployment target to **macOS 14.0** or later (MenuBarExtra).
-   - Add the **App Sandbox** capability **off** initially (Accessibility-based paste does not work reliably from a sandboxed app). If you want sandboxing, you'll need to switch the paste implementation.
-5. In **Build Settings**, ensure `Other Linker Flags` includes Carbon by default (it does for macOS App targets).
-6. Build & run. On first launch:
-   - The app appears as a microphone icon in the menu bar.
-   - Open Settings from the menu, paste your **Cartesia API key**, choose a language, set a hotkey.
-   - Grant **Microphone** and **Accessibility** permissions when prompted.
+## Setup
 
-## Default hotkey
+You need macOS 14+, a microphone, and a [Cartesia API key](https://play.cartesia.ai).
 
-`⌃⌥ Space` (Control + Option + Space). Change it in Settings → Hotkey.
+On first launch, onboarding walks you through Microphone + Accessibility permissions and your API key.
 
-## Files
+**Free up the Fn key:** macOS reserves it for the emoji panel by default. Go to **System Settings → Keyboard → Press 🌐 key to → Do Nothing**.
 
-| File | Role |
-|------|------|
-| `InkItApp.swift` | App entry point, menu bar UI |
-| `AppCoordinator.swift` | State machine for the dictation lifecycle |
-| `HotkeyManager.swift` | Carbon-based global press/release hotkey |
-| `AudioCaptureService.swift` | `AVAudioEngine` mic capture |
-| `AudioPCMConverter.swift` | Resample to mono pcm_s16le @ 16 kHz |
-| `CartesiaStreamingClient.swift` | WebSocket to `wss://api.cartesia.ai/stt/websocket` |
-| `PasteService.swift` | Pasteboard swap + synthesized ⌘V |
-| `PermissionsService.swift` | Microphone + Accessibility checks |
-| `SettingsStore.swift` | `UserDefaults`-backed settings |
-| `SettingsView.swift` | SwiftUI settings window |
-| `Info.plist` | Bundle metadata + usage strings |
+## Build from source
 
-## Notes & Risks
+No signed release yet — build it yourself. Needs Xcode 15+ and [XcodeGen](https://github.com/yonaskolb/XcodeGen).
 
-- The exact Cartesia event schema (field names like `text`, `is_final`, `flush_done`) was inferred from `PLAN.md`. If Cartesia's wire protocol differs, adjust `CartesiaStreamingClient.handleMessage`.
-- Pasting via synthesized `⌘V` requires Accessibility permission and an unsandboxed app. Some apps (e.g. secure password fields) will reject the paste.
-- The Cartesia API version string is `2026-03-01` per the plan. Update `cartesiaVersion` if the docs change.
+```bash
+brew install xcodegen
+xcodegen generate
+open InkIt.xcodeproj
+```
+
+To install:
+
+```bash
+cp -R build/Build/Products/Release/InkIt.app /Applications/
+```
+
+Code changes only take effect after replacing `/Applications/InkIt.app` — rebuilding alone isn't enough.
