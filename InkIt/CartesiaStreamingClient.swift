@@ -33,6 +33,16 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
     private var currentTurn: String = ""
     private var closeRequestedAt: Date?
 
+    // Audio captured before the server's `connected` event is held here and
+    // flushed in order once the socket is ready. URLSession will technically
+    // queue early `send()` calls, but Cartesia may discard binary frames
+    // received before it has fully initialized the session. Buffering on our
+    // side guarantees no leading audio is dropped.
+    private var isConnected = false
+    private var pendingAudio: [Data] = []
+    private var pendingClose = false
+    private let stateLock = NSLock()
+
     init(apiKey: String) {
         self.apiKey = apiKey
         super.init()
@@ -61,6 +71,13 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
 
     func sendAudio(_ data: Data) {
         guard let task, !hasClosed else { return }
+        stateLock.lock()
+        if !isConnected {
+            pendingAudio.append(data)
+            stateLock.unlock()
+            return
+        }
+        stateLock.unlock()
         task.send(.data(data)) { [weak self] err in
             if let err { self?.onError?("Send failed: \(err.localizedDescription)") }
         }
@@ -69,6 +86,19 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
     /// Request close. Server may emit one final `turn.end` before disconnecting.
     func finalizeAndClose() {
         guard let task, !hasClosed else { onClosed?(joinedTranscript()); return }
+        stateLock.lock()
+        let connected = isConnected
+        if !connected { pendingClose = true }
+        stateLock.unlock()
+        if !connected {
+            // Defer the close until buffered audio has been flushed in
+            // `handleConnected()`. The 2.5s safety timer below still fires.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+                guard let self, !self.hasClosed else { return }
+                self.finishClose(reason: .graceTimerExpired)
+            }
+            return
+        }
         closeRequestedAt = Date()
         task.send(.string(#"{"type":"close"}"#)) { _ in }
         // Safety: if the server never closes, force-close after 2.5s.
@@ -136,7 +166,10 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
             // User continued a previously "eagerly ended" turn; keep current state.
             break
 
-        case "turn.start", "connected":
+        case "connected":
+            handleConnected()
+
+        case "turn.start":
             break
 
         case "error":
@@ -146,6 +179,31 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
 
         default:
             break
+        }
+    }
+
+    /// Called when the server emits `connected`. Flushes any audio captured
+    /// during the handshake, then (if the user already released the hotkey)
+    /// sends the deferred close. Order matters: audio must be queued onto the
+    /// task BEFORE the close frame, and BEFORE we unset `isConnected`'s gate
+    /// so concurrent `sendAudio` callers don't race ahead of the buffer.
+    private func handleConnected() {
+        guard let task else { return }
+        stateLock.lock()
+        let buffered = pendingAudio
+        pendingAudio.removeAll()
+        let shouldClose = pendingClose
+        pendingClose = false
+        for chunk in buffered {
+            task.send(.data(chunk)) { [weak self] err in
+                if let err { self?.onError?("Send failed: \(err.localizedDescription)") }
+            }
+        }
+        isConnected = true
+        stateLock.unlock()
+        if shouldClose {
+            closeRequestedAt = Date()
+            task.send(.string(#"{"type":"close"}"#)) { _ in }
         }
     }
 
