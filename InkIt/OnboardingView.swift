@@ -433,30 +433,7 @@ private struct TryItStep: View {
             WaveformBar(level: coordinator.inputLevel, active: isRecording)
                 .frame(width: 220, height: 44)
 
-            ZStack {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(.black.opacity(0.25))
-                    .frame(maxWidth: 560, minHeight: 64)
-                Group {
-                    if isRecording {
-                        Text("Keep holding Fn and speak.")
-                            .foregroundStyle(.white.opacity(0.85))
-                    } else if isFinalizing {
-                        Text("Finalizing…").foregroundStyle(.white.opacity(0.85))
-                    } else if !coordinator.liveTranscript.isEmpty {
-                        HStack {
-                            Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
-                            Text(coordinator.liveTranscript).foregroundStyle(.white)
-                        }
-                    } else {
-                        Text("Press and hold Fn to start.")
-                            .foregroundStyle(.white.opacity(0.7))
-                    }
-                }
-                .font(.body)
-                .padding(.horizontal, 14)
-                .multilineTextAlignment(.center)
-            }
+            statusBox
 
             HStack(spacing: 12) {
                 Button("Skip") { next() }
@@ -473,6 +450,54 @@ private struct TryItStep: View {
         .onDisappear {
             coordinator.endOnboardingTrial()
         }
+    }
+
+    @ViewBuilder
+    private var statusBox: some View {
+        let content: AnyView = {
+            if isRecording {
+                return AnyView(
+                    Text("Keep holding Fn and speak.")
+                        .foregroundStyle(.white.opacity(0.85))
+                        .frame(maxWidth: .infinity)
+                )
+            } else if isFinalizing {
+                return AnyView(
+                    Text("Finalizing…")
+                        .foregroundStyle(.white.opacity(0.85))
+                        .frame(maxWidth: .infinity)
+                )
+            } else if !coordinator.liveTranscript.isEmpty {
+                return AnyView(
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: "checkmark.seal.fill")
+                            .foregroundStyle(.green)
+                        Text(coordinator.liveTranscript)
+                            .foregroundStyle(.white)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                )
+            } else {
+                return AnyView(
+                    Text("Press and hold Fn to start.")
+                        .foregroundStyle(.white.opacity(0.7))
+                        .frame(maxWidth: .infinity)
+                )
+            }
+        }()
+
+        content
+            .font(.body)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 14)
+            .frame(maxWidth: 560, minHeight: 64)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(.black.opacity(0.25))
+            )
     }
 }
 

@@ -174,10 +174,14 @@ final class AppCoordinator: ObservableObject {
     func beginOnboardingTrial() {
         routesFinalTranscriptToOnboarding = true
         liveTranscript = ""
+        ensureHotkeyRegistration()
     }
 
     func endOnboardingTrial() {
         routesFinalTranscriptToOnboarding = false
+        if !settings.hasCompletedOnboarding {
+            unregisterHotkey()
+        }
     }
 
     func startDictation() {
