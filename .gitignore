@@ -6,3 +6,5 @@ DerivedData/
 *.xcodeproj/xcuserdata/
 *.xcworkspace/xcuserdata/
 .claude/
+PLAN.md
+*.html

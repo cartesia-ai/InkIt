@@ -222,25 +222,13 @@ struct MainWindowView: View {
     }
 
     private func transcriptRow(_ entry: TranscriptHistoryStore.Entry) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(entry.text)
-                    .font(.body)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Text(Self.timeFmt.string(from: entry.timestamp))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            CopyTranscriptButton(copied: copiedID == entry.id) {
-                copy(entry)
-            }
+        TranscriptHistoryRow(
+            text: entry.text,
+            timestamp: Self.timeFmt.string(from: entry.timestamp),
+            copied: copiedID == entry.id
+        ) {
+            copy(entry)
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color(NSColor.controlBackgroundColor))
-        )
     }
 
     private func copy(_ entry: TranscriptHistoryStore.Entry) {
@@ -271,32 +259,78 @@ struct MainWindowView: View {
     }
 }
 
-private struct CopyTranscriptButton: View {
+private struct TranscriptHistoryRow: View {
+    let text: String
+    let timestamp: String
     let copied: Bool
-    let action: () -> Void
+    let copy: () -> Void
     @State private var hovering = false
 
     var body: some View {
-        Button(action: action) {
-            ZStack {
-                Circle()
-                    .fill(copied ? Color.green.opacity(0.15) : Color.primary.opacity(hovering ? 0.06 : 0))
-                    .frame(width: 24, height: 24)
+        Button(action: copy) {
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(text)
+                        .font(.body)
+                        .foregroundStyle(.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(timestamp)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
 
-                Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(copied ? .green : .secondary)
+                CopyTranscriptGlyph(copied: copied, highlighted: hovering)
             }
-            .frame(width: 24, height: 24)
-            .contentShape(Circle())
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(rowFill)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(rowStroke, lineWidth: hovering || copied ? 1 : 0)
+            )
         }
         .buttonStyle(.plain)
-        .help(copied ? "Copied" : "Copy")
         .onHover { isHovering in
             withAnimation(.easeOut(duration: 0.12)) {
                 hovering = isHovering
             }
         }
+        .animation(.easeOut(duration: 0.15), value: copied)
+        .help(copied ? "Copied" : "Copy transcript")
+        .accessibilityLabel(copied ? "Copied transcript" : "Copy transcript")
+    }
+
+    private var rowFill: Color {
+        if hovering {
+            return Color.accentColor.opacity(0.08)
+        }
+        return Color(NSColor.controlBackgroundColor)
+    }
+
+    private var rowStroke: Color {
+        Color.accentColor.opacity(copied ? 0.32 : 0.28)
+    }
+}
+
+private struct CopyTranscriptGlyph: View {
+    let copied: Bool
+    let highlighted: Bool
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(copied ? Color.green.opacity(0.15) : Color.primary.opacity(highlighted ? 0.06 : 0))
+                .frame(width: 24, height: 24)
+
+            Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(copied ? .green : .secondary)
+        }
+        .frame(width: 24, height: 24)
         .animation(.easeOut(duration: 0.15), value: copied)
     }
 }

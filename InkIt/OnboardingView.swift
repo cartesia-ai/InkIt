@@ -75,9 +75,10 @@ struct OnboardingRootView: View {
             .allowsHitTesting(false)
 
             VStack(spacing: 0) {
-                StepIndicator(step: step).padding(.top, 28)
+                StepIndicator(step: step)
+                    .padding(.top, 28)
 
-                Spacer(minLength: 0)
+                Spacer(minLength: 28)
 
                 Group {
                     switch step {
@@ -210,31 +211,6 @@ private struct PermissionsStep: View {
 
             if bothGranted {
                 PrimaryButton(title: "Continue", action: next)
-            } else {
-                VStack(spacing: 8) {
-                    Text("Grant both to continue.")
-                        .font(.subheadline)
-                        .foregroundStyle(.white.opacity(0.75))
-
-                    if !permissions.hasAccessibility {
-                        Button("I granted Accessibility") {
-                            permissions.confirmAccessibilityGrant()
-                        }
-                        .buttonStyle(.plain)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(Capsule().fill(.white.opacity(0.18)))
-
-                        Text("Grant access to this copy:\n\(permissions.appIdentityDescription)")
-                            .font(.caption2.monospaced())
-                            .foregroundStyle(.white.opacity(0.72))
-                            .multilineTextAlignment(.center)
-                            .lineLimit(4)
-                    }
-                }
-                .padding(.top, 6)
             }
         }
         .onAppear {
@@ -306,7 +282,7 @@ private struct APIKeyStep: View {
             HeaderBlock(
                 icon: "key.fill",
                 title: "Connect Cartesia",
-                subtitle: "Paste your Cartesia API key. Stored locally on this Mac only."
+                subtitle: "Powered by Cartesia ink-2. Your API key is stored locally on this Mac only."
             )
 
             VStack(alignment: .leading, spacing: 10) {

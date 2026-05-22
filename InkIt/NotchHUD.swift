@@ -14,6 +14,8 @@ final class NotchHUDController: NSObject {
     private var history: TranscriptHistoryStore
     private let settings = SettingsStore.shared
     private var screenObserver: NSObjectProtocol?
+    private var localMouseDownMonitor: Any?
+    private var globalMouseDownMonitor: Any?
     private var cancellables = Set<AnyCancellable>()
     private var dragStartPosition: Double?
 
@@ -41,6 +43,12 @@ final class NotchHUDController: NSObject {
     deinit {
         if let observer = screenObserver {
             NotificationCenter.default.removeObserver(observer)
+        }
+        if let localMouseDownMonitor {
+            NSEvent.removeMonitor(localMouseDownMonitor)
+        }
+        if let globalMouseDownMonitor {
+            NSEvent.removeMonitor(globalMouseDownMonitor)
         }
     }
 
@@ -136,7 +144,7 @@ final class NotchHUDController: NSObject {
 
     private func toggleTranscriptPanel() {
         if transcriptPanel?.isVisible == true {
-            transcriptPanel?.orderOut(nil)
+            hideTranscriptPanel()
         } else {
             showTranscriptPanel()
         }
@@ -165,6 +173,59 @@ final class NotchHUDController: NSObject {
         }
         positionTranscriptPanel()
         panel.orderFrontRegardless()
+        installOutsideClickMonitors()
+    }
+
+    private func hideTranscriptPanel() {
+        transcriptPanel?.orderOut(nil)
+        removeOutsideClickMonitors()
+    }
+
+    private func installOutsideClickMonitors() {
+        guard localMouseDownMonitor == nil, globalMouseDownMonitor == nil else { return }
+
+        let events: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        localMouseDownMonitor = NSEvent.addLocalMonitorForEvents(matching: events) { [weak self] event in
+            self?.dismissTranscriptPanelIfClickIsOutside(event)
+            return event
+        }
+        globalMouseDownMonitor = NSEvent.addGlobalMonitorForEvents(matching: events) { [weak self] event in
+            Task { @MainActor in
+                self?.dismissTranscriptPanelIfClickIsOutside(event)
+            }
+        }
+    }
+
+    private func removeOutsideClickMonitors() {
+        if let localMouseDownMonitor {
+            NSEvent.removeMonitor(localMouseDownMonitor)
+            self.localMouseDownMonitor = nil
+        }
+        if let globalMouseDownMonitor {
+            NSEvent.removeMonitor(globalMouseDownMonitor)
+            self.globalMouseDownMonitor = nil
+        }
+    }
+
+    private func dismissTranscriptPanelIfClickIsOutside(_ event: NSEvent) {
+        guard transcriptPanel?.isVisible == true else { return }
+
+        let clickLocation = screenLocation(for: event)
+        if panel?.frame.contains(clickLocation) == true {
+            return
+        }
+        if transcriptPanel?.frame.contains(clickLocation) == true {
+            return
+        }
+
+        hideTranscriptPanel()
+    }
+
+    private func screenLocation(for event: NSEvent) -> NSPoint {
+        guard let window = event.window else {
+            return NSEvent.mouseLocation
+        }
+        return window.convertPoint(toScreen: event.locationInWindow)
     }
 
     private func positionTranscriptPanel() {
@@ -181,7 +242,7 @@ final class NotchHUDController: NSObject {
     }
 
     func dismiss() {
-        transcriptPanel?.orderOut(nil)
+        hideTranscriptPanel()
         transcriptPanel = nil
         panel?.orderOut(nil)
         panel = nil
@@ -382,30 +443,12 @@ private struct LatestTranscriptPanelView: View {
     }
 
     private func transcriptRow(_ entry: TranscriptHistoryStore.Entry) -> some View {
-        let isCopied = copiedID == entry.id
-        return HStack(alignment: .top, spacing: 8) {
-            Text(entry.text)
-                .font(.system(size: 12))
-                .foregroundStyle(.white.opacity(0.92))
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Button {
-                copy(entry)
-            } label: {
-                Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(isCopied ? .green : .white.opacity(0.55))
-                    .frame(width: 20, height: 20)
-            }
-            .buttonStyle(.plain)
-            .help(isCopied ? "Copied" : "Copy")
+        LatestTranscriptRow(
+            text: entry.text,
+            copied: copiedID == entry.id
+        ) {
+            copy(entry)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(.white.opacity(0.04))
-        )
     }
 
     private func copy(_ entry: TranscriptHistoryStore.Entry) {
@@ -416,5 +459,60 @@ private struct LatestTranscriptPanelView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
             if copiedID == entry.id { copiedID = nil }
         }
+    }
+}
+
+private struct LatestTranscriptRow: View {
+    let text: String
+    let copied: Bool
+    let copy: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: copy) {
+            HStack(alignment: .top, spacing: 8) {
+                Text(text)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(copied ? .green : .white.opacity(hovering ? 0.82 : 0.55))
+                    .frame(width: 20, height: 20)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(rowFill)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(rowStroke, lineWidth: hovering || copied ? 1 : 0)
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering in
+            withAnimation(.easeOut(duration: 0.12)) {
+                hovering = isHovering
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: copied)
+        .help(copied ? "Copied" : "Copy transcript")
+        .accessibilityLabel(copied ? "Copied transcript" : "Copy transcript")
+    }
+
+    private var rowFill: Color {
+        if hovering {
+            return .white.opacity(0.09)
+        }
+        return .white.opacity(0.04)
+    }
+
+    private var rowStroke: Color {
+        copied ? .white.opacity(0.28) : .white.opacity(0.18)
     }
 }
