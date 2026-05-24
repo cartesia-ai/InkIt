@@ -123,40 +123,55 @@ final class TranscriptRewriter {
         self.session = URLSession(configuration: config)
     }
 
-    func rewrite(transcript: String, context: String, timeout: TimeInterval = 3.5) async -> String? {
+    /// Cursor-session path. Sends the conversation summary (stable across
+    /// many dictations) and recent turns (often stable within a burst) as
+    /// part of a `cache_control`'d system prefix.
+    func rewriteWithCursorSession(transcript: String,
+                                  summary: String?,
+                                  recentTurns: String,
+                                  timeout: TimeInterval = 3.5) async -> String? {
+        guard !apiKey.isEmpty, !transcript.isEmpty else { return nil }
+
+        var contextBody = ""
+        if let summary, !summary.isEmpty {
+            contextBody += "SESSION SUMMARY:\n\(summary)\n\n"
+        }
+        if !recentTurns.isEmpty {
+            contextBody += "RECENT TURNS:\n\(recentTurns)"
+        }
+        guard !contextBody.isEmpty else { return nil }
+
+        DebugLog.info("Rewriter[cursor]: summary=\(summary?.count ?? 0) recent=\(recentTurns.count) transcript=\"\(transcript)\"")
+
+        let system: [[String: Any]] = [
+            ["type": "text", "text": Self.instructions],
+            ["type": "text",
+             "text": contextBody,
+             "cache_control": ["type": "ephemeral"]]
+        ]
+        return await call(system: system, transcript: transcript, timeout: timeout, label: "cursor")
+    }
+
+    /// Raw-context path (AX-extracted text from non-Cursor apps). We don't
+    /// bother with cache_control here since the content varies wildly per
+    /// dictation; the cache would mostly miss.
+    func rewriteWithRawContext(transcript: String,
+                               context: String,
+                               timeout: TimeInterval = 3.5) async -> String? {
         guard !apiKey.isEmpty, !transcript.isEmpty, !context.isEmpty else { return nil }
 
-        DebugLog.info("Rewriter context: \(context.count) chars")
-        DebugLog.info("Rewriter raw transcript: \(transcript)")
+        DebugLog.info("Rewriter[ax]: context=\(context.count) chars transcript=\"\(transcript)\"")
 
-        let system = """
-        You repair speech-to-text transcripts dictated by a software engineer mid-conversation with an AI coding assistant.
+        let system: [[String: Any]] = [
+            ["type": "text", "text": Self.instructions],
+            ["type": "text", "text": "VISIBLE CONTENT:\n\(context)"]
+        ]
+        return await call(system: system, transcript: transcript, timeout: timeout, label: "ax")
+    }
 
-        Below is the recent transcript of that assistant conversation — what the user was just reading and thinking about when they started dictating. Use it to understand the technical subject they are working on.
+    // MARK: - Shared HTTP plumbing
 
-        CONVERSATION CONTEXT:
-        ---
-        \(context)
-        ---
-
-        Your task: rewrite the user's dictated transcript so it reads as the engineer almost certainly intended.
-
-        Use the conversation context to infer:
-        - Which libraries, frameworks, models, file paths, identifiers, and proper nouns are being discussed.
-        - Correct spelling, capitalization, hyphenation, and word-joining of those terms (e.g. "flash attention" → "FlashAttention", "vllm" / "BLM" / "v lol m" → "vLLM", "page attention" → "PagedAttention", "kvk function" → "kVK_Function", "gpt four" → "GPT-4").
-        - Likely homophones and ASR slips that misrepresent technical content.
-
-        Beyond explicit terms in the context, use general technical knowledge to recognize and fix terms the engineer is likely referring to even when not literally in the context (e.g. common library names, hardware terms, Python APIs).
-
-        Rules:
-        - Preserve the user's voice, sentence structure, contractions, hesitations, and intent. Do NOT paraphrase, summarize, expand, or add new content.
-        - Only fix when you are confident. If a word might be a generic English word, leave it alone.
-        - Don't invent punctuation that wasn't there, with one exception: you may join multi-word ASR splits into a single canonical term (e.g. "kvk function" → "kVK_Function"), and you may add a missing apostrophe/hyphen that's part of a proper name.
-        - Keep length roughly equal to the input. If your output is substantially longer than the transcript, you've over-corrected — pull back.
-
-        Output ONLY the corrected transcript on a single segment. No preamble, no quotes, no notes, no markdown.
-        """
-
+    private func call(system: [[String: Any]], transcript: String, timeout: TimeInterval, label: String) async -> String? {
         let estimatedInputTokens = max(48, transcript.count / 3)
         let maxTokens = min(1500, estimatedInputTokens * 3 + 80)
 
@@ -166,7 +181,7 @@ final class TranscriptRewriter {
             "temperature": 0,
             "system": system,
             "messages": [
-                ["role": "user", "content": transcript]
+                ["role": "user", "content": "TRANSCRIPT TO REPAIR:\n\(transcript)"]
             ]
         ]
         guard let payload = try? JSONSerialization.data(withJSONObject: body) else { return nil }
@@ -185,13 +200,21 @@ final class TranscriptRewriter {
             let elapsed = String(format: "%.3fs", Date().timeIntervalSince(started))
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                 let bodyStr = String(data: data, encoding: .utf8)?.prefix(400) ?? "<non-utf8>"
-                DebugLog.error("Rewriter HTTP error: \(String(describing: response)) body=\(bodyStr) elapsed=\(elapsed)")
+                DebugLog.error("Rewriter[\(label)] HTTP error: \(String(describing: response)) body=\(bodyStr) elapsed=\(elapsed)")
                 return nil
             }
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let content = json["content"] as? [[String: Any]] else {
-                DebugLog.error("Rewriter response parse failed elapsed=\(elapsed)")
+                DebugLog.error("Rewriter[\(label)] response parse failed elapsed=\(elapsed)")
                 return nil
+            }
+            // Log cache stats whenever Anthropic reports them.
+            if let usage = json["usage"] as? [String: Any] {
+                let read = (usage["cache_read_input_tokens"] as? Int) ?? 0
+                let create = (usage["cache_creation_input_tokens"] as? Int) ?? 0
+                let input = (usage["input_tokens"] as? Int) ?? 0
+                let output = (usage["output_tokens"] as? Int) ?? 0
+                DebugLog.info("Rewriter[\(label)] usage: input=\(input) output=\(output) cache_read=\(read) cache_create=\(create)")
             }
             let text = content.compactMap { block -> String? in
                 guard (block["type"] as? String) == "text" else { return nil }
@@ -199,22 +222,41 @@ final class TranscriptRewriter {
             }.joined()
 
             let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            DebugLog.info("Rewriter response (\(elapsed)): \(cleaned)")
+            DebugLog.info("Rewriter[\(label)] response (\(elapsed)): \(cleaned)")
             guard !cleaned.isEmpty else { return nil }
-            // Sanity check: a corrected transcript shouldn't balloon beyond
-            // ~2.5× the original length. The freer prompt may legitimately
-            // add a few characters when joining words (e.g. "flash attention"
-            // → "FlashAttention" actually shrinks), so the bound is generous.
-            // If we exceed it, the model went off-script — fall back.
             if cleaned.count > max(120, Int(Double(transcript.count) * 2.5) + 40) {
-                DebugLog.error("Rewriter response rejected by length sanity check (\(cleaned.count) chars vs raw \(transcript.count))")
+                DebugLog.error("Rewriter[\(label)] response rejected by length sanity check (\(cleaned.count) chars vs raw \(transcript.count))")
                 return nil
             }
             return cleaned
         } catch {
             let elapsed = String(format: "%.3fs", Date().timeIntervalSince(started))
-            DebugLog.error("Rewriter error: \(error.localizedDescription) elapsed=\(elapsed)")
+            DebugLog.error("Rewriter[\(label)] error: \(error.localizedDescription) elapsed=\(elapsed)")
             return nil
         }
     }
+
+    // MARK: - Static prompt
+
+    private static let instructions: String = """
+    You repair speech-to-text transcripts dictated by a software engineer mid-conversation with an AI coding assistant. You will receive:
+    - One or more context blocks (a session summary, recent conversation turns, or visible content from the user's screen).
+    - A user message containing the raw dictated transcript to repair.
+
+    Use the context to understand the technical subject the engineer is working on. Then rewrite the dictated transcript so it reads as they almost certainly intended.
+
+    Fix:
+    - Library names, framework names, model names, hardware terms, API names, function names, file paths, and other proper nouns and identifiers (e.g. "flash attention" → "FlashAttention", "vllm" / "BLM" / "v lol m" → "vLLM", "page attention" → "PagedAttention", "kvk function" → "kVK_Function", "gpt four" → "GPT-4", "torch dot nn" → "torch.nn").
+    - Homophones and ASR slips that obviously misrepresent technical content.
+
+    Use general technical knowledge to recognize terms the engineer is likely referring to even when they are not literally present in the context.
+
+    Rules:
+    - Preserve the user's voice, sentence structure, contractions, and intent. Do NOT paraphrase, summarize, expand, or add new content.
+    - Only fix when you are confident. If a word might just be ordinary English, leave it alone.
+    - Don't invent punctuation that wasn't there, except: you may join multi-word ASR splits into a single canonical term (e.g. "kvk function" → "kVK_Function"), and you may add a hyphen or apostrophe when it's part of a proper name.
+    - Keep length roughly equal to the input. If your output is substantially longer than the transcript, you've over-corrected — pull back.
+
+    Output ONLY the corrected transcript on a single segment. No preamble, no quotes, no notes, no markdown.
+    """
 }

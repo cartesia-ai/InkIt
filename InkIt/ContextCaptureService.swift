@@ -9,6 +9,38 @@ protocol ContextProvider {
     func captureContext(for app: NSRunningApplication?) async -> String?
 }
 
+/// Cheap title-only AX read for an arbitrary app's focused window. Used by
+/// `SessionLocator` to disambiguate which Cursor session is active without
+/// paying for a full tree walk.
+enum FocusedWindowTitle {
+    static func read(for app: NSRunningApplication?) -> String? {
+        let ownBundleID = Bundle.main.bundleIdentifier
+        let resolvedPid: pid_t? = {
+            if let app, app.bundleIdentifier != ownBundleID { return app.processIdentifier }
+            if let front = NSWorkspace.shared.frontmostApplication,
+               front.bundleIdentifier != ownBundleID { return front.processIdentifier }
+            return NSWorkspace.shared.runningApplications.first {
+                $0.activationPolicy == .regular && $0.bundleIdentifier != ownBundleID && !$0.isTerminated
+            }?.processIdentifier
+        }()
+        guard let pid = resolvedPid, pid > 0 else { return nil }
+
+        let appElement = AXUIElementCreateApplication(pid)
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &ref) == .success,
+              let value = ref,
+              CFGetTypeID(value) == AXUIElementGetTypeID()
+        else { return nil }
+        let window = value as! AXUIElement
+        var titleRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleRef) == .success,
+              let title = titleRef as? String,
+              !title.isEmpty
+        else { return nil }
+        return title
+    }
+}
+
 /// Walks the focused app's Accessibility tree and concatenates visible text.
 ///
 /// The AX tree on a busy app (Cursor, Xcode, a browser) can be huge — we cap

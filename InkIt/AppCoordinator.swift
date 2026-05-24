@@ -25,7 +25,7 @@ final class AppCoordinator: ObservableObject {
     private let hotkey = HotkeyManager()
     private var client: CartesiaStreamingClient?
     private let axProvider: ContextProvider = FocusedWindowAXProvider()
-    private let cursorProvider = CursorTranscriptProvider()
+    private static let cursorBundleID = "com.todesktop.230313mzl4w4u92"
     let settings = SettingsStore.shared
     let history = TranscriptHistoryStore.shared
     private var hud: NotchHUDController?
@@ -300,6 +300,7 @@ final class AppCoordinator: ObservableObject {
 
         let targetApp = pasteTargetApp
         let apiKey = settings.anthropicAPIKey
+        let rewriter = TranscriptRewriter(apiKey: apiKey)
 
         let targetDesc: String = {
             guard let app = targetApp else { return "nil(pasteTargetApp)" }
@@ -307,30 +308,50 @@ final class AppCoordinator: ObservableObject {
         }()
         DebugLog.info("correctedTranscript: target=\(targetDesc) anthropicKey=set(\(apiKey.count)c)")
 
-        // Prefer Cursor's on-disk JSONL transcript when target is Cursor — its
-        // Electron renderer doesn't expose chat text via AX, so the JSONL is
-        // the only way to see the conversation the user was reading.
-        // Fall back to AX for native apps (and as a last resort for Cursor
-        // if no transcript file exists yet).
-        var context: String? = nil
-        var source = "none"
-        if let cursor = await cursorProvider.captureContext(for: targetApp), !cursor.isEmpty {
-            context = cursor
-            source = "cursor-jsonl"
-        } else if hasAX, let ax = await axProvider.captureContext(for: targetApp), !ax.isEmpty {
-            context = ax
-            source = "ax"
+        // Cursor path: locate the active session, load messages, ensure a
+        // summary is fresh, then call the rewriter with summary + recent
+        // turns as a cache_control prefix.
+        let isCursorTarget = targetApp?.bundleIdentifier == Self.cursorBundleID
+            || NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == Self.cursorBundleID && !$0.isTerminated }
+        if isCursorTarget {
+            let title = FocusedWindowTitle.read(for: targetApp)
+            DebugLog.info("correctedTranscript: cursor path, windowTitle=\(title.map { "\"\($0)\"" } ?? "nil")")
+            if let location = SessionLocator.locate(forApp: targetApp, windowTitle: title) {
+                let messages = ConversationLoader.load(from: location.url)
+                DebugLog.info("Cursor session=\(location.uuid) project=\(location.project) messages=\(messages.count)")
+                if !messages.isEmpty {
+                    state = .rewriting
+                    let summary: String? = await {
+                        let fresh = await SessionSummarizer.ensureFresh(
+                            uuid: location.uuid,
+                            transcriptPath: location.url.path,
+                            messages: messages,
+                            apiKey: apiKey
+                        )
+                        return fresh?.summary
+                    }()
+                    let recentMessageCount = min(messages.count, 8)
+                    let recentTurns = Array(messages.suffix(recentMessageCount)).renderTail(maxChars: 6_000)
+                    let rewritten = await rewriter.rewriteWithCursorSession(
+                        transcript: raw,
+                        summary: summary,
+                        recentTurns: recentTurns
+                    )
+                    return rewritten ?? raw
+                }
+            }
+            DebugLog.info("Cursor path yielded no session; falling through to AX")
         }
-        guard let context else {
-            DebugLog.info("Context capture returned nothing for target=\(targetDesc)")
+
+        // AX fallback (native apps, or Cursor with no usable session file)
+        guard hasAX, let context = await axProvider.captureContext(for: targetApp), !context.isEmpty else {
+            DebugLog.info("AX capture empty for target=\(targetDesc)")
             return raw
         }
         let preview = String(context.prefix(400)).replacingOccurrences(of: "\n", with: " ")
-        DebugLog.info("Context source=\(source) chars=\(context.count) preview=\(preview)")
-
+        DebugLog.info("Context source=ax chars=\(context.count) preview=\(preview)")
         state = .rewriting
-        let rewriter = TranscriptRewriter(apiKey: apiKey)
-        let rewritten = await rewriter.rewrite(transcript: raw, context: context)
+        let rewritten = await rewriter.rewriteWithRawContext(transcript: raw, context: context)
         return rewritten ?? raw
     }
 
