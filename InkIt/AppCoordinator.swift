@@ -310,9 +310,11 @@ final class AppCoordinator: ObservableObject {
 
         // Cursor path: locate the active session, load messages, ensure a
         // summary is fresh, then call the rewriter with summary + recent
-        // turns as a cache_control prefix.
+        // turns as a cache_control prefix. Only taken when the explicit
+        // paste target IS Cursor — we don't want Cursor's conversation
+        // leaking into Slack/Notes/etc. dictations just because Cursor
+        // happens to be running in the background.
         let isCursorTarget = targetApp?.bundleIdentifier == Self.cursorBundleID
-            || NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == Self.cursorBundleID && !$0.isTerminated }
         if isCursorTarget {
             let title = FocusedWindowTitle.read(for: targetApp)
             DebugLog.info("correctedTranscript: cursor path, windowTitle=\(title.map { "\"\($0)\"" } ?? "nil")")
