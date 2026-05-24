@@ -259,6 +259,7 @@ private struct NotchHUDView: View {
     @GestureState private var didDrag = false
 
     var isRecording: Bool { coordinator.state == .recording }
+    var isRewriting: Bool { coordinator.state == .rewriting }
     var isFinalizing: Bool {
         switch coordinator.state {
         case .finalizing, .pasting: return true
@@ -268,6 +269,7 @@ private struct NotchHUDView: View {
 
     var mode: HUDMode {
         if isRecording { return .recording }
+        if isRewriting { return .rewriting }
         if isFinalizing { return .finalizing }
         return .idle
     }
@@ -295,6 +297,7 @@ private struct NotchHUDView: View {
         switch mode {
         case .idle:       idleContent
         case .recording:  recordingContent
+        case .rewriting:  rewritingContent
         case .finalizing: finalizingContent
         }
     }
@@ -335,10 +338,23 @@ private struct NotchHUDView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
+
+    private var rewritingContent: some View {
+        HStack(spacing: 5) {
+            ProgressView()
+                .controlSize(.mini)
+                .tint(.white)
+                .scaleEffect(0.65)
+            Text("Polish")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(.white.opacity(0.82))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    }
 }
 
 private enum HUDMode: Equatable {
-    case idle, recording, finalizing
+    case idle, recording, rewriting, finalizing
 }
 
 // MARK: - Pill shape (rounded bottom, square top, anchored to screen edge)

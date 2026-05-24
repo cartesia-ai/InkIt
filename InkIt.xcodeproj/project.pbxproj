@@ -9,8 +9,10 @@
 /* Begin PBXBuildFile section */
 		009AB7FD197BC653CA15DCC8 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E4DB3FA7777E64943659C33 /* SettingsView.swift */; };
 		0DA5D19A75F46B863942217A /* AudioCaptureService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5DE39DA8AE8C4B89EEBCEEA /* AudioCaptureService.swift */; };
+		5AF84E5EDB43D50879FC02B1 /* DebugLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAB1584D75F7E3792397C2E7 /* DebugLog.swift */; };
 		78822B6F8C61A4E070AE3362 /* InkItApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 803F4AFD5673662A6E0EC154 /* InkItApp.swift */; };
 		800C9CD05A20DAF5825DA2C9 /* CartesiaStreamingClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFE81304C6871635CC1071F3 /* CartesiaStreamingClient.swift */; };
+		A66400AC8CF5A01612F39807 /* ContextCaptureService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1DEDEAC7A590A24352E55F3 /* ContextCaptureService.swift */; };
 		AD0307A8A27572538D34C61B /* NotchHUD.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58F8477D46C3AB5C1F02B382 /* NotchHUD.swift */; };
 		BA5700B0D92F155454B5342B /* HotkeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 345763C522AA004E8829C897 /* HotkeyManager.swift */; };
 		BCCD40E8DD69801C36A14C2D /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC67C58A11A995A5AB40E46C /* OnboardingView.swift */; };
@@ -22,12 +24,14 @@
 		F28F236B83FB1D059CBACA2E /* PasteService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10EC011AD368E4F4521176C8 /* PasteService.swift */; };
 		F6AADC8A7F77E1F5A055EF9B /* PermissionsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F1C0A33FF80CCA3AD3BB8C2 /* PermissionsService.swift */; };
 		F84C6C683A6622827C8A63C7 /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8269B816FE7B4D3B89CA3D34 /* SettingsStore.swift */; };
+		FB8D761C27F597C36E6E0F0C /* TranscriptRewriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D9D3536D4B73BD8EEC3EF14 /* TranscriptRewriter.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		10EC011AD368E4F4521176C8 /* PasteService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteService.swift; sourceTree = "<group>"; };
 		2E4DB3FA7777E64943659C33 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		345763C522AA004E8829C897 /* HotkeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyManager.swift; sourceTree = "<group>"; };
+		3D9D3536D4B73BD8EEC3EF14 /* TranscriptRewriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptRewriter.swift; sourceTree = "<group>"; };
 		3F1C0A33FF80CCA3AD3BB8C2 /* PermissionsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionsService.swift; sourceTree = "<group>"; };
 		490951A2A504AA61E23A0858 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		4F6D15F979487AE9C0B309B6 /* FeedbackSoundPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackSoundPlayer.swift; sourceTree = "<group>"; };
@@ -37,9 +41,11 @@
 		803F4AFD5673662A6E0EC154 /* InkItApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InkItApp.swift; sourceTree = "<group>"; };
 		8269B816FE7B4D3B89CA3D34 /* SettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsStore.swift; sourceTree = "<group>"; };
 		A5DE39DA8AE8C4B89EEBCEEA /* AudioCaptureService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCaptureService.swift; sourceTree = "<group>"; };
+		AAB1584D75F7E3792397C2E7 /* DebugLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugLog.swift; sourceTree = "<group>"; };
 		B1A46AE5B512528E8C972D57 /* AudioPCMConverter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPCMConverter.swift; sourceTree = "<group>"; };
 		CC67C58A11A995A5AB40E46C /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		CFE81304C6871635CC1071F3 /* CartesiaStreamingClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CartesiaStreamingClient.swift; sourceTree = "<group>"; };
+		F1DEDEAC7A590A24352E55F3 /* ContextCaptureService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextCaptureService.swift; sourceTree = "<group>"; };
 		F328F174E8F91669F7BA798A /* AppCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCoordinator.swift; sourceTree = "<group>"; };
 		FB2D8932105436871A6E8666 /* TranscriptHistoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptHistoryStore.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -69,6 +75,8 @@
 				A5DE39DA8AE8C4B89EEBCEEA /* AudioCaptureService.swift */,
 				B1A46AE5B512528E8C972D57 /* AudioPCMConverter.swift */,
 				CFE81304C6871635CC1071F3 /* CartesiaStreamingClient.swift */,
+				F1DEDEAC7A590A24352E55F3 /* ContextCaptureService.swift */,
+				AAB1584D75F7E3792397C2E7 /* DebugLog.swift */,
 				4F6D15F979487AE9C0B309B6 /* FeedbackSoundPlayer.swift */,
 				345763C522AA004E8829C897 /* HotkeyManager.swift */,
 				5C3266F5DB7D0C4E1DFA20A8 /* InkIt.entitlements */,
@@ -80,6 +88,7 @@
 				8269B816FE7B4D3B89CA3D34 /* SettingsStore.swift */,
 				2E4DB3FA7777E64943659C33 /* SettingsView.swift */,
 				FB2D8932105436871A6E8666 /* TranscriptHistoryStore.swift */,
+				3D9D3536D4B73BD8EEC3EF14 /* TranscriptRewriter.swift */,
 			);
 			path = InkIt;
 			sourceTree = "<group>";
@@ -159,6 +168,8 @@
 				0DA5D19A75F46B863942217A /* AudioCaptureService.swift in Sources */,
 				E27D41C3069B464565533B3E /* AudioPCMConverter.swift in Sources */,
 				800C9CD05A20DAF5825DA2C9 /* CartesiaStreamingClient.swift in Sources */,
+				A66400AC8CF5A01612F39807 /* ContextCaptureService.swift in Sources */,
+				5AF84E5EDB43D50879FC02B1 /* DebugLog.swift in Sources */,
 				F04B3B2C46A69BA59FC3410D /* FeedbackSoundPlayer.swift in Sources */,
 				BA5700B0D92F155454B5342B /* HotkeyManager.swift in Sources */,
 				78822B6F8C61A4E070AE3362 /* InkItApp.swift in Sources */,
@@ -169,6 +180,7 @@
 				F84C6C683A6622827C8A63C7 /* SettingsStore.swift in Sources */,
 				009AB7FD197BC653CA15DCC8 /* SettingsView.swift in Sources */,
 				C0F9C197684B45C2A9F638DE /* TranscriptHistoryStore.swift in Sources */,
+				FB8D761C27F597C36E6E0F0C /* TranscriptRewriter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

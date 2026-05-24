@@ -7,6 +7,7 @@ enum DictationState: Equatable {
     case idle
     case recording
     case finalizing
+    case rewriting
     case pasting
     case error(String)
 }
@@ -23,6 +24,7 @@ final class AppCoordinator: ObservableObject {
     let permissions = PermissionsService.shared
     private let hotkey = HotkeyManager()
     private var client: CartesiaStreamingClient?
+    private let contextProvider: ContextProvider = FocusedWindowAXProvider()
     let settings = SettingsStore.shared
     let history = TranscriptHistoryStore.shared
     private var hud: NotchHUDController?
@@ -136,6 +138,7 @@ final class AppCoordinator: ObservableObject {
         case .idle: return "Idle"
         case .recording: return "Recording…"
         case .finalizing: return "Finalizing…"
+        case .rewriting: return "Polishing…"
         case .pasting: return "Pasting…"
         case .error(let m): return "Error: \(m)"
         }
@@ -145,7 +148,7 @@ final class AppCoordinator: ObservableObject {
         switch state {
         case .idle: return .secondary
         case .recording: return .red
-        case .finalizing, .pasting: return .orange
+        case .finalizing, .rewriting, .pasting: return .orange
         case .error: return .red
         }
     }
@@ -153,7 +156,7 @@ final class AppCoordinator: ObservableObject {
     var menuBarIconName: String {
         switch state {
         case .recording: return "waveform.circle.fill"
-        case .finalizing, .pasting: return "waveform.circle"
+        case .finalizing, .rewriting, .pasting: return "waveform.circle"
         case .error: return "exclamationmark.circle"
         case .idle: return "mic"
         }
@@ -165,6 +168,7 @@ final class AppCoordinator: ObservableObject {
         switch state {
         case .recording: return "● Ink"
         case .finalizing: return "… Ink"
+        case .rewriting: return "✎ Ink"
         case .pasting: return "↩ Ink"
         case .error: return "⚠ Ink"
         case .idle: return "Ink"
@@ -228,26 +232,29 @@ final class AppCoordinator: ObservableObject {
         client.onClosed = { [weak self] finalText in
             Task { @MainActor in
                 guard let self else { return }
-                let final = finalText.trimmingCharacters(in: .whitespacesAndNewlines)
-                if final.isEmpty {
+                let raw = finalText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if raw.isEmpty {
                     self.pasteTargetApp = nil
                     self.state = .idle
                     return
                 }
                 if self.routesFinalTranscriptToOnboarding {
                     self.pasteTargetApp = nil
-                    self.liveTranscript = final
+                    self.liveTranscript = raw
                     self.state = .idle
                     return
                 }
+
+                let corrected = await self.correctedTranscript(raw: raw)
+
                 self.state = .pasting
-                self.paste.paste(text: final, targetApp: self.pasteTargetApp) { ok in
+                self.paste.paste(text: corrected, targetApp: self.pasteTargetApp) { ok in
                     Task { @MainActor in
                         self.pasteTargetApp = nil
                         if !ok {
                             self.setError("Paste failed.")
                         } else {
-                            self.history.add(final)
+                            self.history.add(corrected)
                             self.state = .idle
                         }
                     }
@@ -274,6 +281,47 @@ final class AppCoordinator: ObservableObject {
         if settings.playFeedbackSounds { FeedbackSoundPlayer.shared.playStop() }
         audio.stop()
         client?.finalizeAndClose()
+    }
+
+    /// Optionally runs the raw transcript through the AI correction pipeline.
+    /// Returns the corrected text on success, or `raw` if correction is
+    /// disabled or anything fails. Never throws — the user must always get
+    /// at least the raw transcript pasted.
+    private func correctedTranscript(raw: String) async -> String {
+        let enabled = settings.correctionEnabled
+        let hasKey = !settings.anthropicAPIKey.isEmpty
+        let hasAX = permissions.hasAccessibility
+        DebugLog.info("correctedTranscript: raw=\"\(raw)\" enabled=\(enabled) hasKey=\(hasKey) hasAX=\(hasAX)")
+        guard enabled, hasKey, hasAX else {
+            DebugLog.info("correctedTranscript: skipping (enabled=\(enabled) hasKey=\(hasKey) hasAX=\(hasAX))")
+            return raw
+        }
+
+        let targetApp = pasteTargetApp
+        let apiKey = settings.anthropicAPIKey
+
+        let targetDesc: String = {
+            guard let app = targetApp else { return "nil(pasteTargetApp)" }
+            return "\(app.localizedName ?? "?") [\(app.bundleIdentifier ?? "?")] pid=\(app.processIdentifier)"
+        }()
+        DebugLog.info("correctedTranscript: entering with raw=\"\(raw)\" target=\(targetDesc) anthropicKey=\(apiKey.isEmpty ? "EMPTY" : "set(\(apiKey.count)c)") ax=\(permissions.hasAccessibility)")
+        guard let context = await contextProvider.captureContext(for: targetApp),
+              !context.isEmpty else {
+            DebugLog.info("AX capture returned empty for target=\(targetDesc)")
+            return raw
+        }
+        let preview = String(context.prefix(400)).replacingOccurrences(of: "\n", with: " ")
+        DebugLog.info("AX capture: chars=\(context.count) preview=\(preview)")
+        let glossary = GlossaryExtractor.extract(from: context)
+        guard !glossary.isEmpty else {
+            DebugLog.info("Glossary empty — skipping LLM (raw context had no identifier-like tokens)")
+            return raw
+        }
+
+        state = .rewriting
+        let rewriter = TranscriptRewriter(apiKey: apiKey)
+        let rewritten = await rewriter.rewrite(transcript: raw, glossary: glossary)
+        return rewritten ?? raw
     }
 
     private func setError(_ message: String) {

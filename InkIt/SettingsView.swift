@@ -18,6 +18,7 @@ struct SettingsView: View {
     @EnvironmentObject var settings: SettingsStore
     @StateObject private var permissions = PermissionsService.shared
     @State private var showAPIKey = false
+    @State private var showAnthropicKey = false
 
     var body: some View {
         Form {
@@ -57,6 +58,51 @@ struct SettingsView: View {
                     .toggleStyle(.switch)
                     .tint(.accentColor)
                     .controlSize(.regular)
+            }
+
+            Section {
+                Toggle("Repair technical terms after dictation", isOn: $settings.correctionEnabled)
+                    .toggleStyle(.switch)
+                    .tint(.accentColor)
+                    .controlSize(.regular)
+
+                HStack {
+                    if showAnthropicKey {
+                        TextField("Anthropic API key", text: $settings.anthropicAPIKey)
+                            .textFieldStyle(.plain)
+                    } else {
+                        SecureField("Anthropic API key", text: $settings.anthropicAPIKey)
+                            .textFieldStyle(.plain)
+                    }
+                    Button {
+                        showAnthropicKey.toggle()
+                    } label: {
+                        Image(systemName: showAnthropicKey ? "eye.slash" : "eye")
+                            .font(.system(size: 16, weight: .medium))
+                            .frame(width: 34, height: 34)
+                    }
+                    .buttonStyle(.borderless)
+                    .contentShape(Rectangle())
+                    .help(showAnthropicKey ? "Hide the Anthropic API key" : "Show the Anthropic API key")
+                    .modifier(PointingHandCursor())
+                }
+                .frame(minHeight: 46)
+                .disabled(!settings.correctionEnabled)
+                .opacity(settings.correctionEnabled ? 1 : 0.5)
+
+                if settings.correctionEnabled && settings.anthropicAPIKey.isEmpty {
+                    Text("Add an Anthropic API key to enable correction. Until then, transcripts paste unchanged.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("AI correction")
+            } footer: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Reads visible text from the focused app via Accessibility, extracts identifiers (camelCase, snake_case, file names), and asks Claude Haiku to fix any matches in the transcript before pasting.")
+                    Link("Manage Anthropic API key", destination: URL(string: "https://console.anthropic.com/settings/keys")!)
+                        .modifier(PointingHandCursor())
+                }
             }
 
             Section("Permissions") {

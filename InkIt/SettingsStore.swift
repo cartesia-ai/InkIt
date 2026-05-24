@@ -91,10 +91,20 @@ final class SettingsStore: ObservableObject {
         static let hasCompletedOnboarding = "hasCompletedOnboarding"
         static let notchHorizontalPosition = "notchHorizontalPosition"
         static let playFeedbackSounds = "playFeedbackSounds"
+        static let correctionEnabled = "correctionEnabled"
+        static let anthropicAPIKey = "anthropicAPIKey"
     }
 
     @Published var cartesiaAPIKey: String {
         didSet { defaults.set(cartesiaAPIKey, forKey: Keys.apiKey) }
+    }
+
+    @Published var correctionEnabled: Bool {
+        didSet { defaults.set(correctionEnabled, forKey: Keys.correctionEnabled) }
+    }
+
+    @Published var anthropicAPIKey: String {
+        didSet { defaults.set(anthropicAPIKey, forKey: Keys.anthropicAPIKey) }
     }
 
     @Published var hotkey: HotkeyBinding {
@@ -134,6 +144,8 @@ final class SettingsStore: ObservableObject {
 
     private init() {
         self.cartesiaAPIKey = defaults.string(forKey: Keys.apiKey) ?? ""
+        self.correctionEnabled = defaults.bool(forKey: Keys.correctionEnabled)
+        self.anthropicAPIKey = defaults.string(forKey: Keys.anthropicAPIKey) ?? ""
         self.hasCompletedOnboarding = defaults.bool(forKey: Keys.hasCompletedOnboarding)
         if defaults.object(forKey: Keys.playFeedbackSounds) == nil {
             self.playFeedbackSounds = true
