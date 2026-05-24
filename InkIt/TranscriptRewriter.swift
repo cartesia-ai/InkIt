@@ -101,62 +101,64 @@ enum GlossaryExtractor {
     }
 }
 
-/// Calls a Claude model to repair an ASR transcript against a glossary.
-/// Returns `nil` on any failure (network, timeout, parse error, sanity-check
-/// rejection) — the caller is expected to fall back to the raw transcript.
+/// Calls a Claude model to repair an ASR transcript using prose context from
+/// whatever the user was just reading. Returns `nil` on any failure (network,
+/// timeout, parse error, sanity-check rejection) — the caller is expected to
+/// fall back to the raw transcript.
 final class TranscriptRewriter {
     private let apiKey: String
     private let session: URLSession
-    // Sonnet 4.6 handles two-words → one-CamelCase merges and casing edits
-    // (e.g. "paged attention" → "PagedAttention", "vllm" → "vLLM") far more
-    // reliably than Haiku at this prompt length. Latency is ~700–1100ms,
-    // which still fits inside the dictation feel.
+    // Sonnet 4.6 reasons about the conversation context well enough to fix
+    // technical terms even when they aren't lexically present, while staying
+    // sub-2s on the prompt sizes we send.
     private let model = "claude-sonnet-4-6"
     private let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
 
     init(apiKey: String) {
         self.apiKey = apiKey
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 2.5
-        config.timeoutIntervalForResource = 2.5
+        config.timeoutIntervalForRequest = 3.5
+        config.timeoutIntervalForResource = 3.5
         config.waitsForConnectivity = false
         self.session = URLSession(configuration: config)
     }
 
-    func rewrite(transcript: String, glossary: [String], timeout: TimeInterval = 2.5) async -> String? {
-        guard !apiKey.isEmpty, !glossary.isEmpty, !transcript.isEmpty else { return nil }
+    func rewrite(transcript: String, context: String, timeout: TimeInterval = 3.5) async -> String? {
+        guard !apiKey.isEmpty, !transcript.isEmpty, !context.isEmpty else { return nil }
 
-        let glossaryString = glossary.joined(separator: ", ")
-        DebugLog.info("Rewriter glossary (\(glossary.count) terms): \(glossaryString)")
+        DebugLog.info("Rewriter context: \(context.count) chars")
         DebugLog.info("Rewriter raw transcript: \(transcript)")
 
         let system = """
-        You repair speech-to-text transcripts using a glossary of terms the user was just looking at on screen.
+        You repair speech-to-text transcripts dictated by a software engineer mid-conversation with an AI coding assistant.
 
-        TERMS: \(glossaryString)
+        Below is the recent transcript of that assistant conversation — what the user was just reading and thinking about when they started dictating. Use it to understand the technical subject they are working on.
+
+        CONVERSATION CONTEXT:
+        ---
+        \(context)
+        ---
+
+        Your task: rewrite the user's dictated transcript so it reads as the engineer almost certainly intended.
+
+        Use the conversation context to infer:
+        - Which libraries, frameworks, models, file paths, identifiers, and proper nouns are being discussed.
+        - Correct spelling, capitalization, hyphenation, and word-joining of those terms (e.g. "flash attention" → "FlashAttention", "vllm" / "BLM" / "v lol m" → "vLLM", "page attention" → "PagedAttention", "kvk function" → "kVK_Function", "gpt four" → "GPT-4").
+        - Likely homophones and ASR slips that misrepresent technical content.
+
+        Beyond explicit terms in the context, use general technical knowledge to recognize and fix terms the engineer is likely referring to even when not literally in the context (e.g. common library names, hardware terms, Python APIs).
 
         Rules:
-        1. Substitute glossary matches. When words in the transcript clearly correspond to a term in TERMS — by phonetic similarity, spelling, or spacing — replace them with the term EXACTLY as written in TERMS, including capitalization, hyphens, and word joining. Multi-word phrases in the transcript may collapse to a single CamelCase or hyphenated term.
-        2. Do not add, remove, or change anything outside of a glossary substitution. Punctuation, ordinary word casing, contractions, and sentence structure stay exactly as the transcript wrote them.
-        3. Do not insert periods, capital letters, or hyphens that the transcript didn't already have, unless they come from an exact glossary term.
-        4. If you are not confident that a glossary term applies, leave the original wording alone. Never invent substitutions for terms not listed in TERMS.
+        - Preserve the user's voice, sentence structure, contractions, hesitations, and intent. Do NOT paraphrase, summarize, expand, or add new content.
+        - Only fix when you are confident. If a word might be a generic English word, leave it alone.
+        - Don't invent punctuation that wasn't there, with one exception: you may join multi-word ASR splits into a single canonical term (e.g. "kvk function" → "kVK_Function"), and you may add a missing apostrophe/hyphen that's part of a proper name.
+        - Keep length roughly equal to the input. If your output is substantially longer than the transcript, you've over-corrected — pull back.
 
-        Examples:
-        - TERMS: FlashAttention, PagedAttention, vLLM
-          transcript: "use flash attention with paged attention v l l m on long sequences"
-          output:     "use FlashAttention with PagedAttention vLLM on long sequences"
-        - TERMS: kVK_Function, kVK_Space
-          transcript: "bind kvk function instead of kvk space"
-          output:     "bind kVK_Function instead of kVK_Space"
-        - TERMS: GPT-4, Claude
-          transcript: "ask gpt four to compare with claude"
-          output:     "ask GPT-4 to compare with Claude"
-
-        Output only the corrected transcript. No preamble, no quotes, no notes.
+        Output ONLY the corrected transcript on a single segment. No preamble, no quotes, no notes, no markdown.
         """
 
-        let estimatedInputTokens = max(32, transcript.count / 3)
-        let maxTokens = min(1024, estimatedInputTokens * 2 + 50)
+        let estimatedInputTokens = max(48, transcript.count / 3)
+        let maxTokens = min(1500, estimatedInputTokens * 3 + 80)
 
         let body: [String: Any] = [
             "model": model,
@@ -200,9 +202,11 @@ final class TranscriptRewriter {
             DebugLog.info("Rewriter response (\(elapsed)): \(cleaned)")
             guard !cleaned.isEmpty else { return nil }
             // Sanity check: a corrected transcript shouldn't balloon beyond
-            // ~2× the original length. If it does, the model probably went
-            // off-script — fall back.
-            if cleaned.count > max(80, transcript.count * 2 + 20) {
+            // ~2.5× the original length. The freer prompt may legitimately
+            // add a few characters when joining words (e.g. "flash attention"
+            // → "FlashAttention" actually shrinks), so the bound is generous.
+            // If we exceed it, the model went off-script — fall back.
+            if cleaned.count > max(120, Int(Double(transcript.count) * 2.5) + 40) {
                 DebugLog.error("Rewriter response rejected by length sanity check (\(cleaned.count) chars vs raw \(transcript.count))")
                 return nil
             }

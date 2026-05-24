@@ -20,6 +20,7 @@
 		CB9160EC46BEB496508D6D6F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 490951A2A504AA61E23A0858 /* Assets.xcassets */; };
 		DE721A67BA034EB345FF4244 /* AppCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F328F174E8F91669F7BA798A /* AppCoordinator.swift */; };
 		E27D41C3069B464565533B3E /* AudioPCMConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1A46AE5B512528E8C972D57 /* AudioPCMConverter.swift */; };
+		EEEEB1016E9FB6FEED350C8F /* CursorTranscriptProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE00B3798C4979080FE189C2 /* CursorTranscriptProvider.swift */; };
 		F04B3B2C46A69BA59FC3410D /* FeedbackSoundPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F6D15F979487AE9C0B309B6 /* FeedbackSoundPlayer.swift */; };
 		F28F236B83FB1D059CBACA2E /* PasteService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10EC011AD368E4F4521176C8 /* PasteService.swift */; };
 		F6AADC8A7F77E1F5A055EF9B /* PermissionsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F1C0A33FF80CCA3AD3BB8C2 /* PermissionsService.swift */; };
@@ -48,6 +49,7 @@
 		F1DEDEAC7A590A24352E55F3 /* ContextCaptureService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextCaptureService.swift; sourceTree = "<group>"; };
 		F328F174E8F91669F7BA798A /* AppCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCoordinator.swift; sourceTree = "<group>"; };
 		FB2D8932105436871A6E8666 /* TranscriptHistoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptHistoryStore.swift; sourceTree = "<group>"; };
+		FE00B3798C4979080FE189C2 /* CursorTranscriptProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CursorTranscriptProvider.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -76,6 +78,7 @@
 				B1A46AE5B512528E8C972D57 /* AudioPCMConverter.swift */,
 				CFE81304C6871635CC1071F3 /* CartesiaStreamingClient.swift */,
 				F1DEDEAC7A590A24352E55F3 /* ContextCaptureService.swift */,
+				FE00B3798C4979080FE189C2 /* CursorTranscriptProvider.swift */,
 				AAB1584D75F7E3792397C2E7 /* DebugLog.swift */,
 				4F6D15F979487AE9C0B309B6 /* FeedbackSoundPlayer.swift */,
 				345763C522AA004E8829C897 /* HotkeyManager.swift */,
@@ -169,6 +172,7 @@
 				E27D41C3069B464565533B3E /* AudioPCMConverter.swift in Sources */,
 				800C9CD05A20DAF5825DA2C9 /* CartesiaStreamingClient.swift in Sources */,
 				A66400AC8CF5A01612F39807 /* ContextCaptureService.swift in Sources */,
+				EEEEB1016E9FB6FEED350C8F /* CursorTranscriptProvider.swift in Sources */,
 				5AF84E5EDB43D50879FC02B1 /* DebugLog.swift in Sources */,
 				F04B3B2C46A69BA59FC3410D /* FeedbackSoundPlayer.swift in Sources */,
 				BA5700B0D92F155454B5342B /* HotkeyManager.swift in Sources */,

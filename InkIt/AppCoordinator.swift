@@ -24,7 +24,8 @@ final class AppCoordinator: ObservableObject {
     let permissions = PermissionsService.shared
     private let hotkey = HotkeyManager()
     private var client: CartesiaStreamingClient?
-    private let contextProvider: ContextProvider = FocusedWindowAXProvider()
+    private let axProvider: ContextProvider = FocusedWindowAXProvider()
+    private let cursorProvider = CursorTranscriptProvider()
     let settings = SettingsStore.shared
     let history = TranscriptHistoryStore.shared
     private var hud: NotchHUDController?
@@ -292,8 +293,8 @@ final class AppCoordinator: ObservableObject {
         let hasKey = !settings.anthropicAPIKey.isEmpty
         let hasAX = permissions.hasAccessibility
         DebugLog.info("correctedTranscript: raw=\"\(raw)\" enabled=\(enabled) hasKey=\(hasKey) hasAX=\(hasAX)")
-        guard enabled, hasKey, hasAX else {
-            DebugLog.info("correctedTranscript: skipping (enabled=\(enabled) hasKey=\(hasKey) hasAX=\(hasAX))")
+        guard enabled, hasKey else {
+            DebugLog.info("correctedTranscript: skipping (enabled=\(enabled) hasKey=\(hasKey))")
             return raw
         }
 
@@ -304,23 +305,32 @@ final class AppCoordinator: ObservableObject {
             guard let app = targetApp else { return "nil(pasteTargetApp)" }
             return "\(app.localizedName ?? "?") [\(app.bundleIdentifier ?? "?")] pid=\(app.processIdentifier)"
         }()
-        DebugLog.info("correctedTranscript: entering with raw=\"\(raw)\" target=\(targetDesc) anthropicKey=\(apiKey.isEmpty ? "EMPTY" : "set(\(apiKey.count)c)") ax=\(permissions.hasAccessibility)")
-        guard let context = await contextProvider.captureContext(for: targetApp),
-              !context.isEmpty else {
-            DebugLog.info("AX capture returned empty for target=\(targetDesc)")
+        DebugLog.info("correctedTranscript: target=\(targetDesc) anthropicKey=set(\(apiKey.count)c)")
+
+        // Prefer Cursor's on-disk JSONL transcript when target is Cursor — its
+        // Electron renderer doesn't expose chat text via AX, so the JSONL is
+        // the only way to see the conversation the user was reading.
+        // Fall back to AX for native apps (and as a last resort for Cursor
+        // if no transcript file exists yet).
+        var context: String? = nil
+        var source = "none"
+        if let cursor = await cursorProvider.captureContext(for: targetApp), !cursor.isEmpty {
+            context = cursor
+            source = "cursor-jsonl"
+        } else if hasAX, let ax = await axProvider.captureContext(for: targetApp), !ax.isEmpty {
+            context = ax
+            source = "ax"
+        }
+        guard let context else {
+            DebugLog.info("Context capture returned nothing for target=\(targetDesc)")
             return raw
         }
         let preview = String(context.prefix(400)).replacingOccurrences(of: "\n", with: " ")
-        DebugLog.info("AX capture: chars=\(context.count) preview=\(preview)")
-        let glossary = GlossaryExtractor.extract(from: context)
-        guard !glossary.isEmpty else {
-            DebugLog.info("Glossary empty — skipping LLM (raw context had no identifier-like tokens)")
-            return raw
-        }
+        DebugLog.info("Context source=\(source) chars=\(context.count) preview=\(preview)")
 
         state = .rewriting
         let rewriter = TranscriptRewriter(apiKey: apiKey)
-        let rewritten = await rewriter.rewrite(transcript: raw, glossary: glossary)
+        let rewritten = await rewriter.rewrite(transcript: raw, context: context)
         return rewritten ?? raw
     }
 
