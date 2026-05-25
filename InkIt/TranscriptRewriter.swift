@@ -108,10 +108,13 @@ enum GlossaryExtractor {
 final class TranscriptRewriter {
     private let apiKey: String
     private let session: URLSession
-    // Sonnet 4.6 reasons about the conversation context well enough to fix
-    // technical terms even when they aren't lexically present, while staying
-    // sub-2s on the prompt sizes we send.
-    private let model = "claude-sonnet-4-6"
+    /// Cursor path uses Sonnet 4.6: the JSONL context is clean conversation
+    /// prose where reasoning over the subject pays off.
+    private let cursorModel = "claude-sonnet-4-6"
+    /// AX path uses Haiku 4.5: the captured context is messier (window
+    /// chrome mixed with content) and the typical edits are casing/word-
+    /// boundary fixes Haiku handles well in ~600ms, vs Sonnet's ~1.7s.
+    private let axModel = "claude-haiku-4-5-20251001"
     private let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
 
     init(apiKey: String) {
@@ -149,7 +152,7 @@ final class TranscriptRewriter {
              "text": contextBody,
              "cache_control": ["type": "ephemeral"]]
         ]
-        return await call(system: system, transcript: transcript, timeout: timeout, label: "cursor")
+        return await call(system: system, transcript: transcript, model: cursorModel, timeout: timeout, label: "cursor")
     }
 
     /// Raw-context path (AX-extracted text from non-Cursor apps). We don't
@@ -166,12 +169,12 @@ final class TranscriptRewriter {
             ["type": "text", "text": Self.instructions],
             ["type": "text", "text": "VISIBLE CONTENT:\n\(context)"]
         ]
-        return await call(system: system, transcript: transcript, timeout: timeout, label: "ax")
+        return await call(system: system, transcript: transcript, model: axModel, timeout: timeout, label: "ax")
     }
 
     // MARK: - Shared HTTP plumbing
 
-    private func call(system: [[String: Any]], transcript: String, timeout: TimeInterval, label: String) async -> String? {
+    private func call(system: [[String: Any]], transcript: String, model: String, timeout: TimeInterval, label: String) async -> String? {
         let estimatedInputTokens = max(48, transcript.count / 3)
         let maxTokens = min(1500, estimatedInputTokens * 3 + 80)
 

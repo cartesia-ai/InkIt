@@ -51,7 +51,12 @@ final class FocusedWindowAXProvider: ContextProvider {
     private let maxDepth = 8
     private let maxNodes = 1200
     private let maxChars = 20_000
-    private let walkBudget: TimeInterval = 0.5
+    private let walkBudget: TimeInterval = 0.25
+    /// Cap children pushed per parent. A 339-row Notes sidebar would
+    /// otherwise consume the entire budget before the walk could reach
+    /// other panes. 30 children is plenty of breadth for any realistic
+    /// content view.
+    private let maxChildrenPerParent = 30
 
     func captureContext(for app: NSRunningApplication?) async -> String? {
         let ownBundleID = Bundle.main.bundleIdentifier
@@ -87,8 +92,9 @@ final class FocusedWindowAXProvider: ContextProvider {
         let maxDepth = self.maxDepth
         let maxNodes = self.maxNodes
         let maxChars = self.maxChars
+        let maxChildren = self.maxChildrenPerParent
         return await Task.detached(priority: .userInitiated) {
-            Self.walk(pid: pid, maxDepth: maxDepth, maxNodes: maxNodes, maxChars: maxChars, deadline: deadline)
+            Self.walk(pid: pid, maxDepth: maxDepth, maxNodes: maxNodes, maxChars: maxChars, maxChildren: maxChildren, deadline: deadline)
         }.value
     }
 
@@ -120,6 +126,7 @@ final class FocusedWindowAXProvider: ContextProvider {
                              maxDepth: Int,
                              maxNodes: Int,
                              maxChars: Int,
+                             maxChildren: Int,
                              deadline: Date) -> String? {
         let appElement = AXUIElementCreateApplication(pid)
         guard let root = rootWindow(forApp: appElement) else {
@@ -137,16 +144,22 @@ final class FocusedWindowAXProvider: ContextProvider {
         var traceCount = 0
         var collected = ""
         var nodes = 0
-        var stack: [(AXUIElement, Int)] = [(root, 0)]
+        // Breadth-first walk: visit all siblings at each depth before going
+        // deeper. With DFS, a wide-but-shallow node like the Notes sidebar
+        // (AXTable with 339 rows) starves the rest of the tree because its
+        // children are popped before any of its siblings' subtrees are
+        // visited. BFS plus a per-parent child cap keeps the walk balanced.
+        var queue: [(AXUIElement, Int)] = [(root, 0)]
         let started = Date()
         var hitDeadline = false
 
-        while let (element, depth) = stack.popLast() {
+        while !queue.isEmpty {
             if Date() >= deadline {
                 hitDeadline = true
                 break
             }
             if nodes >= maxNodes || collected.count >= maxChars { break }
+            let (element, depth) = queue.removeFirst()
             nodes += 1
 
             let beforeCollectedCount = collected.count
@@ -168,18 +181,21 @@ final class FocusedWindowAXProvider: ContextProvider {
 
             let captured = collected.count - beforeCollectedCount
             let children = readChildren(of: element)
+            let pushedChildren = min(children.count, maxChildren)
 
             if traceCount < traceLimit {
                 let role = readString(element, attr: kAXRoleAttribute as CFString) ?? "?"
                 let attrPart = firstAttrPreview.map { " first=\($0.name)(\($0.length)c)" } ?? ""
-                DebugLog.info("AX node[\(nodes)] role=\(role) depth=\(depth) kids=\(children.count) captured=\(captured)c\(attrPart)")
+                let capNote = pushedChildren < children.count ? " (capped from \(children.count))" : ""
+                DebugLog.info("AX node[\(nodes)] role=\(role) depth=\(depth) kids=\(children.count)\(capNote) captured=\(captured)c\(attrPart)")
                 traceCount += 1
             }
 
             if depth >= maxDepth { continue }
-            // Push in reverse so depth-first visits the first child next.
-            for child in children.reversed() {
-                stack.append((child, depth + 1))
+            // Append at the queue tail (BFS) and cap so any single
+            // long-listing node can't starve its siblings' subtrees.
+            for child in children.prefix(maxChildren) {
+                queue.append((child, depth + 1))
             }
         }
 
@@ -225,7 +241,10 @@ final class FocusedWindowAXProvider: ContextProvider {
         kAXValueAttribute as CFString,
         kAXTitleAttribute as CFString,
         kAXDescriptionAttribute as CFString,
-        kAXSelectedTextAttribute as CFString,
-        kAXHelpAttribute as CFString
+        kAXSelectedTextAttribute as CFString
+        // kAXHelpAttribute deliberately omitted: in Notes (and many other
+        // list-bearing apps) every row carries identical UI-affordance help
+        // text like "Perform press or select Return to open note." which
+        // floods the capture with noise the LLM has to wade through.
     ]
 }
