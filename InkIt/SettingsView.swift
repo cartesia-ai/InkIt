@@ -113,11 +113,69 @@ struct SettingsView: View {
                     permissions.requestAccessibility()
                 }
             }
+
+            Section {
+                AXTreeDumpButton()
+            } header: {
+                Text("Diagnostics")
+            } footer: {
+                Text("Writes the full Accessibility tree of whatever app is frontmost when the timer expires to ~/Library/Logs/InkIt-debug.log. Use this when correction context looks wrong.")
+            }
         }
         .formStyle(.grouped)
         .padding()
         .onAppear { permissions.startPolling() }
         .onDisappear { permissions.stopPolling() }
+    }
+}
+
+/// Button that, after a brief countdown, runs `AXTreeDumper.dumpFocusedApp()`.
+/// The countdown gives the user time to switch focus to the app they want
+/// to inspect.
+private struct AXTreeDumpButton: View {
+    @State private var countdown: Int? = nil
+    @State private var task: Task<Void, Never>? = nil
+
+    private let initialCountdown = 2
+
+    var body: some View {
+        HStack {
+            if let countdown {
+                Text("Switch to target app… dumping in \(countdown)…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Cancel") { cancel() }
+                    .buttonStyle(.borderless)
+            } else {
+                Button("Dump focused app's AX tree to debug log") { start() }
+                    .modifier(PointingHandCursor())
+                Spacer()
+            }
+        }
+        .frame(minHeight: 38)
+        .onDisappear { cancel() }
+    }
+
+    private func start() {
+        cancel()
+        countdown = initialCountdown
+        task = Task { @MainActor in
+            for tick in stride(from: initialCountdown, through: 1, by: -1) {
+                countdown = tick
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                if Task.isCancelled { return }
+            }
+            countdown = nil
+            task = nil
+            AXTreeDumper.dumpFocusedApp()
+        }
+    }
+
+    private func cancel() {
+        task?.cancel()
+        task = nil
+        countdown = nil
     }
 }
 

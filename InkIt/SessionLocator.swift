@@ -79,9 +79,15 @@ enum SessionLocator {
         guard let entries = try? FileManager.default.contentsOfDirectory(atPath: root.path) else {
             return nil
         }
+        return projectMatching(title: title, candidates: entries)
+    }
+
+    /// Filesystem-free version, exposed for tests. The caller supplies the
+    /// candidate slugs directly.
+    static func projectMatching(title: String, candidates: [String]) -> String? {
         let lowerTitle = title.lowercased()
         var bestMatch: (project: String, score: Int)? = nil
-        for project in entries where project != "empty-window" {
+        for project in candidates where project != "empty-window" {
             // The last hyphen-separated segment of the slug is the leaf
             // workspace folder. Match against the title.
             let leaf = project.split(separator: "-").last.map(String.init) ?? project

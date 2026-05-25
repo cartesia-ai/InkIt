@@ -48,3 +48,24 @@ targets:
         # unsandboxed binary.
         ENABLE_APP_SANDBOX: NO
         CODE_SIGN_ENTITLEMENTS: InkIt/InkIt.entitlements
+
+  InkItTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: InkItTests
+    dependencies:
+      - target: InkIt
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.aiqiliu.InkItTests
+        # The test bundle uses the main app as its host so it can link
+        # against the app's compiled sources.
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/InkIt.app/Contents/MacOS/InkIt"
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_ALLOWED: NO
+        SWIFT_VERSION: "5.0"
+        GENERATE_INFOPLIST_FILE: YES
+        MACOSX_DEPLOYMENT_TARGET: "14.0"

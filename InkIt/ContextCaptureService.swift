@@ -49,9 +49,9 @@ enum FocusedWindowTitle {
 /// is fine.
 final class FocusedWindowAXProvider: ContextProvider {
     private let maxDepth = 8
-    private let maxNodes = 600
+    private let maxNodes = 1200
     private let maxChars = 20_000
-    private let perCallTimeout: TimeInterval = 0.15
+    private let walkBudget: TimeInterval = 0.5
 
     func captureContext(for app: NSRunningApplication?) async -> String? {
         let ownBundleID = Bundle.main.bundleIdentifier
@@ -76,18 +76,20 @@ final class FocusedWindowAXProvider: ContextProvider {
         let name = resolvedApp?.localizedName ?? "<pid:\(pid)>"
         DebugLog.info("AX capture: walking pid=\(pid) app=\(name)")
 
-        return await withTaskGroup(of: String?.self) { group in
-            group.addTask(priority: .userInitiated) { [maxDepth, maxNodes, maxChars] in
-                Self.walk(pid: pid, maxDepth: maxDepth, maxNodes: maxNodes, maxChars: maxChars)
-            }
-            group.addTask(priority: .userInitiated) { [perCallTimeout] in
-                try? await Task.sleep(nanoseconds: UInt64(perCallTimeout * 1_000_000_000))
-                return nil
-            }
-            let first = await group.next() ?? nil
-            group.cancelAll()
-            return first
-        }
+        // Run the synchronous AX walk on a dedicated thread (Task.detached) and
+        // bound it by a wall-clock deadline checked inside the walk loop. The
+        // previous withTaskGroup race didn't actually preempt — `group.cancelAll`
+        // can't interrupt synchronous AX IPC, so withTaskGroup waited for the
+        // walk to finish AND threw away its result. The internal deadline
+        // approach always returns whatever the walk had collected when the
+        // budget expired.
+        let deadline = Date().addingTimeInterval(walkBudget)
+        let maxDepth = self.maxDepth
+        let maxNodes = self.maxNodes
+        let maxChars = self.maxChars
+        return await Task.detached(priority: .userInitiated) {
+            Self.walk(pid: pid, maxDepth: maxDepth, maxNodes: maxNodes, maxChars: maxChars, deadline: deadline)
+        }.value
     }
 
     /// Returns the focused window for the app, or the main window, or the
@@ -114,7 +116,11 @@ final class FocusedWindowAXProvider: ContextProvider {
         return nil
     }
 
-    private static func walk(pid: pid_t, maxDepth: Int, maxNodes: Int, maxChars: Int) -> String? {
+    private static func walk(pid: pid_t,
+                             maxDepth: Int,
+                             maxNodes: Int,
+                             maxChars: Int,
+                             deadline: Date) -> String? {
         let appElement = AXUIElementCreateApplication(pid)
         guard let root = rootWindow(forApp: appElement) else {
             DebugLog.info("AX capture: no focused/main/first window for pid=\(pid)")
@@ -127,13 +133,24 @@ final class FocusedWindowAXProvider: ContextProvider {
             DebugLog.info("AX capture: root window title=\"\(title)\"")
         }
 
+        let traceLimit = 60
+        var traceCount = 0
         var collected = ""
         var nodes = 0
         var stack: [(AXUIElement, Int)] = [(root, 0)]
+        let started = Date()
+        var hitDeadline = false
 
         while let (element, depth) = stack.popLast() {
+            if Date() >= deadline {
+                hitDeadline = true
+                break
+            }
             if nodes >= maxNodes || collected.count >= maxChars { break }
             nodes += 1
+
+            let beforeCollectedCount = collected.count
+            var firstAttrPreview: (name: String, length: Int)? = nil
 
             for attr in textAttributes {
                 if collected.count >= maxChars { break }
@@ -144,17 +161,33 @@ final class FocusedWindowAXProvider: ContextProvider {
                 guard trimmed.count >= 2, trimmed.count <= 4_000 else { continue }
                 if !collected.isEmpty { collected.append(" ") }
                 collected.append(trimmed)
+                if firstAttrPreview == nil {
+                    firstAttrPreview = (attr as String, trimmed.count)
+                }
+            }
+
+            let captured = collected.count - beforeCollectedCount
+            let children = readChildren(of: element)
+
+            if traceCount < traceLimit {
+                let role = readString(element, attr: kAXRoleAttribute as CFString) ?? "?"
+                let attrPart = firstAttrPreview.map { " first=\($0.name)(\($0.length)c)" } ?? ""
+                DebugLog.info("AX node[\(nodes)] role=\(role) depth=\(depth) kids=\(children.count) captured=\(captured)c\(attrPart)")
+                traceCount += 1
             }
 
             if depth >= maxDepth { continue }
-            var childrenRef: CFTypeRef?
-            let childStatus = AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenRef)
-            if childStatus == .success, let children = childrenRef as? [AXUIElement] {
-                // Front-of-stack first; reverse so first child is processed next.
-                for child in children.reversed() {
-                    stack.append((child, depth + 1))
-                }
+            // Push in reverse so depth-first visits the first child next.
+            for child in children.reversed() {
+                stack.append((child, depth + 1))
             }
+        }
+
+        let elapsed = String(format: "%.3fs", Date().timeIntervalSince(started))
+        if hitDeadline {
+            DebugLog.info("AX walk hit deadline at \(elapsed) — visited \(nodes) nodes, \(collected.count) chars captured")
+        } else {
+            DebugLog.info("AX walk finished in \(elapsed) — visited \(nodes) nodes, \(collected.count) chars captured")
         }
 
         if collected.isEmpty { return nil }
@@ -162,6 +195,30 @@ final class FocusedWindowAXProvider: ContextProvider {
             collected = String(collected.prefix(maxChars))
         }
         return collected
+    }
+
+    /// Some apps populate only `kAXChildrenAttribute`; others use
+    /// `kAXVisibleChildrenAttribute` (e.g. virtualized scroll content).
+    /// Try the regular list first; fall back to the visible list when empty.
+    private static func readChildren(of element: AXUIElement) -> [AXUIElement] {
+        var ref: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &ref) == .success,
+           let arr = ref as? [AXUIElement], !arr.isEmpty {
+            return arr
+        }
+        ref = nil
+        if AXUIElementCopyAttributeValue(element, kAXVisibleChildrenAttribute as CFString, &ref) == .success,
+           let arr = ref as? [AXUIElement], !arr.isEmpty {
+            return arr
+        }
+        return []
+    }
+
+    private static func readString(_ element: AXUIElement, attr: CFString) -> String? {
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attr, &ref) == .success,
+              let s = ref as? String else { return nil }
+        return s
     }
 
     private static let textAttributes: [CFString] = [

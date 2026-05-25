@@ -39,6 +39,7 @@ final class AppCoordinator: ObservableObject {
     init() {
         detectDuplicateRunningCopies()
         startTrackingActiveApps()
+        seedLastExternalApp()
         hotkey.onPress = { [weak self] in
             Task { @MainActor in self?.startDictation() }
         }
@@ -72,6 +73,26 @@ final class AppCoordinator: ObservableObject {
                 self.lastExternalApp = app
             }
             .store(in: &cancellables)
+    }
+
+    /// `didActivateApplicationNotification` fires only on app transitions. If
+    /// the user holds Fn while InkIt is frontmost before ever Cmd-Tabbing
+    /// away, `lastExternalApp` stays nil and `pasteTargetApp` resolves to
+    /// nil. Seed from the current frontmost (if non-InkIt) or the first
+    /// non-InkIt regular running app so the fallback chain always has
+    /// something usable.
+    private func seedLastExternalApp() {
+        let ownBundleID = Bundle.main.bundleIdentifier
+        if let front = NSWorkspace.shared.frontmostApplication, front.bundleIdentifier != ownBundleID {
+            lastExternalApp = front
+            return
+        }
+        lastExternalApp = NSWorkspace.shared.runningApplications.first {
+            $0.activationPolicy == .regular
+                && $0.bundleIdentifier != ownBundleID
+                && !$0.isTerminated
+                && $0.isFinishedLaunching
+        }
     }
 
     private func detectDuplicateRunningCopies() {
@@ -220,6 +241,7 @@ final class AppCoordinator: ObservableObject {
             }
             return lastExternalApp
         }()
+        DebugLog.info("startDictation: frontmost=\(frontmostApp?.bundleIdentifier ?? "nil") lastExternal=\(lastExternalApp?.bundleIdentifier ?? "nil") resolvedTarget=\(pasteTargetApp?.bundleIdentifier ?? "nil")")
 
         let client = CartesiaStreamingClient(apiKey: settings.cartesiaAPIKey)
         self.client = client
@@ -298,13 +320,34 @@ final class AppCoordinator: ObservableObject {
             return raw
         }
 
-        let targetApp = pasteTargetApp
+        // Resolve a target app for the rewriter pipeline. Prefer the
+        // remembered paste target; if it's nil (e.g. focus was on InkIt at
+        // Fn-press time and lastExternalApp was uninitialized), fall back to
+        // the current non-InkIt frontmost or any reasonable non-InkIt running
+        // app. The result is *not* assigned back to pasteTargetApp — paste
+        // still goes to the originally-remembered target — but it's used to
+        // decide which rewriter path to take and to seed AX reads.
+        let resolvedTargetApp: NSRunningApplication? = {
+            if let app = pasteTargetApp { return app }
+            let ownBundleID = Bundle.main.bundleIdentifier
+            if let front = NSWorkspace.shared.frontmostApplication, front.bundleIdentifier != ownBundleID {
+                return front
+            }
+            return NSWorkspace.shared.runningApplications.first {
+                $0.activationPolicy == .regular
+                    && $0.bundleIdentifier != ownBundleID
+                    && !$0.isTerminated
+                    && $0.isFinishedLaunching
+            }
+        }()
+        let targetApp = resolvedTargetApp
         let apiKey = settings.anthropicAPIKey
         let rewriter = TranscriptRewriter(apiKey: apiKey)
 
         let targetDesc: String = {
-            guard let app = targetApp else { return "nil(pasteTargetApp)" }
-            return "\(app.localizedName ?? "?") [\(app.bundleIdentifier ?? "?")] pid=\(app.processIdentifier)"
+            guard let app = targetApp else { return "nil(no-resolvable-target)" }
+            let source = pasteTargetApp != nil ? "pasteTargetApp" : "fallback"
+            return "\(app.localizedName ?? "?") [\(app.bundleIdentifier ?? "?")] pid=\(app.processIdentifier) via=\(source)"
         }()
         DebugLog.info("correctedTranscript: target=\(targetDesc) anthropicKey=set(\(apiKey.count)c)")
 
