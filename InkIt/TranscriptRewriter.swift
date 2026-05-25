@@ -132,7 +132,8 @@ final class TranscriptRewriter {
     func rewriteWithCursorSession(transcript: String,
                                   summary: String?,
                                   recentTurns: String,
-                                  timeout: TimeInterval = 3.5) async -> String? {
+                                  timeout: TimeInterval = 3.5,
+                                  runID: String? = nil) async -> String? {
         guard !apiKey.isEmpty, !transcript.isEmpty else { return nil }
 
         var contextBody = ""
@@ -152,7 +153,7 @@ final class TranscriptRewriter {
              "text": contextBody,
              "cache_control": ["type": "ephemeral"]]
         ]
-        return await call(system: system, transcript: transcript, model: cursorModel, timeout: timeout, label: "cursor")
+        return await call(system: system, transcript: transcript, model: cursorModel, timeout: timeout, label: "cursor", runID: runID)
     }
 
     /// Raw-context path (AX-extracted text from non-Cursor apps). We don't
@@ -160,7 +161,8 @@ final class TranscriptRewriter {
     /// dictation; the cache would mostly miss.
     func rewriteWithRawContext(transcript: String,
                                context: String,
-                               timeout: TimeInterval = 3.5) async -> String? {
+                               timeout: TimeInterval = 3.5,
+                               runID: String? = nil) async -> String? {
         guard !apiKey.isEmpty, !transcript.isEmpty, !context.isEmpty else { return nil }
 
         DebugLog.info("Rewriter[ax]: context=\(context.count) chars transcript=\"\(transcript)\"")
@@ -169,12 +171,12 @@ final class TranscriptRewriter {
             ["type": "text", "text": Self.instructions],
             ["type": "text", "text": "VISIBLE CONTENT:\n\(context)"]
         ]
-        return await call(system: system, transcript: transcript, model: axModel, timeout: timeout, label: "ax")
+        return await call(system: system, transcript: transcript, model: axModel, timeout: timeout, label: "ax", runID: runID)
     }
 
     // MARK: - Shared HTTP plumbing
 
-    private func call(system: [[String: Any]], transcript: String, model: String, timeout: TimeInterval, label: String) async -> String? {
+    private func call(system: [[String: Any]], transcript: String, model: String, timeout: TimeInterval, label: String, runID: String?) async -> String? {
         let estimatedInputTokens = max(48, transcript.count / 3)
         let maxTokens = min(1500, estimatedInputTokens * 3 + 80)
 
@@ -188,6 +190,13 @@ final class TranscriptRewriter {
             ]
         ]
         guard let payload = try? JSONSerialization.data(withJSONObject: body) else { return nil }
+        if let json = DebugLog.prettyJSONString(body) {
+            let prefix = runID.map { "[\($0)] " } ?? ""
+            DebugLog.infoBlock(
+                title: "\(prefix)Anthropic request payload [\(label)]",
+                text: DebugLog.redacted(json, secrets: [apiKey])
+            )
+        }
 
         var req = URLRequest(url: endpoint)
         req.httpMethod = "POST"
@@ -251,6 +260,7 @@ final class TranscriptRewriter {
     Fix:
     - Library names, framework names, model names, hardware terms, API names, function names, file paths, and other proper nouns and identifiers (e.g. "flash attention" → "FlashAttention", "vllm" / "BLM" / "v lol m" → "vLLM", "page attention" → "PagedAttention", "kvk function" → "kVK_Function", "gpt four" → "GPT-4", "torch dot nn" → "torch.nn").
     - Homophones and ASR slips that obviously misrepresent technical content.
+    - Obvious speech filler and hesitation artifacts such as "uh", "um", "uhh", "umm", "er", and repeated filler-only fragments when removing them makes the dictated sentence read naturally.
 
     Use general technical knowledge to recognize terms the engineer is likely referring to even when they are not literally present in the context.
 

@@ -6,7 +6,7 @@ import ApplicationServices
 /// identifiers the user might be dictating about. Used by the optional AI
 /// correction pass to repair ASR mistakes on proper nouns.
 protocol ContextProvider {
-    func captureContext(for app: NSRunningApplication?) async -> String?
+    func captureContext(for target: TargetAppSnapshot, runID: String) async -> ContextSnapshot
 }
 
 /// Cheap title-only AX read for an arbitrary app's focused window. Used by
@@ -14,17 +14,12 @@ protocol ContextProvider {
 /// paying for a full tree walk.
 enum FocusedWindowTitle {
     static func read(for app: NSRunningApplication?) -> String? {
-        let ownBundleID = Bundle.main.bundleIdentifier
-        let resolvedPid: pid_t? = {
-            if let app, app.bundleIdentifier != ownBundleID { return app.processIdentifier }
-            if let front = NSWorkspace.shared.frontmostApplication,
-               front.bundleIdentifier != ownBundleID { return front.processIdentifier }
-            return NSWorkspace.shared.runningApplications.first {
-                $0.activationPolicy == .regular && $0.bundleIdentifier != ownBundleID && !$0.isTerminated
-            }?.processIdentifier
-        }()
-        guard let pid = resolvedPid, pid > 0 else { return nil }
+        guard let app, app.processIdentifier > 0 else { return nil }
+        return read(pid: app.processIdentifier)
+    }
 
+    static func read(pid: pid_t) -> String? {
+        guard pid > 0 else { return nil }
         let appElement = AXUIElementCreateApplication(pid)
         var ref: CFTypeRef?
         guard AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &ref) == .success,
@@ -58,28 +53,29 @@ final class FocusedWindowAXProvider: ContextProvider {
     /// content view.
     private let maxChildrenPerParent = 30
 
-    func captureContext(for app: NSRunningApplication?) async -> String? {
-        let ownBundleID = Bundle.main.bundleIdentifier
-        // Resolve the target PID. Prefer the explicit app, otherwise the
-        // frontmost — but never InkIt itself. If InkIt is frontmost (e.g. the
-        // user clicked our window before Fn-press), fall back to whatever the
-        // first non-InkIt running app is.
-        let resolvedApp: NSRunningApplication? = {
-            if let app, app.bundleIdentifier != ownBundleID { return app }
-            if let front = NSWorkspace.shared.frontmostApplication,
-               front.bundleIdentifier != ownBundleID {
-                return front
-            }
-            return NSWorkspace.shared.runningApplications.first {
-                $0.activationPolicy == .regular && $0.bundleIdentifier != ownBundleID && !$0.isTerminated
-            }
-        }()
-        guard let pid = resolvedApp?.processIdentifier, pid > 0 else {
-            DebugLog.info("AX capture: could not resolve a non-InkIt PID")
-            return nil
+    func captureContext(for target: TargetAppSnapshot, runID: String) async -> ContextSnapshot {
+        let pid = target.processIdentifier
+        guard pid > 0 else {
+            DebugLog.info("[\(runID)] AX capture: invalid target PID")
+            return .unavailable(target: target, reason: "invalid target pid")
         }
-        let name = resolvedApp?.localizedName ?? "<pid:\(pid)>"
-        DebugLog.info("AX capture: walking pid=\(pid) app=\(name)")
+        let currentTitle = FocusedWindowTitle.read(pid: pid)
+        guard currentTitle == target.focusedWindowTitle else {
+            return ContextSnapshot(
+                source: .accessibility,
+                confidence: .low,
+                target: target,
+                payload: "",
+                evidence: [
+                    "startTitle": target.focusedWindowTitle ?? "nil",
+                    "currentTitle": currentTitle ?? "nil",
+                    "pid": "\(pid)"
+                ],
+                rejectionReason: "AX target window title changed"
+            )
+        }
+
+        DebugLog.info("[\(runID)] AX capture: walking pid=\(pid) app=\(target.localizedName) title=\(currentTitle ?? "nil")")
 
         // Run the synchronous AX walk on a dedicated thread (Task.detached) and
         // bound it by a wall-clock deadline checked inside the walk loop. The
@@ -93,9 +89,34 @@ final class FocusedWindowAXProvider: ContextProvider {
         let maxNodes = self.maxNodes
         let maxChars = self.maxChars
         let maxChildren = self.maxChildrenPerParent
-        return await Task.detached(priority: .userInitiated) {
+        let context = await Task.detached(priority: .userInitiated) {
             Self.walk(pid: pid, maxDepth: maxDepth, maxNodes: maxNodes, maxChars: maxChars, maxChildren: maxChildren, deadline: deadline)
         }.value
+        guard let context, !context.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return ContextSnapshot(
+                source: .accessibility,
+                confidence: .none,
+                target: target,
+                payload: "",
+                evidence: [
+                    "pid": "\(pid)",
+                    "title": currentTitle ?? "nil"
+                ],
+                rejectionReason: "AX capture returned empty payload"
+            )
+        }
+        return ContextSnapshot(
+            source: .accessibility,
+            confidence: .high,
+            target: target,
+            payload: context,
+            evidence: [
+                "pid": "\(pid)",
+                "title": currentTitle ?? "nil",
+                "chars": "\(context.count)"
+            ],
+            rejectionReason: nil
+        )
     }
 
     /// Returns the focused window for the app, or the main window, or the

@@ -63,6 +63,12 @@ enum SessionSummarizer {
                 ["role": "user", "content": conversation]
             ]
         ]
+        if let json = DebugLog.prettyJSONString(body) {
+            DebugLog.infoBlock(
+                title: "SessionSummarizer Anthropic request payload uuid=\(uuid)",
+                text: DebugLog.redacted(json, secrets: [apiKey])
+            )
+        }
         guard let payload = try? JSONSerialization.data(withJSONObject: body) else { return nil }
 
         var req = URLRequest(url: endpoint)

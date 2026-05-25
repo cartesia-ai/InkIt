@@ -24,8 +24,8 @@ final class AppCoordinator: ObservableObject {
     let permissions = PermissionsService.shared
     private let hotkey = HotkeyManager()
     private var client: CartesiaStreamingClient?
-    private let axProvider: ContextProvider = FocusedWindowAXProvider()
     private static let cursorBundleID = "com.todesktop.230313mzl4w4u92"
+    private let contextResolver = ContextResolver(cursorBundleID: AppCoordinator.cursorBundleID)
     let settings = SettingsStore.shared
     let history = TranscriptHistoryStore.shared
     private var hud: NotchHUDController?
@@ -34,6 +34,7 @@ final class AppCoordinator: ObservableObject {
     private var isHotkeyRegistered = false
     private var lastExternalApp: NSRunningApplication?
     private var pasteTargetApp: NSRunningApplication?
+    private var contextTargetSnapshot: TargetAppSnapshot?
     private var routesFinalTranscriptToOnboarding = false
 
     init() {
@@ -241,7 +242,8 @@ final class AppCoordinator: ObservableObject {
             }
             return lastExternalApp
         }()
-        DebugLog.info("startDictation: frontmost=\(frontmostApp?.bundleIdentifier ?? "nil") lastExternal=\(lastExternalApp?.bundleIdentifier ?? "nil") resolvedTarget=\(pasteTargetApp?.bundleIdentifier ?? "nil")")
+        contextTargetSnapshot = TargetAppSnapshot.capture(from: pasteTargetApp)
+        DebugLog.info("startDictation: frontmost=\(frontmostApp?.bundleIdentifier ?? "nil") lastExternal=\(lastExternalApp?.bundleIdentifier ?? "nil") resolvedTarget=\(pasteTargetApp?.bundleIdentifier ?? "nil") targetSnapshot=\(contextTargetSnapshot?.logDescription ?? "nil")")
 
         let client = CartesiaStreamingClient(apiKey: settings.cartesiaAPIKey)
         self.client = client
@@ -258,11 +260,13 @@ final class AppCoordinator: ObservableObject {
                 let raw = finalText.trimmingCharacters(in: .whitespacesAndNewlines)
                 if raw.isEmpty {
                     self.pasteTargetApp = nil
+                    self.contextTargetSnapshot = nil
                     self.state = .idle
                     return
                 }
                 if self.routesFinalTranscriptToOnboarding {
                     self.pasteTargetApp = nil
+                    self.contextTargetSnapshot = nil
                     self.liveTranscript = raw
                     self.state = .idle
                     return
@@ -274,6 +278,7 @@ final class AppCoordinator: ObservableObject {
                 self.paste.paste(text: corrected, targetApp: self.pasteTargetApp) { ok in
                     Task { @MainActor in
                         self.pasteTargetApp = nil
+                        self.contextTargetSnapshot = nil
                         if !ok {
                             self.setError("Paste failed.")
                         } else {
@@ -311,97 +316,84 @@ final class AppCoordinator: ObservableObject {
     /// disabled or anything fails. Never throws — the user must always get
     /// at least the raw transcript pasted.
     private func correctedTranscript(raw: String) async -> String {
+        let runID = Self.makeCorrectionRunID()
         let enabled = settings.correctionEnabled
         let hasKey = !settings.anthropicAPIKey.isEmpty
         let hasAX = permissions.hasAccessibility
-        DebugLog.info("correctedTranscript: raw=\"\(raw)\" enabled=\(enabled) hasKey=\(hasKey) hasAX=\(hasAX)")
+        DebugLog.info("[\(runID)] correctedTranscript: raw=\"\(raw)\" enabled=\(enabled) hasKey=\(hasKey) hasAX=\(hasAX)")
         guard enabled, hasKey else {
-            DebugLog.info("correctedTranscript: skipping (enabled=\(enabled) hasKey=\(hasKey))")
+            DebugLog.info("[\(runID)] correctedTranscript: skipping (enabled=\(enabled) hasKey=\(hasKey))")
             return raw
         }
 
-        // Resolve a target app for the rewriter pipeline. Prefer the
-        // remembered paste target; if it's nil (e.g. focus was on InkIt at
-        // Fn-press time and lastExternalApp was uninitialized), fall back to
-        // the current non-InkIt frontmost or any reasonable non-InkIt running
-        // app. The result is *not* assigned back to pasteTargetApp — paste
-        // still goes to the originally-remembered target — but it's used to
-        // decide which rewriter path to take and to seed AX reads.
-        let resolvedTargetApp: NSRunningApplication? = {
-            if let app = pasteTargetApp { return app }
-            let ownBundleID = Bundle.main.bundleIdentifier
-            if let front = NSWorkspace.shared.frontmostApplication, front.bundleIdentifier != ownBundleID {
-                return front
-            }
-            return NSWorkspace.shared.runningApplications.first {
-                $0.activationPolicy == .regular
-                    && $0.bundleIdentifier != ownBundleID
-                    && !$0.isTerminated
-                    && $0.isFinishedLaunching
-            }
-        }()
-        let targetApp = resolvedTargetApp
+        let targetApp = pasteTargetApp
+        let targetSnapshot = contextTargetSnapshot
         let apiKey = settings.anthropicAPIKey
         let rewriter = TranscriptRewriter(apiKey: apiKey)
 
         let targetDesc: String = {
-            guard let app = targetApp else { return "nil(no-resolvable-target)" }
-            let source = pasteTargetApp != nil ? "pasteTargetApp" : "fallback"
-            return "\(app.localizedName ?? "?") [\(app.bundleIdentifier ?? "?")] pid=\(app.processIdentifier) via=\(source)"
+            guard let snapshot = targetSnapshot else { return "nil(no-target-snapshot)" }
+            return snapshot.logDescription
         }()
-        DebugLog.info("correctedTranscript: target=\(targetDesc) anthropicKey=set(\(apiKey.count)c)")
+        DebugLog.info("[\(runID)] correctedTranscript: target=\(targetDesc) anthropicKey=set(\(apiKey.count)c)")
 
-        // Cursor path: locate the active session, load messages, ensure a
-        // summary is fresh, then call the rewriter with summary + recent
-        // turns as a cache_control prefix. Only taken when the explicit
-        // paste target IS Cursor — we don't want Cursor's conversation
-        // leaking into Slack/Notes/etc. dictations just because Cursor
-        // happens to be running in the background.
-        let isCursorTarget = targetApp?.bundleIdentifier == Self.cursorBundleID
-        if isCursorTarget {
-            let title = FocusedWindowTitle.read(for: targetApp)
-            DebugLog.info("correctedTranscript: cursor path, windowTitle=\(title.map { "\"\($0)\"" } ?? "nil")")
-            if let location = SessionLocator.locate(forApp: targetApp, windowTitle: title) {
-                let messages = ConversationLoader.load(from: location.url)
-                DebugLog.info("Cursor session=\(location.uuid) project=\(location.project) messages=\(messages.count)")
-                if !messages.isEmpty {
-                    state = .rewriting
-                    let summary: String? = await {
-                        let fresh = await SessionSummarizer.ensureFresh(
-                            uuid: location.uuid,
-                            transcriptPath: location.url.path,
-                            messages: messages,
-                            apiKey: apiKey
-                        )
-                        return fresh?.summary
-                    }()
-                    let recentMessageCount = min(messages.count, 8)
-                    let recentTurns = Array(messages.suffix(recentMessageCount)).renderTail(maxChars: 6_000)
-                    let rewritten = await rewriter.rewriteWithCursorSession(
-                        transcript: raw,
-                        summary: summary,
-                        recentTurns: recentTurns
-                    )
-                    return rewritten ?? raw
-                }
-            }
-            DebugLog.info("Cursor path yielded no session; falling through to AX")
-        }
-
-        // AX fallback (native apps, or Cursor with no usable session file)
-        guard hasAX, let context = await axProvider.captureContext(for: targetApp), !context.isEmpty else {
-            DebugLog.info("AX capture empty for target=\(targetDesc)")
+        guard hasAX, targetSnapshot != nil else {
+            DebugLog.info("[\(runID)] correctedTranscript: raw fallback reason=\(!hasAX ? "missing accessibility" : "missing target snapshot")")
             return raw
         }
-        let preview = String(context.prefix(400)).replacingOccurrences(of: "\n", with: " ")
-        DebugLog.info("Context source=ax chars=\(context.count) preview=\(preview)")
-        state = .rewriting
-        let rewritten = await rewriter.rewriteWithRawContext(transcript: raw, context: context)
-        return rewritten ?? raw
+
+        let snapshot = await contextResolver.captureContext(target: targetSnapshot, app: targetApp, runID: runID)
+        DebugLog.info("[\(runID)] selected context: \(snapshot.logSummary)")
+        DebugLog.infoBlock(title: "[\(runID)] selected context payload", text: snapshot.payload)
+
+        switch ContextCorrectionGate.decision(for: snapshot) {
+        case .pasteRaw(let reason):
+            DebugLog.info("[\(runID)] correctedTranscript: raw fallback reason=\(reason)")
+            return raw
+        case .rewrite(let snapshot):
+            state = .rewriting
+            if snapshot.source == .cursorSession {
+                guard let transcriptPath = snapshot.evidence["transcriptPath"],
+                      let uuid = snapshot.evidence["sessionUUID"] else {
+                    DebugLog.info("[\(runID)] correctedTranscript: cursor raw fallback reason=missing transcript evidence")
+                    return raw
+                }
+                let url = URL(fileURLWithPath: transcriptPath)
+                let messages = ConversationLoader.load(from: url)
+                guard !messages.isEmpty else {
+                    DebugLog.info("[\(runID)] correctedTranscript: cursor raw fallback reason=empty parsed messages")
+                    return raw
+                }
+                let summary: String? = await {
+                    let fresh = await SessionSummarizer.ensureFresh(
+                        uuid: uuid,
+                        transcriptPath: transcriptPath,
+                        messages: messages,
+                        apiKey: apiKey
+                    )
+                    return fresh?.summary
+                }()
+                let rewritten = await rewriter.rewriteWithCursorSession(
+                    transcript: raw,
+                    summary: summary,
+                    recentTurns: snapshot.payload,
+                    runID: runID
+                )
+                return rewritten ?? raw
+            }
+
+            let rewritten = await rewriter.rewriteWithRawContext(
+                transcript: raw,
+                context: snapshot.payload,
+                runID: runID
+            )
+            return rewritten ?? raw
+        }
     }
 
     private func setError(_ message: String) {
         pasteTargetApp = nil
+        contextTargetSnapshot = nil
         lastError = message
         state = .error(message)
         audio.stop()
@@ -412,5 +404,9 @@ final class AppCoordinator: ObservableObject {
                 if case .error = self?.state { self?.state = .idle }
             }
         }
+    }
+
+    private static func makeCorrectionRunID() -> String {
+        String(UUID().uuidString.prefix(8))
     }
 }
