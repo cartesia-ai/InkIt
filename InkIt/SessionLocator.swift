@@ -26,8 +26,6 @@ struct SessionLocation {
 }
 
 enum SessionLocator {
-    private static let staleAge: TimeInterval = 4 * 60 * 60
-
     static func locate(forApp app: NSRunningApplication?, windowTitle: String?) -> SessionLocation? {
         let cursorRoot = projectsRoot()
         guard FileManager.default.fileExists(atPath: cursorRoot.path) else {
@@ -173,19 +171,23 @@ enum SessionLocator {
     }
 
     private static func newestJSONL(under dir: URL) -> URL? {
+        // No staleness cutoff. The user may be actively reading a multi-
+        // day-old agent conversation in the Cursor Agents window; that file
+        // hasn't been written to since the agent's last reply but the user
+        // is still looking at it and dictating about it. A previous
+        // 4-hour-cutoff variant of this function rejected the right session
+        // and silently fell back to AX-walking Cursor's window chrome.
         guard let enumerator = FileManager.default.enumerator(
             at: dir,
             includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
             options: [.skipsHiddenFiles, .skipsPackageDescendants]
         ) else { return nil }
-        let cutoff = Date(timeIntervalSinceNow: -staleAge)
         var best: (URL, Date)? = nil
         for case let url as URL in enumerator {
             guard url.pathExtension == "jsonl" else { continue }
             let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey])
             guard values?.isRegularFile == true else { continue }
             let mtime = values?.contentModificationDate ?? .distantPast
-            if mtime < cutoff { continue }
             if let (_, current) = best, current >= mtime { continue }
             best = (url, mtime)
         }
