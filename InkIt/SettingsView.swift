@@ -61,7 +61,7 @@ struct SettingsView: View {
             }
 
             Section {
-                Toggle("Repair technical terms after dictation", isOn: $settings.correctionEnabled)
+                Toggle("Polish using context", isOn: $settings.correctionEnabled)
                     .toggleStyle(.switch)
                     .tint(.accentColor)
                     .controlSize(.regular)
@@ -99,7 +99,7 @@ struct SettingsView: View {
                 Text("AI correction")
             } footer: {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Reads visible text from the focused app via Accessibility, extracts identifiers (camelCase, snake_case, file names), and asks Claude Haiku to fix any matches in the transcript before pasting.")
+                    Text("Looks at what you were just reading — your Cursor agent conversation on disk, or the focused app's visible text via Accessibility — and asks Claude to repair technical terms, identifiers, and proper nouns in the transcript before pasting. Falls back to the raw transcript on any failure.")
                     Link("Manage Anthropic API key", destination: URL(string: "https://console.anthropic.com/settings/keys")!)
                         .modifier(PointingHandCursor())
                 }
