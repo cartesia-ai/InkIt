@@ -245,6 +245,14 @@ final class AppCoordinator: ObservableObject {
         contextTargetSnapshot = TargetAppSnapshot.capture(from: pasteTargetApp)
         DebugLog.info("startDictation: frontmost=\(frontmostApp?.bundleIdentifier ?? "nil") lastExternal=\(lastExternalApp?.bundleIdentifier ?? "nil") resolvedTarget=\(pasteTargetApp?.bundleIdentifier ?? "nil") targetSnapshot=\(contextTargetSnapshot?.logDescription ?? "nil")")
 
+        // Capture the resolved target and snapshot into the onClosed closure.
+        // Instance state (pasteTargetApp / contextTargetSnapshot) can be wiped
+        // mid-flight by setError or a stale paste callback, which would cause
+        // correctedTranscript to fall back to raw paste even though we had a
+        // perfectly good target at recording start.
+        let capturedTargetApp = pasteTargetApp
+        let capturedSnapshot = contextTargetSnapshot
+
         let client = CartesiaStreamingClient(apiKey: settings.cartesiaAPIKey)
         self.client = client
 
@@ -254,7 +262,7 @@ final class AppCoordinator: ObservableObject {
         client.onError = { [weak self] message in
             Task { @MainActor in self?.setError(message) }
         }
-        client.onClosed = { [weak self] finalText in
+        client.onClosed = { [weak self, capturedTargetApp, capturedSnapshot] finalText in
             Task { @MainActor in
                 guard let self else { return }
                 let raw = finalText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -272,10 +280,14 @@ final class AppCoordinator: ObservableObject {
                     return
                 }
 
-                let corrected = await self.correctedTranscript(raw: raw)
+                let corrected = await self.correctedTranscript(
+                    raw: raw,
+                    targetApp: capturedTargetApp,
+                    targetSnapshot: capturedSnapshot
+                )
 
                 self.state = .pasting
-                self.paste.paste(text: corrected, targetApp: self.pasteTargetApp) { ok in
+                self.paste.paste(text: corrected, targetApp: capturedTargetApp) { ok in
                     Task { @MainActor in
                         self.pasteTargetApp = nil
                         self.contextTargetSnapshot = nil
@@ -315,7 +327,11 @@ final class AppCoordinator: ObservableObject {
     /// Returns the corrected text on success, or `raw` if correction is
     /// disabled or anything fails. Never throws — the user must always get
     /// at least the raw transcript pasted.
-    private func correctedTranscript(raw: String) async -> String {
+    private func correctedTranscript(
+        raw: String,
+        targetApp: NSRunningApplication?,
+        targetSnapshot: TargetAppSnapshot?
+    ) async -> String {
         let runID = Self.makeCorrectionRunID()
         let enabled = settings.correctionEnabled
         let hasKey = !settings.anthropicAPIKey.isEmpty
@@ -326,8 +342,6 @@ final class AppCoordinator: ObservableObject {
             return raw
         }
 
-        let targetApp = pasteTargetApp
-        let targetSnapshot = contextTargetSnapshot
         let apiKey = settings.anthropicAPIKey
         let rewriter = TranscriptRewriter(apiKey: apiKey)
 
@@ -392,6 +406,7 @@ final class AppCoordinator: ObservableObject {
     }
 
     private func setError(_ message: String) {
+        DebugLog.info("setError: \(message)")
         pasteTargetApp = nil
         contextTargetSnapshot = nil
         lastError = message
