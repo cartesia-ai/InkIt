@@ -36,23 +36,30 @@ final class SessionLocatorStrictTests: XCTestCase {
         XCTAssertEqual(location.uuid, "11111111-1111-1111-1111-111111111111")
     }
 
-    func testMultipleTranscriptCandidatesRejects() throws {
+    func testMultipleTranscriptCandidatesPicksNewest() throws {
         let workspace = try makeWorkspace(named: "MyProject")
         let projectsRoot = tempRoot.appendingPathComponent("projects", isDirectory: true)
         let storageRoot = tempRoot.appendingPathComponent("workspaceStorage", isDirectory: true)
         let slug = projectSlug(for: workspace)
-        try makeTranscript(projectsRoot: projectsRoot, project: slug, uuid: "11111111-1111-1111-1111-111111111111")
-        try makeTranscript(projectsRoot: projectsRoot, project: slug, uuid: "22222222-2222-2222-2222-222222222222")
+        let older = try makeTranscript(projectsRoot: projectsRoot, project: slug, uuid: "11111111-1111-1111-1111-111111111111")
+        let newer = try makeTranscript(projectsRoot: projectsRoot, project: slug, uuid: "22222222-2222-2222-2222-222222222222")
+        let now = Date()
+        try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-2 * 60 * 60)], ofItemAtPath: older.path)
+        try FileManager.default.setAttributes([.modificationDate: now], ofItemAtPath: newer.path)
         try makeWorkspaceJSON(storageRoot: storageRoot, folder: "file://\(workspace.path)")
 
         let result = SessionLocator.locateStrict(
             windowTitle: "MyProject - Cursor",
             projectsRoot: projectsRoot,
             workspaceStorageRoot: storageRoot,
-            now: Date()
+            now: now
         )
 
-        XCTAssertRejected(result, reason: "ambiguous cursor transcript candidates")
+        guard case .located(let location) = result else {
+            XCTFail("expected located, got \(result)")
+            return
+        }
+        XCTAssertEqual(location.uuid, "22222222-2222-2222-2222-222222222222")
     }
 
     func testStaleTranscriptDoesNotMakeFreshSingleCandidateAmbiguous() throws {
@@ -80,20 +87,31 @@ final class SessionLocatorStrictTests: XCTestCase {
         XCTAssertEqual(location.uuid, "11111111-1111-1111-1111-111111111111")
     }
 
-    func testEmptyWindowMultipleCandidatesRejects() throws {
+    func testEmptyWindowMultipleCandidatesPicksNewest() throws {
         let projectsRoot = tempRoot.appendingPathComponent("projects", isDirectory: true)
         let storageRoot = tempRoot.appendingPathComponent("workspaceStorage", isDirectory: true)
-        try makeTranscript(projectsRoot: projectsRoot, project: "empty-window", uuid: "11111111-1111-1111-1111-111111111111")
-        try makeTranscript(projectsRoot: projectsRoot, project: "empty-window", uuid: "22222222-2222-2222-2222-222222222222")
+        let older = try makeTranscript(projectsRoot: projectsRoot, project: "empty-window", uuid: "11111111-1111-1111-1111-111111111111")
+        let newer = try makeTranscript(projectsRoot: projectsRoot, project: "empty-window", uuid: "22222222-2222-2222-2222-222222222222")
+        let now = Date()
+        // Both transcripts are days old — the exact case from the real-world
+        // bug where the user dictates about a multi-day-old agent conversation
+        // in the Cursor Agents window. Newest still wins.
+        try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-48 * 60 * 60)], ofItemAtPath: older.path)
+        try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-44 * 60 * 60)], ofItemAtPath: newer.path)
 
         let result = SessionLocator.locateStrict(
             windowTitle: "Cursor Agents",
             projectsRoot: projectsRoot,
             workspaceStorageRoot: storageRoot,
-            now: Date()
+            now: now
         )
 
-        XCTAssertRejected(result, reason: "ambiguous cursor transcript candidates")
+        guard case .located(let location) = result else {
+            XCTFail("expected located, got \(result)")
+            return
+        }
+        XCTAssertEqual(location.project, "empty-window")
+        XCTAssertEqual(location.uuid, "22222222-2222-2222-2222-222222222222")
     }
 
     func testMissingProjectRejects() throws {

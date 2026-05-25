@@ -13,8 +13,6 @@ enum SessionLookupResult: Equatable {
 }
 
 enum SessionLocator {
-    private static let maxTranscriptAge: TimeInterval = 4 * 60 * 60
-
     static func locateStrict(windowTitle: String?, runID: String? = nil) -> SessionLookupResult {
         locateStrict(
             windowTitle: windowTitle,
@@ -200,31 +198,14 @@ enum SessionLocator {
         guard !candidates.isEmpty else {
             return .rejected(reason: "no cursor transcript candidates", evidence: evidence.merging(["project": project]) { current, _ in current })
         }
-        let freshCandidates = candidates.filter { now.timeIntervalSince($0.modifiedAt) <= maxTranscriptAge }
-        guard !freshCandidates.isEmpty else {
-            let newest = candidates[0]
-            let age = now.timeIntervalSince(newest.modifiedAt)
-            return .rejected(
-                reason: "stale cursor transcript",
-                evidence: evidence.merging([
-                    "project": project,
-                    "ageSeconds": "\(Int(age))",
-                    "path": newest.url.path
-                ]) { current, _ in current }
-            )
-        }
-        guard freshCandidates.count == 1 else {
-            return .rejected(
-                reason: "ambiguous cursor transcript candidates",
-                evidence: evidence.merging([
-                    "project": project,
-                    "candidateCount": "\(freshCandidates.count)",
-                    "candidates": freshCandidates.map { $0.url.deletingPathExtension().lastPathComponent }.joined(separator: ",")
-                ]) { current, _ in current }
-            )
-        }
-
-        let candidate = freshCandidates[0]
+        // Pick the most-recently-modified session in the project. No staleness
+        // cutoff and no uniqueness requirement: the empty-window project (and
+        // many local workspaces) accumulate sessions across days, and the user
+        // may be reading a multi-day-old conversation in the Cursor Agents
+        // window — its mtime advances only when the agent emits new turns.
+        // The literal-window-title and workspaceStorage paths are already
+        // strong positive signals for the right *project*.
+        let candidate = candidates[0]
         let uuid = candidate.url.deletingPathExtension().lastPathComponent
         let mergedEvidence = evidence.merging([
             "project": project,
