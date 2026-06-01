@@ -354,7 +354,6 @@ private struct TranscriptHistoryRow: View {
             }
         }
         .animation(.easeOut(duration: 0.15), value: copied)
-        .help(copied ? "Copied" : "Copy transcript")
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityLabel(copied ? "Copied transcript" : "Copy transcript")

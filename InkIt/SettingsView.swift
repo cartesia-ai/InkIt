@@ -157,55 +157,66 @@ private struct APIKeyField: View {
     @FocusState private var isFocused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                editor
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13, design: .monospaced))
-                    .focused($isFocused)
+        LabeledContent {
+            VStack(alignment: .leading, spacing: SettingsMetrics.captionSpacing) {
+                HStack(spacing: 8) {
+                    editor
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 13, design: .monospaced))
+                        .focused($isFocused)
 
-                Button {
-                    isRevealed.toggle()
-                    if isRevealed { isFocused = false }
-                } label: {
-                    Image(systemName: isRevealed ? "eye.slash" : "eye")
-                        .imageScale(.medium)
-                        .foregroundStyle(.secondary)
-                        .frame(width: SettingsMetrics.accessoryButton,
-                               height: SettingsMetrics.accessoryButton)
+                    Button {
+                        isRevealed.toggle()
+                        if isRevealed { isFocused = false }
+                    } label: {
+                        Image(systemName: isRevealed ? "eye.slash" : "eye")
+                            .imageScale(.medium)
+                            .foregroundStyle(.secondary)
+                            .frame(width: SettingsMetrics.accessoryButton,
+                                   height: SettingsMetrics.accessoryButton)
+                    }
+                    .buttonStyle(.borderless)
+                    .contentShape(Rectangle())
+                    .help(isRevealed ? "Hide \(title)" : "Show \(title)")
+                    .modifier(PointingHandCursor())
                 }
-                .buttonStyle(.borderless)
+                .padding(.horizontal, 10)
+                .fieldSurface(focused: isFocused)
                 .contentShape(Rectangle())
-                .help(isRevealed ? "Hide \(title)" : "Show \(title)")
-                .modifier(PointingHandCursor())
-            }
-            .padding(.horizontal, 10)
-            .fieldSurface(focused: isFocused)
-            .contentShape(Rectangle())
-            .onTapGesture { isFocused = true }
+                .onTapGesture { isFocused = true }
 
-            Link(linkTitle, destination: linkURL)
-                .font(.caption)
-                .modifier(PointingHandCursor())
+                Link(linkTitle, destination: linkURL)
+                    .font(.caption)
+                    .modifier(PointingHandCursor())
+            }
+            .frame(width: 230)
+        } label: {
+            Text(title)
         }
     }
 
-    /// Three states: revealed (full plaintext, editable) → hidden-while-editing
-    /// (secure entry) → at rest (a masked preview showing only the last four
-    /// characters). Tapping the rest state focuses the field to edit in place.
+    /// The editable field stays mounted at all times so focus lands reliably:
+    /// revealed shows plaintext, hidden shows a `SecureField`. At rest, a masked
+    /// preview (last four characters) is overlaid on top of the secure field —
+    /// taps fall through to focus the field beneath, so the key can be edited
+    /// in place even while redacted.
     @ViewBuilder private var editor: some View {
-        if isRevealed {
-            TextField(title, text: $text)
-        } else if isFocused || text.isEmpty {
-            SecureField(title, text: $text)
-        } else {
-            Text(Self.redacted(text))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-                .truncationMode(.head)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-                .onTapGesture { isFocused = true }
+        ZStack(alignment: .leading) {
+            if isRevealed {
+                TextField(title, text: $text)
+            } else {
+                SecureField(title, text: $text)
+            }
+
+            if !isRevealed && !isFocused && !text.isEmpty {
+                Text(Self.redacted(text))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(SettingsMetrics.fieldBackground)
+                    .allowsHitTesting(false)
+            }
         }
     }
 
