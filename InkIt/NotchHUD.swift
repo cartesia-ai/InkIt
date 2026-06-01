@@ -487,10 +487,12 @@ private struct LatestTranscriptRow: View {
     var body: some View {
         Button(action: copy) {
             HStack(alignment: .top, spacing: 8) {
-                Text(text)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.92))
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(text)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.white.opacity(0.92))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
 
                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
                     .font(.system(size: 11, weight: .medium))
@@ -509,6 +511,26 @@ private struct LatestTranscriptRow: View {
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .stroke(rowStroke, lineWidth: hovering || copied ? 1 : 0)
             )
+            .overlay(alignment: .topTrailing) {
+                if hovering && !copied {
+                    Text("Copy")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(.black.opacity(0.85))
+                        )
+                        .overlay(
+                            Capsule(style: .continuous)
+                                .stroke(.white.opacity(0.18), lineWidth: 0.5)
+                        )
+                        .padding(6)
+                        .transition(.opacity)
+                        .allowsHitTesting(false)
+                }
+            }
         }
         .buttonStyle(.plain)
         .onHover { isHovering in

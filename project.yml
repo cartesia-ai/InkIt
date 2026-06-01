@@ -44,6 +44,9 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.aiqiliu.InkIt
+        # Drives Color.accentColor / system control tints from the
+        # AccentColor asset (indigo, light + dark) — see DESIGN_SYSTEM.md.
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         # No App Sandbox: synthesized Cmd+V via Accessibility requires an
         # unsandboxed binary.
         ENABLE_APP_SANDBOX: NO

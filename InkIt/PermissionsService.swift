@@ -115,6 +115,12 @@ final class PermissionsService: ObservableObject {
     }
 
     /// Triggers the system Accessibility prompt and opens the Privacy pane.
+    ///
+    /// Passing `kAXTrustedCheckOptionPrompt: true` is what makes macOS open
+    /// System Settings directly to the Accessibility pane. Without it (prompt
+    /// disabled), the `openAccessibilitySettings()` deep-link is the only
+    /// navigation, and on macOS 13+ that URL drops the user on the main
+    /// Settings page instead of Accessibility — so keep the prompt enabled.
     func requestAccessibility() {
         let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
         _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)

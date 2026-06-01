@@ -25,7 +25,6 @@ struct TargetAppSnapshot: Equatable {
 }
 
 enum ContextSourceKind: String, Equatable {
-    case cursorSession
     case accessibility
     case unavailable
 }

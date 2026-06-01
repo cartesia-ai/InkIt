@@ -20,20 +20,8 @@ enum OnboardingStep: Int, CaseIterable {
     case welcome
     case permissions
     case apiKey
-    case fnIntro
     case tryIt
     case done
-
-    var accent: [Color] {
-        switch self {
-        case .welcome:     return [Color(red: 0.45, green: 0.36, blue: 0.95), Color(red: 0.92, green: 0.41, blue: 0.78)]
-        case .permissions: return [Color(red: 0.20, green: 0.55, blue: 0.95), Color(red: 0.30, green: 0.85, blue: 0.85)]
-        case .apiKey:      return [Color(red: 0.95, green: 0.50, blue: 0.30), Color(red: 0.95, green: 0.78, blue: 0.36)]
-        case .fnIntro:     return [Color(red: 0.30, green: 0.78, blue: 0.55), Color(red: 0.55, green: 0.92, blue: 0.78)]
-        case .tryIt:       return [Color(red: 0.92, green: 0.36, blue: 0.55), Color(red: 0.62, green: 0.36, blue: 0.92)]
-        case .done:        return [Color(red: 0.36, green: 0.85, blue: 0.62), Color(red: 0.36, green: 0.62, blue: 0.95)]
-        }
-    }
 }
 
 struct OnboardingRootView: View {
@@ -53,39 +41,23 @@ struct OnboardingRootView: View {
 
     var body: some View {
         ZStack {
-            // Animated gradient background that morphs per step.
-            LinearGradient(colors: step.accent, startPoint: .topLeading, endPoint: .bottomTrailing)
+            // Calm, appearance-aware backdrop: a single solid warm-paper fill,
+            // the same on every step (no gradient, no per-step rainbow).
+            // See DESIGN_SYSTEM.md.
+            Color("PaperBG")
                 .ignoresSafeArea()
-                .animation(.easeInOut(duration: 0.6), value: step)
-
-            // Subtle blurred orbs for depth.
-            GeometryReader { geo in
-                Circle()
-                    .fill(.white.opacity(0.18))
-                    .frame(width: 360, height: 360)
-                    .blur(radius: 80)
-                    .offset(x: -120, y: -80)
-                Circle()
-                    .fill(.white.opacity(0.12))
-                    .frame(width: 300, height: 300)
-                    .blur(radius: 90)
-                    .offset(x: geo.size.width - 180, y: geo.size.height - 200)
-            }
-            .ignoresSafeArea()
-            .allowsHitTesting(false)
 
             VStack(spacing: 0) {
                 StepIndicator(step: step)
-                    .padding(.top, 28)
+                    .padding(.top, 40)
 
-                Spacer(minLength: 28)
+                Spacer(minLength: 56)
 
                 Group {
                     switch step {
                     case .welcome:     WelcomeStep(next: next)
                     case .permissions: PermissionsStep(next: next)
                     case .apiKey:      APIKeyStep(next: next)
-                    case .fnIntro:     FnIntroStep(next: next)
                     case .tryIt:       TryItStep(next: next)
                     case .done:        DoneStep(finish: finish)
                     }
@@ -96,13 +68,12 @@ struct OnboardingRootView: View {
                 ))
                 .id(step)
 
-                Spacer(minLength: 0)
+                Spacer(minLength: 56)
             }
-            .padding(.horizontal, 56)
-            .padding(.bottom, 36)
+            .padding(.horizontal, 72)
+            .padding(.bottom, 56)
         }
-        .frame(width: 720, height: 560)
-        .preferredColorScheme(.dark)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func next() {
@@ -129,7 +100,9 @@ private struct StepIndicator: View {
         HStack(spacing: 8) {
             ForEach(OnboardingStep.allCases, id: \.self) { s in
                 Capsule()
-                    .fill(.white.opacity(s.rawValue <= step.rawValue ? 0.95 : 0.28))
+                    .fill(s.rawValue <= step.rawValue
+                          ? Color.accentColor
+                          : Color.secondary.opacity(0.3))
                     .frame(width: s == step ? 28 : 8, height: 8)
                     .animation(.spring(response: 0.4, dampingFraction: 0.8), value: step)
             }
@@ -143,32 +116,79 @@ private struct WelcomeStep: View {
     let next: () -> Void
     @State private var pulse = false
     var body: some View {
-        VStack(spacing: 28) {
-            ZStack {
-                Circle().fill(.white.opacity(0.18)).frame(width: 160, height: 160)
-                    .scaleEffect(pulse ? 1.08 : 0.96)
-                Image(systemName: "waveform.circle.fill")
-                    .font(.system(size: 96, weight: .regular))
-                    .foregroundStyle(.white)
-            }
-            .onAppear {
-                withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true)) {
-                    pulse = true
+        VStack(spacing: 24) {
+            Image(nsImage: NSApplication.shared.applicationIconImage)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 112, height: 112)
+                .shadow(color: .black.opacity(0.18), radius: 12, y: 6)
+                .scaleEffect(pulse ? 1.0 : 0.94)
+                .onAppear {
+                    withAnimation(.spring(response: 0.6, dampingFraction: 0.6)) {
+                        pulse = true
+                    }
                 }
+
+            VStack(spacing: 8) {
+                Text("Welcome to InkIt")
+                    .font(.system(size: 34, weight: .bold))
+                    .foregroundStyle(.primary)
+                Text("Think out loud. Ink it.")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
             }
 
             VStack(spacing: 10) {
-                Text("Welcome to InkIt")
-                    .font(.system(size: 38, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-                Text("Hold a key. Speak. Watch the text appear.")
-                    .font(.title3)
-                    .foregroundStyle(.white.opacity(0.9))
+                BenefitRow(
+                    icon: "bolt.fill",
+                    title: "Faster than your keyboard",
+                    subtitle: "Words land the instant you stop talking."
+                )
+                BenefitRow(
+                    icon: "ear",
+                    title: "Built for the real world",
+                    subtitle: "Cafés, calls, open offices. It hears you over the noise."
+                )
+                BenefitRow(
+                    icon: "paperplane.fill",
+                    title: "Send it as-is",
+                    subtitle: "No re-reading. No cleanup. Just send."
+                )
             }
+            .frame(maxWidth: 560)
 
             PrimaryButton(title: "Get started", action: next)
-                .padding(.top, 6)
+                .padding(.top, 2)
         }
+    }
+}
+
+/// Icon + title + one-line benefit, in a quiet card — the Welcome value props.
+private struct BenefitRow: View {
+    let icon: String
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        HStack(spacing: 14) {
+            GlyphTile(icon: icon, size: 48, corner: 13, iconSize: 22)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.title3.weight(.semibold)).foregroundStyle(.primary)
+                Text(subtitle).font(.body).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color("CardBG"))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+        )
     }
 }
 
@@ -183,16 +203,16 @@ private struct PermissionsStep: View {
     var body: some View {
         VStack(spacing: 28) {
             HeaderBlock(
-                icon: "lock.shield.fill",
-                title: "A couple of permissions",
-                subtitle: "InkIt needs your mic to hear you, and Accessibility to paste the result."
+                icon: "waveform",
+                title: "Speak anywhere, paste everywhere",
+                subtitle: "InkIt only wakes up while you hold the key. Nothing is captured or sent otherwise."
             )
 
             VStack(spacing: 12) {
                 PermissionCard(
                     icon: "mic.fill",
                     title: "Microphone",
-                    subtitle: "Awake when the hotkey is pressed. Asleep otherwise.",
+                    subtitle: "So InkIt can hear you. Asleep until you hold the key.",
                     granted: permissions.hasMicrophone
                 ) {
                     permissions.requestMicrophone { _ in }
@@ -201,13 +221,13 @@ private struct PermissionsStep: View {
                 PermissionCard(
                     icon: "accessibility",
                     title: "Accessibility",
-                    subtitle: "See your words instantly appear right at your cursor.",
+                    subtitle: "So your words paste instantly, right at your cursor.",
                     granted: permissions.hasAccessibility
                 ) {
                     permissions.requestAccessibility()
                 }
             }
-            .frame(maxWidth: 480)
+            .frame(maxWidth: 560)
 
             if bothGranted {
                 PrimaryButton(title: "Continue", action: next)
@@ -229,43 +249,30 @@ private struct PermissionCard: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(.white.opacity(0.18))
-                    .frame(width: 44, height: 44)
-                Image(systemName: icon)
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(.white)
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.headline).foregroundStyle(.white)
-                Text(subtitle).font(.caption).foregroundStyle(.white.opacity(0.8))
+            GlyphTile(icon: icon, size: 48, corner: 13, iconSize: 22)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.title3.weight(.semibold)).foregroundStyle(.primary)
+                Text(subtitle).font(.body).foregroundStyle(.secondary)
             }
             Spacer()
             if granted {
-                HStack(spacing: 6) {
-                    Image(systemName: "checkmark.circle.fill")
-                    Text("Granted")
-                }
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 12).padding(.vertical, 8)
-                .background(Capsule().fill(.green.opacity(0.85)))
+                Label("Enabled", systemImage: "checkmark.circle.fill")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.green)
             } else {
-                Button(action: action) {
-                    Text("Grant")
-                        .font(.subheadline.weight(.semibold))
-                        .padding(.horizontal, 14).padding(.vertical, 8)
-                        .background(Capsule().fill(.white.opacity(0.95)))
-                        .foregroundStyle(.black)
-                }
-                .buttonStyle(.plain)
+                Button("Enable", action: action)
+                    .buttonStyle(InkButtonStyle(compact: true))
+                    .modifier(PointingHandCursor())
             }
         }
         .padding(14)
         .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(.white.opacity(0.12))
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color("CardBG"))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
         )
     }
 }
@@ -276,97 +283,147 @@ private struct APIKeyStep: View {
     let next: () -> Void
     @EnvironmentObject var settings: SettingsStore
     @State private var showKey = false
+    @FocusState private var fieldFocused: Bool
+    @StateObject private var validator = CartesiaKeyValidator()
 
-    var body: some View {
-        VStack(spacing: 26) {
-            HeaderBlock(
-                icon: "key.fill",
-                title: "Connect Cartesia",
-                subtitle: "Powered by Cartesia ink-2. Your API key is stored locally on this Mac only."
-            )
-
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Group {
-                        if showKey {
-                            TextField("sk-cartesia-…", text: $settings.cartesiaAPIKey)
-                        } else {
-                            SecureField("sk-cartesia-…", text: $settings.cartesiaAPIKey)
-                        }
-                    }
-                    .textFieldStyle(.plain)
-                    .padding(12)
-                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(.white.opacity(0.95)))
-                    .foregroundStyle(.black)
-
-                    Button(showKey ? "Hide" : "Show") { showKey.toggle() }
-                        .buttonStyle(.plain)
-                        .padding(.horizontal, 12).padding(.vertical, 10)
-                        .background(Capsule().fill(.white.opacity(0.2)))
-                        .foregroundStyle(.white)
-                }
-
-                Link(destination: URL(string: "https://play.cartesia.ai/keys")!) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.up.right.square")
-                        Text("Get a Cartesia API key")
-                    }
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.white.opacity(0.95))
-                }
-                .modifier(PointingHandCursor())
-            }
-            .frame(maxWidth: 480)
-
-            PrimaryButton(
-                title: "Continue",
-                enabled: !settings.cartesiaAPIKey.trimmingCharacters(in: .whitespaces).isEmpty,
-                action: next
-            )
-        }
+    private var trimmedKey: String {
+        settings.cartesiaAPIKey.trimmingCharacters(in: .whitespaces)
     }
-}
-
-// MARK: - Fn intro
-
-private struct FnIntroStep: View {
-    let next: () -> Void
-    @State private var float = false
 
     var body: some View {
         VStack(spacing: 24) {
             HeaderBlock(
-                icon: "globe",
-                title: "Meet your push-to-talk key"
-            ) {
-                HStack(spacing: 8) {
-                    Text("Hold")
-                    KeycapLabel("Fn")
-                    Text("to dictate. Release to stop.")
-                }
-                .frame(maxWidth: 480)
-            }
+                icon: "key.fill",
+                title: "Turn on the engine",
+                subtitle: "Powered by Cartesia ink-2. Your API key is stored locally on this Mac only."
+            )
 
-            ZStack {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(.white.opacity(0.18))
-                    .frame(width: 140, height: 100)
-                VStack(spacing: 4) {
-                    Image(systemName: "globe")
-                        .font(.system(size: 38, weight: .medium))
-                    Text("fn").font(.headline)
-                }
-                .foregroundStyle(.white)
-            }
-            .offset(y: float ? -6 : 6)
-            .onAppear {
-                withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) {
-                    float = true
-                }
-            }
+            VStack(alignment: .leading, spacing: 12) {
+                keyField
 
-            PrimaryButton(title: "Let me try it", action: next)
+                HStack(alignment: .firstTextBaseline) {
+                    validationLabel
+                        .animation(.easeInOut(duration: 0.2), value: validator.state)
+                    Spacer(minLength: 16)
+                    Link(destination: URL(string: "https://play.cartesia.ai/keys")!) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.up.right.square")
+                            Text("Get a Cartesia API key")
+                        }
+                        .font(.subheadline.weight(.medium))
+                    }
+                    .modifier(PointingHandCursor())
+                }
+                .frame(minHeight: 18)
+                .padding(.horizontal, 2)
+            }
+            .frame(maxWidth: 460)
+
+            PrimaryButton(
+                title: "Continue",
+                enabled: !trimmedKey.isEmpty,
+                action: next
+            )
+        }
+        .onAppear { validator.keyChanged(settings.cartesiaAPIKey) }
+        .onChange(of: settings.cartesiaAPIKey) { _, newValue in
+            validator.keyChanged(newValue)
+        }
+    }
+
+    /// Custom credential field: CardBG container matching the rest of onboarding,
+    /// taller and narrower than a system field, with a leading key glyph, the
+    /// eye toggle and a live status icon tucked inside the trailing edge.
+    private var keyField: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "key.fill")
+                .font(.system(size: 15))
+                .foregroundStyle(.secondary)
+
+            Group {
+                if showKey {
+                    TextField("sk-cartesia-…", text: $settings.cartesiaAPIKey)
+                } else {
+                    SecureField("sk-cartesia-…", text: $settings.cartesiaAPIKey)
+                }
+            }
+            .textFieldStyle(.plain)
+            .font(.system(size: 15, design: .monospaced))
+            .focused($fieldFocused)
+
+            statusIcon
+                .transition(.opacity.combined(with: .scale))
+                .animation(.easeInOut(duration: 0.2), value: validator.state)
+
+            Button {
+                showKey.toggle()
+            } label: {
+                Image(systemName: showKey ? "eye.slash" : "eye")
+                    .imageScale(.medium)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 22, height: 22)
+            }
+            .buttonStyle(.borderless)
+            .contentShape(Rectangle())
+            .help(showKey ? "Hide API key" : "Show API key")
+            .modifier(PointingHandCursor())
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 15)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color("CardBG"))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(
+                    fieldFocused ? Color.accentColor : Color(nsColor: .separatorColor),
+                    lineWidth: fieldFocused ? 2 : 1
+                )
+        )
+        .animation(.easeInOut(duration: 0.15), value: fieldFocused)
+        .contentShape(Rectangle())
+        .onTapGesture { fieldFocused = true }
+    }
+
+    /// Compact inline cue inside the field — mirrors the text status below it.
+    @ViewBuilder
+    private var statusIcon: some View {
+        switch validator.state {
+        case .idle:
+            EmptyView()
+        case .checking:
+            ProgressView().controlSize(.small)
+        case .verified:
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        case .couldNotVerify:
+            Image(systemName: "exclamationmark.circle")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var validationLabel: some View {
+        switch validator.state {
+        case .idle:
+            Text("Paste your key to verify it.")
+                .font(.subheadline)
+                .foregroundStyle(.tertiary)
+        case .checking:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Checking…").foregroundStyle(.secondary)
+            }
+            .font(.subheadline)
+        case .verified:
+            Label("Key verified", systemImage: "checkmark.circle.fill")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.green)
+        case .couldNotVerify:
+            Label("Couldn’t verify — check the key or your connection", systemImage: "exclamationmark.circle")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
         }
     }
 }
@@ -376,110 +433,215 @@ private struct FnIntroStep: View {
 private struct TryItStep: View {
     let next: () -> Void
     @EnvironmentObject var coordinator: AppCoordinator
-    @EnvironmentObject var settings: SettingsStore
 
-    private let sample = "The quick brown fox jumps over the lazy dog while the morning light spills across the desk."
+    /// A real prompt a technical user might dictate to an AI assistant. Spoken
+    /// numbers ("two thousand dollars", "five day") that ink-2 renders as
+    /// "$2,000" / "5-day" are the at-a-glance accuracy flex — and it reads
+    /// cleanly verbatim, since the LLM rewrite is off by default.
+    private let sampleWords = "Plan a 5-day trip to Tokyo in April with a budget around $2,000."
+        .split(separator: " ").map(String.init)
+
+    /// Matches the HUD's recording dot/waveform color (see NotchHUD): amber is
+    /// the app's "live recording" signal, distinct from the resting indigo.
+    private static let recordingAmber = Color(red: 1.0, green: 0.62, blue: 0.04)
+
+    @State private var caretOn = true
+    @State private var invite = false
+    private let caretTimer = Timer.publish(every: 0.55, on: .main, in: .common).autoconnect()
 
     var isRecording: Bool { coordinator.state == .recording }
     var isFinalizing: Bool {
-        if case .finalizing = coordinator.state { return true }
-        if case .pasting = coordinator.state { return true }
-        return false
+        switch coordinator.state {
+        case .finalizing, .rewriting, .pasting: return true
+        default: return false
+        }
     }
+    var transcript: String { coordinator.liveTranscript }
+    /// Released the key and got something back — ready to send.
+    var isComplete: Bool { !isRecording && !isFinalizing && !transcript.isEmpty }
 
     var body: some View {
-        VStack(spacing: 22) {
-            HeaderBlock(
-                icon: "waveform",
-                title: "Give it a try",
-                subtitle: "Hold the Fn key and read this aloud."
-            )
+        VStack(spacing: 24) {
+            Text("Your turn")
+                .font(.system(size: 28, weight: .bold))
+                .foregroundStyle(.primary)
 
-            // Sample paragraph card
-            Text(sample)
-                .font(.title3)
-                .foregroundStyle(.white)
-                .multilineTextAlignment(.center)
-                .padding(18)
-                .frame(maxWidth: 560)
-                .background(RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .fill(.white.opacity(0.12)))
+            composer
+            pushToTalk
 
-            // Live waveform + status
-            WaveformBar(level: coordinator.inputLevel, active: isRecording)
-                .frame(width: 220, height: 44)
+            Button("Skip for now") { next() }
+                .buttonStyle(.plain)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .padding(.top, 2)
+                .modifier(PointingHandCursor())
+        }
+        .onAppear { coordinator.beginOnboardingTrial() }
+        .onDisappear { coordinator.endOnboardingTrial() }
+        .onReceive(caretTimer) { _ in caretOn.toggle() }
+    }
 
-            statusBox
+    // MARK: Composer — the always-focused field the words land in
 
-            HStack(spacing: 12) {
-                Button("Skip") { next() }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.white.opacity(0.85))
-                    .padding(.horizontal, 14).padding(.vertical, 10)
+    private var composer: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            boxText
+                .font(.system(size: 18))
+                .lineSpacing(4)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, minHeight: 54, alignment: .topLeading)
 
-                PrimaryButton(title: "Continue", action: next)
+            Divider()
+
+            HStack {
+                Text(isComplete ? "Looks right? Send it →" : "Anywhere you can type")
+                    .font(.caption)
+                    .foregroundStyle(isComplete ? Color.accentColor : Color.secondary)
+                Spacer()
+                sendButton
             }
         }
-        .onAppear {
-            coordinator.beginOnboardingTrial()
+        .padding(18)
+        .frame(maxWidth: 564)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color("CardBG"))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.accentColor, lineWidth: 2)
+        )
+        .shadow(color: Color.accentColor.opacity(0.22), radius: 7)
+    }
+
+    /// Live transcript in solid ink, with the unread remainder of the sample
+    /// trailing it in ghost gray and a blinking caret at the boundary — so the
+    /// box is both the script and the result, no extra captions.
+    private var boxText: Text {
+        let spokenCount = transcript.isEmpty ? 0 : transcript.split(separator: " ").count
+        let remaining = sampleWords.dropFirst(spokenCount).joined(separator: " ")
+        var t = Text("")
+        if !transcript.isEmpty {
+            t = t + Text(transcript).foregroundStyle(.primary)
+            if !remaining.isEmpty { t = t + Text(" ") }
         }
-        .onDisappear {
-            coordinator.endOnboardingTrial()
+        t = t + Text("▏").foregroundStyle(caretOn ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(Color.clear))
+        if !remaining.isEmpty {
+            t = t + Text(remaining).foregroundStyle(.tertiary)
         }
+        return t
+    }
+
+    private var sendButton: some View {
+        Button { if isComplete { next() } } label: {
+            Image(systemName: "paperplane.fill")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 34, height: 34)
+                .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color.accentColor))
+        }
+        .buttonStyle(.plain)
+        .disabled(!isComplete)
+        .opacity(isComplete ? 1 : 0.35)
+        .scaleEffect(isComplete ? 1 : 0.9)
+        .animation(.spring(response: 0.35, dampingFraction: 0.6), value: isComplete)
+        .modifier(PointingHandCursor())
+    }
+
+    // MARK: Push-to-talk — the hero control
+
+    private var pushToTalk: some View {
+        VStack(spacing: 14) {
+            keyCap
+            WaveformBar(level: coordinator.inputLevel, active: isRecording, tint: Self.recordingAmber)
+                .frame(width: 200, height: 30)
+                .opacity(isRecording ? 1 : 0.25)
+            statusLine.frame(minHeight: 20)
+        }
+    }
+
+    private var keyCap: some View {
+        HStack(spacing: 12) {
+            if isRecording {
+                Circle()
+                    .fill(Self.recordingAmber)
+                    .frame(width: 13, height: 13)
+                    .shadow(color: Self.recordingAmber.opacity(0.7), radius: 5)
+            } else {
+                Image(systemName: "mic.fill")
+                    .font(.system(size: 20))
+                    .foregroundStyle(.primary)
+            }
+            HStack(spacing: 7) {
+                Text("Hold")
+                Text("fn")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.horizontal, 9).padding(.vertical, 3)
+                    .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.accentSoft))
+                Text("to talk")
+            }
+            .font(.system(size: 19, weight: .bold))
+            .foregroundStyle(.primary)
+        }
+        .padding(.horizontal, 32).padding(.vertical, 18)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(isRecording ? Color.accentSoft : Color("CardBG"))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(isRecording ? Self.recordingAmber : Color(nsColor: .separatorColor),
+                        lineWidth: 1.5)
+        )
+        .scaleEffect(isRecording ? 0.97 : 1)
+        .shadow(color: .black.opacity(0.12), radius: isRecording ? 4 : 10, y: isRecording ? 2 : 6)
+        .overlay(inviteRing.opacity(isRecording ? 0 : 1))
+        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isRecording)
+    }
+
+    /// A soft pulsing ring while idle, to pull the eye to the key.
+    private var inviteRing: some View {
+        RoundedRectangle(cornerRadius: 22, style: .continuous)
+            .stroke(Color.accentColor, lineWidth: 2)
+            .padding(-7)
+            .scaleEffect(invite ? 1.1 : 0.97)
+            .opacity(invite ? 0 : 0.5)
+            .allowsHitTesting(false)
+            .onAppear {
+                withAnimation(.easeOut(duration: 2.1).repeatForever(autoreverses: false)) {
+                    invite = true
+                }
+            }
     }
 
     @ViewBuilder
-    private var statusBox: some View {
-        let content: AnyView = {
-            if isRecording {
-                return AnyView(
-                    Text("Keep holding Fn and speak.")
-                        .foregroundStyle(.white.opacity(0.85))
-                        .frame(maxWidth: .infinity)
-                )
-            } else if isFinalizing {
-                return AnyView(
-                    Text("Finalizing…")
-                        .foregroundStyle(.white.opacity(0.85))
-                        .frame(maxWidth: .infinity)
-                )
-            } else if !coordinator.liveTranscript.isEmpty {
-                return AnyView(
-                    HStack(alignment: .top, spacing: 10) {
-                        Image(systemName: "checkmark.seal.fill")
-                            .foregroundStyle(.green)
-                        Text(coordinator.liveTranscript)
-                            .foregroundStyle(.white)
-                            .multilineTextAlignment(.leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                )
-            } else {
-                return AnyView(
-                    Text("Press and hold Fn to start.")
-                        .foregroundStyle(.white.opacity(0.7))
-                        .frame(maxWidth: .infinity)
-                )
-            }
-        }()
-
-        content
-            .font(.body)
-            .multilineTextAlignment(.center)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 14)
-            .frame(maxWidth: 560, minHeight: 64)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(.black.opacity(0.25))
-            )
+    private var statusLine: some View {
+        if isRecording {
+            Label("Listening… keep holding", systemImage: "circle.fill")
+                .imageScale(.small)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Self.recordingAmber)
+        } else if isFinalizing {
+            Text("Finalizing…")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        } else if isComplete {
+            Label("Heard you, word for word.", systemImage: "checkmark.circle.fill")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.green)
+        } else {
+            Text("InkIt listens only while you hold the key.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
     }
 }
 
 private struct WaveformBar: View {
     let level: Float
     let active: Bool
+    var tint: Color = .accentColor
     @State private var phase: CGFloat = 0
 
     var body: some View {
@@ -490,43 +652,18 @@ private struct WaveformBar: View {
                     let wobble = (sin(t * .pi * 2) + 1) / 2
                     let lvl = CGFloat(max(0.08, level)) * (0.5 + 0.5 * wobble)
                     Capsule()
-                        .fill(.white)
+                        .fill(tint)
                         .frame(width: 4, height: max(4, geo.size.height * lvl))
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .opacity(active ? 1 : 0.4)
+            .opacity(active ? 1 : 0.35)
         }
         .onAppear {
             withAnimation(.linear(duration: 1.2).repeatForever(autoreverses: false)) {
                 phase = 1
             }
         }
-    }
-}
-
-private struct KeycapLabel: View {
-    let title: String
-
-    init(_ title: String) {
-        self.title = title
-    }
-
-    var body: some View {
-        Text(title)
-            .font(.system(size: 12, weight: .bold, design: .rounded))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(.white.opacity(0.14))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .stroke(.white.opacity(0.45), lineWidth: 1)
-            )
-            .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
     }
 }
 
@@ -538,10 +675,10 @@ private struct DoneStep: View {
     var body: some View {
         VStack(spacing: 28) {
             ZStack {
-                Circle().fill(.white.opacity(0.2)).frame(width: 160, height: 160)
+                Circle().fill(Color.accentSoft).frame(width: 160, height: 160)
                 Image(systemName: "sparkles")
                     .font(.system(size: 80))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Color.accentColor)
                     .scaleEffect(pop ? 1.0 : 0.7)
                     .opacity(pop ? 1 : 0)
             }
@@ -553,11 +690,11 @@ private struct DoneStep: View {
 
             VStack(spacing: 10) {
                 Text("You're ready!")
-                    .font(.system(size: 38, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
+                    .font(.system(size: 34, weight: .bold))
+                    .foregroundStyle(.primary)
                 Text("InkIt lives in your menu bar. Hold Fn anytime to dictate.")
                     .font(.title3)
-                    .foregroundStyle(.white.opacity(0.9))
+                    .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             }
 
@@ -567,6 +704,33 @@ private struct DoneStep: View {
 }
 
 // MARK: - Shared bits
+
+/// Accent-tinted rounded tile holding an SF Symbol — the recurring glyph
+/// treatment across onboarding.
+private struct GlyphTile: View {
+    let icon: String
+    var size: CGFloat = 84
+    var corner: CGFloat = 22
+    var iconSize: CGFloat = 36
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: corner, style: .continuous)
+                .fill(Color.accentSoft)
+                .frame(width: size, height: size)
+            Image(systemName: icon)
+                .font(.system(size: iconSize, weight: .medium))
+                .foregroundStyle(Color.accentColor)
+        }
+    }
+}
+
+extension Color {
+    /// Tinted indigo fill behind glyphs/badges. Appearance-aware (14% light /
+    /// 18% dark) via the asset catalog so it matches DESIGN_SYSTEM.md exactly,
+    /// instead of a flat `accentColor.opacity` that stays too faint in dark.
+    static let accentSoft = Color("accentSoft")
+}
 
 private struct HeaderBlock: View {
     let icon: String
@@ -578,10 +742,10 @@ private struct HeaderBlock: View {
         self.title = title
         self.subtitle = AnyView(
             Text(subtitle)
-                .font(.subheadline)
-                .foregroundStyle(.white.opacity(0.9))
+                .font(.title3)
+                .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-                .frame(maxWidth: 480)
+                .frame(maxWidth: 560)
         )
     }
 
@@ -590,23 +754,16 @@ private struct HeaderBlock: View {
         self.title = title
         self.subtitle = AnyView(
             subtitle()
-                .font(.subheadline)
-                .foregroundStyle(.white.opacity(0.9))
-                .frame(maxWidth: 480)
+                .frame(maxWidth: 560)
         )
     }
 
     var body: some View {
         VStack(spacing: 14) {
-            ZStack {
-                Circle().fill(.white.opacity(0.18)).frame(width: 84, height: 84)
-                Image(systemName: icon)
-                    .font(.system(size: 36, weight: .medium))
-                    .foregroundStyle(.white)
-            }
+            GlyphTile(icon: icon)
             Text(title)
-                .font(.system(size: 30, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
+                .font(.system(size: 30, weight: .bold))
+                .foregroundStyle(.primary)
             subtitle
         }
     }
@@ -619,15 +776,34 @@ private struct PrimaryButton: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.headline)
-                .foregroundStyle(.black)
-                .padding(.horizontal, 28).padding(.vertical, 14)
-                .background(
-                    Capsule().fill(.white.opacity(enabled ? 0.98 : 0.4))
-                )
+                .frame(minWidth: 120)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(InkButtonStyle())
         .disabled(!enabled)
-        .shadow(color: .black.opacity(0.15), radius: 14, y: 6)
+        .modifier(PointingHandCursor())
+    }
+}
+
+/// The "ink" call-to-action: a solid navy fill with white text in light mode,
+/// inverting to a warm off-white fill with navy text in dark — the pen color
+/// from the app icon. The amber accent stays reserved for live-signal cues
+/// (selection, links, the waveform), per DESIGN_SYSTEM.md.
+private struct InkButtonStyle: ButtonStyle {
+    var compact = false
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: compact ? 13 : 15, weight: .semibold))
+            .foregroundStyle(Color("InkFillText"))
+            .padding(.horizontal, compact ? 14 : 26)
+            .padding(.vertical, compact ? 6 : 11)
+            .background(
+                RoundedRectangle(cornerRadius: compact ? 7 : 9, style: .continuous)
+                    .fill(Color("InkFill"))
+                    .opacity(configuration.isPressed ? 0.82 : 1)
+            )
+            .opacity(isEnabled ? 1 : 0.4)
+            .contentShape(Rectangle())
     }
 }

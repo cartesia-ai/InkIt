@@ -20,6 +20,9 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
     var onTranscriptUpdate: ((String) -> Void)?
     var onError: ((String) -> Void)?
     var onClosed: ((String) -> Void)?
+    /// Fires once the server accepts the connection (i.e. the API key
+    /// authenticated). Used by onboarding to verify a key without recording.
+    var onConnected: (() -> Void)?
 
     private let apiKey: String
     private let model = "ink-2"
@@ -188,6 +191,7 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
     /// task BEFORE the close frame, and BEFORE we unset `isConnected`'s gate
     /// so concurrent `sendAudio` callers don't race ahead of the buffer.
     private func handleConnected() {
+        onConnected?()
         guard let task else { return }
         stateLock.lock()
         let buffered = pendingAudio

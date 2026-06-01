@@ -22,7 +22,7 @@ final class ContextCorrectionGateTests: XCTestCase {
 
     func testLowConfidenceSnapshotPastesRawWithoutRewrite() async {
         let snapshot = ContextSnapshot(
-            source: .cursorSession,
+            source: .accessibility,
             confidence: .low,
             target: nil,
             payload: "FlashAttention",

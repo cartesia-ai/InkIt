@@ -30,19 +30,25 @@ final class PasteService {
 
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
                 self.synthesizeCmdV()
-            }
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                pb.clearContents()
-                if !saved.isEmpty {
-                    let restored = saved.map { dict -> NSPasteboardItem in
-                        let item = NSPasteboardItem()
-                        for (type, data) in dict { item.setData(data, forType: type) }
-                        return item
-                    }
-                    pb.writeObjects(restored)
-                }
+                // The text is now visible to the user, so this is the end of
+                // perceived paste latency — report completion immediately.
                 completion(true)
+
+                // Restoring the previous clipboard is cleanup that happens
+                // after the user already sees their text, so it runs off the
+                // critical path. Still delayed so Cmd+V has definitely been
+                // processed before we overwrite the pasteboard.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    pb.clearContents()
+                    if !saved.isEmpty {
+                        let restored = saved.map { dict -> NSPasteboardItem in
+                            let item = NSPasteboardItem()
+                            for (type, data) in dict { item.setData(data, forType: type) }
+                            return item
+                        }
+                        pb.writeObjects(restored)
+                    }
+                }
             }
         }
     }

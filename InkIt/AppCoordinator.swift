@@ -24,8 +24,7 @@ final class AppCoordinator: ObservableObject {
     let permissions = PermissionsService.shared
     private let hotkey = HotkeyManager()
     private var client: CartesiaStreamingClient?
-    private static let cursorBundleID = "com.todesktop.230313mzl4w4u92"
-    private let contextResolver = ContextResolver(cursorBundleID: AppCoordinator.cursorBundleID)
+    private let contextResolver = ContextResolver()
     let settings = SettingsStore.shared
     let history = TranscriptHistoryStore.shared
     private var hud: NotchHUDController?
@@ -36,6 +35,9 @@ final class AppCoordinator: ObservableObject {
     private var pasteTargetApp: NSRunningApplication?
     private var contextTargetSnapshot: TargetAppSnapshot?
     private var routesFinalTranscriptToOnboarding = false
+    /// Monotonic timestamp of the most recent hotkey release, used as the
+    /// anchor for per-dictation latency measurements.
+    private var releaseTime: DispatchTime?
 
     init() {
         detectDuplicateRunningCopies()
@@ -265,6 +267,8 @@ final class AppCoordinator: ObservableObject {
         client.onClosed = { [weak self, capturedTargetApp, capturedSnapshot] finalText in
             Task { @MainActor in
                 guard let self else { return }
+                let transcriptArrived = DispatchTime.now()
+                let release = self.releaseTime
                 let raw = finalText.trimmingCharacters(in: .whitespacesAndNewlines)
                 if raw.isEmpty {
                     self.pasteTargetApp = nil
@@ -282,9 +286,9 @@ final class AppCoordinator: ObservableObject {
 
                 let corrected = await self.correctedTranscript(
                     raw: raw,
-                    targetApp: capturedTargetApp,
                     targetSnapshot: capturedSnapshot
                 )
+                let polishFinished = DispatchTime.now()
 
                 self.state = .pasting
                 self.paste.paste(text: corrected, targetApp: capturedTargetApp) { ok in
@@ -294,7 +298,20 @@ final class AppCoordinator: ObservableObject {
                         if !ok {
                             self.setError("Paste failed.")
                         } else {
-                            self.history.add(corrected)
+                            let pasteFinished = DispatchTime.now()
+                            let latency = release.map { start in
+                                TranscriptHistoryStore.Latency(
+                                    transcribeMs: Self.elapsedMs(start, transcriptArrived),
+                                    polishMs: Self.elapsedMs(transcriptArrived, polishFinished),
+                                    pasteMs: Self.elapsedMs(polishFinished, pasteFinished)
+                                )
+                            }
+                            // Record the raw transcript only when the rewrite
+                            // actually changed it — every disabled/fallback path
+                            // returns `raw` untouched, so inequality is a clean
+                            // signal that correction ran and applied.
+                            let original = corrected != raw ? raw : nil
+                            self.history.add(corrected, original: original, latency: latency)
                             self.state = .idle
                         }
                     }
@@ -317,6 +334,7 @@ final class AppCoordinator: ObservableObject {
 
     func stopDictation() {
         guard case .recording = state else { return }
+        releaseTime = .now()
         state = .finalizing
         if settings.playFeedbackSounds { FeedbackSoundPlayer.shared.playStop() }
         audio.stop()
@@ -329,34 +347,44 @@ final class AppCoordinator: ObservableObject {
     /// at least the raw transcript pasted.
     private func correctedTranscript(
         raw: String,
-        targetApp: NSRunningApplication?,
         targetSnapshot: TargetAppSnapshot?
     ) async -> String {
         let runID = Self.makeCorrectionRunID()
         let enabled = settings.correctionEnabled
-        let hasKey = !settings.anthropicAPIKey.isEmpty
+        let hasKey = !settings.apiKey(for: settings.rewriteProvider).isEmpty
         let hasAX = permissions.hasAccessibility
-        DebugLog.info("[\(runID)] correctedTranscript: raw=\"\(raw)\" enabled=\(enabled) hasKey=\(hasKey) hasAX=\(hasAX)")
+        let screenContext = settings.screenContextEnabled
+        DebugLog.info("[\(runID)] correctedTranscript: raw=\"\(raw)\" enabled=\(enabled) hasKey=\(hasKey) hasAX=\(hasAX) screenContext=\(screenContext)")
         guard enabled, hasKey else {
             DebugLog.info("[\(runID)] correctedTranscript: skipping (enabled=\(enabled) hasKey=\(hasKey))")
             return raw
         }
 
-        let apiKey = settings.anthropicAPIKey
-        let rewriter = TranscriptRewriter(apiKey: apiKey)
+        let provider = settings.rewriteProvider
+        let apiKey = settings.apiKey(for: provider)
+        let rewriter = TranscriptRewriter(provider: provider, model: settings.rewriteModel, apiKey: apiKey)
+
+        // The user opted out of screen context: polish the transcript on its
+        // own (filler/homophone cleanup) without reading any on-screen text.
+        guard screenContext else {
+            DebugLog.info("[\(runID)] correctedTranscript: screen context disabled — context-free polish")
+            state = .rewriting
+            let rewritten = await rewriter.rewriteWithoutContext(transcript: raw, runID: runID)
+            return rewritten ?? raw
+        }
 
         let targetDesc: String = {
             guard let snapshot = targetSnapshot else { return "nil(no-target-snapshot)" }
             return snapshot.logDescription
         }()
-        DebugLog.info("[\(runID)] correctedTranscript: target=\(targetDesc) anthropicKey=set(\(apiKey.count)c)")
+        DebugLog.info("[\(runID)] correctedTranscript: target=\(targetDesc) provider=\(provider.rawValue)/\(settings.rewriteModel) key=set(\(apiKey.count)c)")
 
         guard hasAX, targetSnapshot != nil else {
             DebugLog.info("[\(runID)] correctedTranscript: raw fallback reason=\(!hasAX ? "missing accessibility" : "missing target snapshot")")
             return raw
         }
 
-        let snapshot = await contextResolver.captureContext(target: targetSnapshot, app: targetApp, runID: runID)
+        let snapshot = await contextResolver.captureContext(target: targetSnapshot, runID: runID)
         DebugLog.info("[\(runID)] selected context: \(snapshot.logSummary)")
         DebugLog.infoBlock(title: "[\(runID)] selected context payload", text: snapshot.payload)
 
@@ -366,36 +394,6 @@ final class AppCoordinator: ObservableObject {
             return raw
         case .rewrite(let snapshot):
             state = .rewriting
-            if snapshot.source == .cursorSession {
-                guard let transcriptPath = snapshot.evidence["transcriptPath"],
-                      let uuid = snapshot.evidence["sessionUUID"] else {
-                    DebugLog.info("[\(runID)] correctedTranscript: cursor raw fallback reason=missing transcript evidence")
-                    return raw
-                }
-                let url = URL(fileURLWithPath: transcriptPath)
-                let messages = ConversationLoader.load(from: url)
-                guard !messages.isEmpty else {
-                    DebugLog.info("[\(runID)] correctedTranscript: cursor raw fallback reason=empty parsed messages")
-                    return raw
-                }
-                let summary: String? = await {
-                    let fresh = await SessionSummarizer.ensureFresh(
-                        uuid: uuid,
-                        transcriptPath: transcriptPath,
-                        messages: messages,
-                        apiKey: apiKey
-                    )
-                    return fresh?.summary
-                }()
-                let rewritten = await rewriter.rewriteWithCursorSession(
-                    transcript: raw,
-                    summary: summary,
-                    recentTurns: snapshot.payload,
-                    runID: runID
-                )
-                return rewritten ?? raw
-            }
-
             let rewritten = await rewriter.rewriteWithRawContext(
                 transcript: raw,
                 context: snapshot.payload,
@@ -423,5 +421,11 @@ final class AppCoordinator: ObservableObject {
 
     private static func makeCorrectionRunID() -> String {
         String(UUID().uuidString.prefix(8))
+    }
+
+    /// Whole milliseconds between two monotonic timestamps, clamped at 0.
+    private static func elapsedMs(_ start: DispatchTime, _ end: DispatchTime) -> Int {
+        guard end.uptimeNanoseconds > start.uptimeNanoseconds else { return 0 }
+        return Int((end.uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000)
     }
 }

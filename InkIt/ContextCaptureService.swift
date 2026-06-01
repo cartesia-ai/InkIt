@@ -9,9 +9,9 @@ protocol ContextProvider {
     func captureContext(for target: TargetAppSnapshot, runID: String) async -> ContextSnapshot
 }
 
-/// Cheap title-only AX read for an arbitrary app's focused window. Used by
-/// `SessionLocator` to disambiguate which Cursor session is active without
-/// paying for a full tree walk.
+/// Cheap title-only AX read for an arbitrary app's focused window. Used to
+/// confirm the focused window hasn't changed between capture start and the
+/// full tree walk, without paying for the walk twice.
 enum FocusedWindowTitle {
     static func read(for app: NSRunningApplication?) -> String? {
         guard let app, app.processIdentifier > 0 else { return nil }

@@ -78,6 +78,31 @@ enum HotkeyBinding: Equatable {
     ]
 }
 
+/// User's appearance choice. `.system` follows the OS setting; the other two
+/// pin the app. Applied app-wide via `NSApp.appearance` (the always-dark notch
+/// HUD ignores it — see DESIGN_SYSTEM.md).
+enum AppearancePreference: String, CaseIterable, Identifiable {
+    case system, light, dark
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .system: return "System"
+        case .light:  return "Light"
+        case .dark:   return "Dark"
+        }
+    }
+
+    var nsAppearance: NSAppearance? {
+        switch self {
+        case .system: return nil
+        case .light:  return NSAppearance(named: .aqua)
+        case .dark:   return NSAppearance(named: .darkAqua)
+        }
+    }
+}
+
 final class SettingsStore: ObservableObject {
     static let shared = SettingsStore()
 
@@ -85,6 +110,7 @@ final class SettingsStore: ObservableObject {
 
     private enum Keys {
         static let apiKey = "cartesiaAPIKey"
+        static let appearance = "appearancePreference"
         static let hotkeyKind = "hotkeyKind"           // "carbon" | "fn"
         static let hotkeyKeyCode = "hotkeyKeyCode"
         static let hotkeyModifiers = "hotkeyModifiers"
@@ -92,20 +118,64 @@ final class SettingsStore: ObservableObject {
         static let notchHorizontalPosition = "notchHorizontalPosition"
         static let playFeedbackSounds = "playFeedbackSounds"
         static let correctionEnabled = "correctionEnabled"
-        static let anthropicAPIKey = "anthropicAPIKey"
+        static let screenContextEnabled = "screenContextEnabled"
+        static let anthropicAPIKey = "anthropicAPIKey"   // legacy; migrated into llmKeys
+        static let rewriteProvider = "rewriteProvider"
+        static let rewriteModel = "rewriteModel"
+        static let llmKeys = "llmAPIKeys"
     }
 
     @Published var cartesiaAPIKey: String {
         didSet { defaults.set(cartesiaAPIKey, forKey: Keys.apiKey) }
     }
 
+    /// Light / Dark / follow-System. Persisted and applied on change.
+    @Published var appearance: AppearancePreference {
+        didSet {
+            defaults.set(appearance.rawValue, forKey: Keys.appearance)
+            applyAppearance()
+        }
+    }
+
+    /// Pushes the current `appearance` onto the running app. Safe to call from
+    /// any point after the app is up; no-op for `.system` beyond clearing any
+    /// previous override.
+    func applyAppearance() {
+        NSApp?.appearance = appearance.nsAppearance
+    }
+
     @Published var correctionEnabled: Bool {
         didSet { defaults.set(correctionEnabled, forKey: Keys.correctionEnabled) }
+    }
+
+    /// Whether AI correction may read on-screen context (the focused app's
+    /// visible text via Accessibility) to repair proper nouns and identifiers.
+    /// When off, correction still runs but only cleans up the transcript
+    /// itself — no screen is read.
+    @Published var screenContextEnabled: Bool {
+        didSet { defaults.set(screenContextEnabled, forKey: Keys.screenContextEnabled) }
     }
 
     @Published var anthropicAPIKey: String {
         didSet { defaults.set(anthropicAPIKey, forKey: Keys.anthropicAPIKey) }
     }
+
+    /// Selected LLM provider + model for the rewrite ("Polish transcripts").
+    @Published var rewriteProvider: LLMProvider {
+        didSet { defaults.set(rewriteProvider.rawValue, forKey: Keys.rewriteProvider) }
+    }
+
+    @Published var rewriteModel: String {
+        didSet { defaults.set(rewriteModel, forKey: Keys.rewriteModel) }
+    }
+
+    /// Per-provider API keys, keyed by `LLMProvider.rawValue`.
+    @Published var llmAPIKeys: [String: String] {
+        didSet { defaults.set(llmAPIKeys, forKey: Keys.llmKeys) }
+    }
+
+    func apiKey(for provider: LLMProvider) -> String { llmAPIKeys[provider.rawValue] ?? "" }
+    func setAPIKey(_ key: String, for provider: LLMProvider) { llmAPIKeys[provider.rawValue] = key }
 
     @Published var hotkey: HotkeyBinding {
         didSet { saveHotkey() }
@@ -144,8 +214,23 @@ final class SettingsStore: ObservableObject {
 
     private init() {
         self.cartesiaAPIKey = defaults.string(forKey: Keys.apiKey) ?? ""
+        // Default to Light so first-run onboarding is light; users can switch
+        // to Dark or System in Settings (applied instantly). See DESIGN_SYSTEM.md.
+        self.appearance = defaults.string(forKey: Keys.appearance)
+            .flatMap(AppearancePreference.init(rawValue:)) ?? .light
         self.correctionEnabled = defaults.bool(forKey: Keys.correctionEnabled)
+        // Default on so existing users keep the context-aware behavior they
+        // already had before this toggle existed.
+        if defaults.object(forKey: Keys.screenContextEnabled) == nil {
+            self.screenContextEnabled = true
+        } else {
+            self.screenContextEnabled = defaults.bool(forKey: Keys.screenContextEnabled)
+        }
         self.anthropicAPIKey = defaults.string(forKey: Keys.anthropicAPIKey) ?? ""
+        self.rewriteProvider = defaults.string(forKey: Keys.rewriteProvider)
+            .flatMap(LLMProvider.init(rawValue:)) ?? .groq
+        self.rewriteModel = defaults.string(forKey: Keys.rewriteModel) ?? LLMProvider.groq.defaultModel
+        self.llmAPIKeys = (defaults.dictionary(forKey: Keys.llmKeys) as? [String: String]) ?? [:]
         self.hasCompletedOnboarding = defaults.bool(forKey: Keys.hasCompletedOnboarding)
         if defaults.object(forKey: Keys.playFeedbackSounds) == nil {
             self.playFeedbackSounds = true
@@ -170,6 +255,15 @@ final class SettingsStore: ObservableObject {
             // Default to the Fn / 🌐 key — claimed via a CGEventTap that
             // suppresses the system Globe action while InkIt is running.
             self.hotkey = .fn
+        }
+
+        // Migrate the legacy standalone Anthropic key into the per-provider map.
+        if !anthropicAPIKey.isEmpty, (llmAPIKeys[LLMProvider.anthropic.rawValue] ?? "").isEmpty {
+            llmAPIKeys[LLMProvider.anthropic.rawValue] = anthropicAPIKey
+        }
+        // Keep model valid for the selected provider.
+        if !rewriteProvider.models.contains(rewriteModel) {
+            rewriteModel = rewriteProvider.defaultModel
         }
     }
 

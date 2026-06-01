@@ -16,7 +16,7 @@ You need macOS 14+, a microphone, and a [Cartesia API key](https://play.cartesia
 
 On first launch, onboarding walks you through Microphone + Accessibility permissions and your API key.
 
-**Free up the Fn key:** macOS reserves it for the emoji panel by default. Go to **System Settings → Keyboard → Press 🌐 key to → Do Nothing**.
+**The Fn 🌐 key just works.** macOS normally opens the emoji panel on that key, but InkIt installs an event tap that intercepts Fn before the system sees it (once Accessibility is granted), so holding it dictates instead — no need to remap it in System Settings.
 
 ## Build from source
 

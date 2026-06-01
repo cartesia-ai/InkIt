@@ -14,112 +14,323 @@ private struct PointingHandCursor: ViewModifier {
     }
 }
 
+/// Shared style tokens for the editable controls in Settings (API-key fields
+/// and the hotkey recorder) so they read as one consistent family. Colors are
+/// semantic system tokens, never hardcoded literals — see DESIGN_SYSTEM.md.
+private enum SettingsMetrics {
+    /// Shared height for text-entry controls.
+    static let fieldHeight: CGFloat = 30
+    /// Corner radius for those fields.
+    static let fieldCornerRadius: CGFloat = 7
+    /// Side of the borderless eye / inline glyph accessory buttons.
+    static let accessoryButton: CGFloat = 24
+    /// Gap between a control and its caption.
+    static let captionSpacing: CGFloat = 3
+
+    /// Editable-field surface. The same token backs every text field and the
+    /// hotkey recorder so they match exactly.
+    static let fieldBackground = Color(nsColor: .textBackgroundColor)
+    /// Resting field border.
+    static let fieldBorder = Color(nsColor: .separatorColor)
+    static let fieldBorderWidth: CGFloat = 1
+    /// Border while focused / actively recording (accent, slightly heavier).
+    static let fieldFocusBorderWidth: CGFloat = 2
+}
+
+/// The bordered surface shared by every editable control in Settings — one
+/// definition so the API-key fields and the hotkey recorder are pixel-identical.
+private struct FieldSurface: ViewModifier {
+    var focused: Bool
+    func body(content: Content) -> some View {
+        content
+            .frame(height: SettingsMetrics.fieldHeight)
+            .background(
+                RoundedRectangle(cornerRadius: SettingsMetrics.fieldCornerRadius, style: .continuous)
+                    .fill(SettingsMetrics.fieldBackground)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: SettingsMetrics.fieldCornerRadius, style: .continuous)
+                    .stroke(
+                        focused ? Color.accentColor : SettingsMetrics.fieldBorder,
+                        lineWidth: focused ? SettingsMetrics.fieldFocusBorderWidth : SettingsMetrics.fieldBorderWidth
+                    )
+            )
+    }
+}
+
+private extension View {
+    func fieldSurface(focused: Bool = false) -> some View {
+        modifier(FieldSurface(focused: focused))
+    }
+}
+
+/// A grouped-Form section header with an inline info glyph that reveals an
+/// explanatory tooltip on hover. Keeps every category self-documenting.
+private struct SectionHeader: View {
+    let title: String
+    let help: String
+
+    init(_ title: String, help: String) {
+        self.title = title
+        self.help = help
+    }
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Text(title)
+            InfoTooltip(text: help)
+        }
+    }
+}
+
+/// An info glyph that reveals an explanatory popover. Shows on hover (with a
+/// small grace delay so it doesn't flicker) and on click, so it's discoverable
+/// either way — `.help()` tooltips proved unreliable inside Form headers.
+private struct InfoTooltip: View {
+    let text: String
+    @State private var isShown = false
+
+    var body: some View {
+        Image(systemName: "info.circle")
+            .imageScale(.small)
+            .foregroundStyle(isShown ? Color.accentColor : .secondary)
+            .contentShape(Rectangle())
+            .onHover { hovering in isShown = hovering }
+            .onTapGesture { isShown.toggle() }
+            .modifier(PointingHandCursor())
+            .popover(isPresented: $isShown, arrowEdge: .bottom) {
+                Text(text)
+                    .font(.callout)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(width: 240, alignment: .leading)
+                    .padding(12)
+            }
+            .accessibilityLabel(Text(text))
+    }
+}
+
+/// A switch styled the one way switches are styled across Settings.
+private struct SettingsToggle: View {
+    let title: String
+    let caption: String?
+    @Binding var isOn: Bool
+
+    init(_ title: String, caption: String? = nil, isOn: Binding<Bool>) {
+        self.title = title
+        self.caption = caption
+        self._isOn = isOn
+    }
+
+    var body: some View {
+        Toggle(isOn: $isOn) {
+            if let caption {
+                VStack(alignment: .leading, spacing: SettingsMetrics.captionSpacing) {
+                    Text(title)
+                    Text(caption)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Text(title)
+            }
+        }
+        .toggleStyle(.switch)
+        .tint(.accentColor)
+        .controlSize(.regular)
+    }
+}
+
+/// A secure API-key entry: bordered field sharing the Settings field surface,
+/// show/hide eye toggle, and a caption link to where the key is managed.
+///
+/// Redaction follows the common dashboard convention (Stripe / OpenAI): a key
+/// at rest is shown only by its last four characters, the rest masked. The eye
+/// reveals the full value; tapping the field lets you edit it (hidden) in place.
+private struct APIKeyField: View {
+    let title: String
+    @Binding var text: String
+    let linkTitle: String
+    let linkURL: URL
+
+    @State private var isRevealed = false
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                editor
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13, design: .monospaced))
+                    .focused($isFocused)
+
+                Button {
+                    isRevealed.toggle()
+                    if isRevealed { isFocused = false }
+                } label: {
+                    Image(systemName: isRevealed ? "eye.slash" : "eye")
+                        .imageScale(.medium)
+                        .foregroundStyle(.secondary)
+                        .frame(width: SettingsMetrics.accessoryButton,
+                               height: SettingsMetrics.accessoryButton)
+                }
+                .buttonStyle(.borderless)
+                .contentShape(Rectangle())
+                .help(isRevealed ? "Hide \(title)" : "Show \(title)")
+                .modifier(PointingHandCursor())
+            }
+            .padding(.horizontal, 10)
+            .fieldSurface(focused: isFocused)
+            .contentShape(Rectangle())
+            .onTapGesture { isFocused = true }
+
+            Link(linkTitle, destination: linkURL)
+                .font(.caption)
+                .modifier(PointingHandCursor())
+        }
+    }
+
+    /// Three states: revealed (full plaintext, editable) → hidden-while-editing
+    /// (secure entry) → at rest (a masked preview showing only the last four
+    /// characters). Tapping the rest state focuses the field to edit in place.
+    @ViewBuilder private var editor: some View {
+        if isRevealed {
+            TextField(title, text: $text)
+        } else if isFocused || text.isEmpty {
+            SecureField(title, text: $text)
+        } else {
+            Text(Self.redacted(text))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .truncationMode(.head)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture { isFocused = true }
+        }
+    }
+
+    /// Masks all but the trailing `visible` characters with a fixed-length run
+    /// of bullets, so neither the key nor its exact length is exposed at rest.
+    private static func redacted(_ key: String, visible: Int = 4) -> String {
+        guard key.count > visible else {
+            return String(repeating: "•", count: max(key.count, 1))
+        }
+        return String(repeating: "•", count: 12) + key.suffix(visible)
+    }
+}
+
 struct SettingsView: View {
     @EnvironmentObject var settings: SettingsStore
     @StateObject private var permissions = PermissionsService.shared
-    @State private var showAPIKey = false
-    @State private var showAnthropicKey = false
+
+    private var llmKeyBinding: Binding<String> {
+        Binding(
+            get: { settings.apiKey(for: settings.rewriteProvider) },
+            set: { settings.setAPIKey($0, for: settings.rewriteProvider) }
+        )
+    }
 
     var body: some View {
         Form {
             Section {
-                HStack {
-                    if showAPIKey {
-                        TextField("Cartesia API key", text: $settings.cartesiaAPIKey)
-                            .textFieldStyle(.plain)
-                    } else {
-                        SecureField("Cartesia API key", text: $settings.cartesiaAPIKey)
-                            .textFieldStyle(.plain)
-                    }
-                    Button {
-                        showAPIKey.toggle()
-                    } label: {
-                        Image(systemName: showAPIKey ? "eye.slash" : "eye")
-                            .font(.system(size: 16, weight: .medium))
-                            .frame(width: 34, height: 34)
-                    }
-                    .buttonStyle(.borderless)
-                    .contentShape(Rectangle())
-                    .help(showAPIKey ? "Hide the Cartesia API key" : "Show the Cartesia API key")
-                    .modifier(PointingHandCursor())
-                }
-                .frame(minHeight: 46)
+                AppearanceCardPicker(selection: $settings.appearance)
             } header: {
-                Text("API key")
-            } footer: {
-                Link("Manage Cartesia API key", destination: URL(string: "https://play.cartesia.ai/keys")!)
-                    .modifier(PointingHandCursor())
-            }
-
-            Section("Hotkey") {
-                HotkeyRecorder()
-                    .environmentObject(settings)
-                Toggle("Play sound on press and release", isOn: $settings.playFeedbackSounds)
-                    .toggleStyle(.switch)
-                    .tint(.accentColor)
-                    .controlSize(.regular)
+                SectionHeader(
+                    "Appearance",
+                    help: "Choose how InkIt looks. System follows your Mac’s appearance automatically."
+                )
             }
 
             Section {
-                Toggle("Polish using context", isOn: $settings.correctionEnabled)
-                    .toggleStyle(.switch)
-                    .tint(.accentColor)
-                    .controlSize(.regular)
-
-                HStack {
-                    if showAnthropicKey {
-                        TextField("Anthropic API key", text: $settings.anthropicAPIKey)
-                            .textFieldStyle(.plain)
-                    } else {
-                        SecureField("Anthropic API key", text: $settings.anthropicAPIKey)
-                            .textFieldStyle(.plain)
-                    }
-                    Button {
-                        showAnthropicKey.toggle()
-                    } label: {
-                        Image(systemName: showAnthropicKey ? "eye.slash" : "eye")
-                            .font(.system(size: 16, weight: .medium))
-                            .frame(width: 34, height: 34)
-                    }
-                    .buttonStyle(.borderless)
-                    .contentShape(Rectangle())
-                    .help(showAnthropicKey ? "Hide the Anthropic API key" : "Show the Anthropic API key")
-                    .modifier(PointingHandCursor())
-                }
-                .frame(minHeight: 46)
-                .disabled(!settings.correctionEnabled)
-                .opacity(settings.correctionEnabled ? 1 : 0.5)
-
-                if settings.correctionEnabled && settings.anthropicAPIKey.isEmpty {
-                    Text("Add an Anthropic API key to enable correction. Until then, transcripts paste unchanged.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                APIKeyField(
+                    title: "Cartesia API key",
+                    text: $settings.cartesiaAPIKey,
+                    linkTitle: "Manage Cartesia API key",
+                    linkURL: URL(string: "https://play.cartesia.ai/keys")!
+                )
             } header: {
-                Text("AI correction")
-            } footer: {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Looks at what you were just reading — your Cursor agent conversation on disk, or the focused app's visible text via Accessibility — and asks Claude to repair technical terms, identifiers, and proper nouns in the transcript before pasting. Falls back to the raw transcript on any failure.")
-                    Link("Manage Anthropic API key", destination: URL(string: "https://console.anthropic.com/settings/keys")!)
-                        .modifier(PointingHandCursor())
-                }
+                SectionHeader(
+                    "API key",
+                    help: "Your Cartesia key powers ink-2 speech-to-text. It’s stored locally on this Mac and only sent to Cartesia."
+                )
             }
 
-            Section("Permissions") {
+            Section {
+                HotkeyRecorder()
+                    .environmentObject(settings)
+                SettingsToggle("Play sound on press and release", isOn: $settings.playFeedbackSounds)
+            } header: {
+                SectionHeader(
+                    "Hotkey",
+                    help: "Hold this shortcut to dictate; release to transcribe and paste. Pick any key with a modifier, or use Fn."
+                )
+            }
+
+            Section {
+                SettingsToggle(
+                    "Polish transcripts",
+                    caption: "Cleans up dictation with an LLM before pasting.",
+                    isOn: $settings.correctionEnabled
+                )
+
+                if settings.correctionEnabled {
+                    SettingsToggle(
+                        "Use screen context",
+                        caption: "Reads the focused app to fix names and identifiers.",
+                        isOn: $settings.screenContextEnabled
+                    )
+
+                    Picker("Provider", selection: $settings.rewriteProvider) {
+                        ForEach(LLMProvider.allCases) { provider in
+                            Text(provider.displayName).tag(provider)
+                        }
+                    }
+                    .onChange(of: settings.rewriteProvider) { _, newProvider in
+                        if !newProvider.models.contains(settings.rewriteModel) {
+                            settings.rewriteModel = newProvider.defaultModel
+                        }
+                    }
+
+                    // With a single curated model per provider the picker is
+                    // just a one-item dropdown, so show the model as a label.
+                    // The picker reappears automatically if a provider regains
+                    // multiple models.
+                    if settings.rewriteProvider.models.count > 1 {
+                        Picker("Model", selection: $settings.rewriteModel) {
+                            ForEach(settings.rewriteProvider.models, id: \.self) { model in
+                                Text(model).tag(model)
+                            }
+                        }
+                    } else {
+                        LabeledContent("Model", value: settings.rewriteModel)
+                    }
+
+                    APIKeyField(
+                        title: "\(settings.rewriteProvider.displayName) API key",
+                        text: llmKeyBinding,
+                        linkTitle: "Get a \(settings.rewriteProvider.displayName) API key",
+                        linkURL: settings.rewriteProvider.keyURL
+                    )
+                }
+            } header: {
+                SectionHeader(
+                    "AI correction",
+                    help: "Optionally run your transcript through an LLM to fix punctuation, filler words, and names before it’s pasted. Uses your own provider key."
+                )
+            }
+
+            Section {
                 PermissionRow(label: "Microphone", granted: permissions.hasMicrophone) {
                     permissions.requestMicrophone { _ in }
                 }
                 PermissionRow(label: "Accessibility", granted: permissions.hasAccessibility) {
                     permissions.requestAccessibility()
                 }
-            }
-
-            Section {
-                AXTreeDumpButton()
             } header: {
-                Text("Diagnostics")
-            } footer: {
-                Text("Writes the full Accessibility tree of whatever app is frontmost when the timer expires to ~/Library/Logs/InkIt-debug.log. Use this when correction context looks wrong.")
+                SectionHeader(
+                    "Permissions",
+                    help: "InkIt needs the microphone to record dictation, and Accessibility to read on-screen context and paste into the focused app."
+                )
             }
         }
         .formStyle(.grouped)
@@ -129,53 +340,150 @@ struct SettingsView: View {
     }
 }
 
-/// Button that, after a brief countdown, runs `AXTreeDumper.dumpFocusedApp()`.
-/// The countdown gives the user time to switch focus to the app they want
-/// to inspect.
-private struct AXTreeDumpButton: View {
-    @State private var countdown: Int? = nil
-    @State private var task: Task<Void, Never>? = nil
+/// Light / Dark / System chooser rendered as three selectable preview cards
+/// (à la macOS System Settings → Appearance). Each card shows a mini window
+/// mock in the corresponding appearance with an indigo ring on the selection.
+private struct AppearanceCardPicker: View {
+    @Binding var selection: AppearancePreference
 
-    private let initialCountdown = 2
+    // Light → Dark → System reads most naturally; the enum's own order puts
+    // System first, so we fix the display order explicitly.
+    private let order: [AppearancePreference] = [.light, .dark, .system]
 
     var body: some View {
-        HStack {
-            if let countdown {
-                Text("Switch to target app… dumping in \(countdown)…")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button("Cancel") { cancel() }
-                    .buttonStyle(.borderless)
-            } else {
-                Button("Dump focused app's AX tree to debug log") { start() }
-                    .modifier(PointingHandCursor())
-                Spacer()
+        HStack(alignment: .top, spacing: 16) {
+            ForEach(order) { pref in
+                AppearanceCard(
+                    preference: pref,
+                    isSelected: selection == pref
+                ) {
+                    selection = pref
+                }
             }
         }
-        .frame(minHeight: 38)
-        .onDisappear { cancel() }
+        .padding(.vertical, 4)
+    }
+}
+
+private struct AppearanceCard: View {
+    let preference: AppearancePreference
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 8) {
+                AppearanceThumbnail(style: thumbnailStyle)
+                    .frame(height: 64)
+                    .frame(maxWidth: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: 9))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 9)
+                            .stroke(
+                                isSelected ? Color.accentColor : Color(nsColor: .separatorColor),
+                                lineWidth: isSelected ? 2 : 1
+                            )
+                    )
+                    .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
+
+                HStack(spacing: 5) {
+                    Circle()
+                        .strokeBorder(
+                            isSelected ? Color.accentColor : Color.secondary,
+                            lineWidth: 1.5
+                        )
+                        .background(
+                            Circle().fill(isSelected ? Color.accentColor : .clear)
+                                .padding(2.5)
+                        )
+                        .frame(width: 11, height: 11)
+                    Text(preference.displayName)
+                        .font(.subheadline)
+                        .fontWeight(isSelected ? .semibold : .regular)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .modifier(PointingHandCursor())
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 
-    private func start() {
-        cancel()
-        countdown = initialCountdown
-        task = Task { @MainActor in
-            for tick in stride(from: initialCountdown, through: 1, by: -1) {
-                countdown = tick
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-                if Task.isCancelled { return }
-            }
-            countdown = nil
-            task = nil
-            AXTreeDumper.dumpFocusedApp()
+    private var thumbnailStyle: AppearanceThumbnail.Style {
+        switch preference {
+        case .light:  return .light
+        case .dark:   return .dark
+        case .system: return .system
+        }
+    }
+}
+
+/// A tiny window mock used inside an `AppearanceCard`: traffic-light dots and a
+/// few text lines, one of them the indigo accent. The `.system` style splits
+/// the canvas diagonally between the light and dark surfaces.
+private struct AppearanceThumbnail: View {
+    enum Style { case light, dark, system }
+    let style: Style
+
+    private let lightSurface = Color(red: 0.945, green: 0.945, blue: 0.957)
+    private let darkSurface  = Color(red: 0.12, green: 0.12, blue: 0.13)
+    private let lightLine    = Color(red: 0.79, green: 0.79, blue: 0.82)
+    private let darkLine      = Color(red: 0.29, green: 0.29, blue: 0.31)
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            background
+            content
         }
     }
 
-    private func cancel() {
-        task?.cancel()
-        task = nil
-        countdown = nil
+    @ViewBuilder private var background: some View {
+        switch style {
+        case .light:  lightSurface
+        case .dark:   darkSurface
+        case .system:
+            ZStack {
+                lightSurface
+                darkSurface.clipShape(DiagonalSplit())
+            }
+        }
+    }
+
+    private var lineColor: Color {
+        switch style {
+        case .light:  return lightLine
+        case .dark:   return darkLine
+        // Mid gray reads on both halves of the split.
+        case .system: return Color(white: 0.55)
+        }
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 3) {
+                Circle().fill(Color(red: 1, green: 0.37, blue: 0.34)).frame(width: 5, height: 5)
+                Circle().fill(Color(red: 1, green: 0.74, blue: 0.18)).frame(width: 5, height: 5)
+                Circle().fill(Color(red: 0.16, green: 0.78, blue: 0.25)).frame(width: 5, height: 5)
+            }
+            .padding(.bottom, 2)
+            Capsule().fill(lineColor).frame(width: 38, height: 4)
+            Capsule().fill(lineColor).frame(width: 48, height: 4)
+            Capsule().fill(Color.accentColor).frame(width: 26, height: 4)
+        }
+        .padding(8)
+    }
+}
+
+/// Right-hand diagonal wedge used to split the System appearance thumbnail.
+private struct DiagonalSplit: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX + rect.width * 0.42, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX + rect.width * 0.58, y: rect.minY))
+        path.closeSubpath()
+        return path
     }
 }
 
@@ -184,16 +492,23 @@ struct PermissionRow: View {
     let granted: Bool
     let action: () -> Void
     var body: some View {
-        HStack {
-            Image(systemName: granted ? "checkmark.circle.fill" : "exclamationmark.circle")
-                .foregroundStyle(granted ? .green : .orange)
-            Text(label)
-            Spacer()
-            Button(granted ? "Granted" : "Request") { action() }
-                .disabled(granted)
-                .frame(minWidth: 92, minHeight: 34)
+        LabeledContent {
+            if granted {
+                Text("Granted")
+                    .foregroundStyle(.secondary)
+            } else {
+                Button("Request") { action() }
+                    .buttonStyle(.bordered)
+                    .modifier(PointingHandCursor())
+            }
+        } label: {
+            Label {
+                Text(label)
+            } icon: {
+                Image(systemName: granted ? "checkmark.circle.fill" : "exclamationmark.circle")
+                    .foregroundStyle(granted ? .green : .orange)
+            }
         }
-        .frame(minHeight: 54)
     }
 }
 
@@ -217,35 +532,31 @@ struct HotkeyRecorder: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .center, spacing: 18) {
-                VStack(alignment: .leading, spacing: 3) {
+            LabeledContent {
+                Button {
+                    if isEditing {
+                        cancelEditing()
+                    } else {
+                        beginEditing()
+                    }
+                } label: {
+                    ShortcutCaptureField(
+                        tokens: shortcutTokens,
+                        placeholder: shortcutPlaceholder,
+                        isActive: isEditing,
+                        showsPencil: !isEditing
+                    )
+                }
+                .buttonStyle(.plain)
+                .contentShape(Rectangle())
+                .help(isEditing ? "Press a new shortcut" : "Change dictation shortcut")
+                .modifier(PointingHandCursor())
+            } label: {
+                VStack(alignment: .leading, spacing: SettingsMetrics.captionSpacing) {
                     Text("Shortcut")
                     Text(shortcutDescription)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                }
-
-                Spacer(minLength: 18)
-
-                HStack(spacing: 8) {
-                    Button {
-                        if isEditing {
-                            cancelEditing()
-                        } else {
-                            beginEditing()
-                        }
-                    } label: {
-                        ShortcutCaptureField(
-                            tokens: shortcutTokens,
-                            placeholder: shortcutPlaceholder,
-                            isActive: isEditing,
-                            showsPencil: !isEditing
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .contentShape(Rectangle())
-                    .help(isEditing ? "Press a new shortcut" : "Change dictation shortcut")
-                    .modifier(PointingHandCursor())
                 }
             }
 
@@ -255,7 +566,6 @@ struct HotkeyRecorder: View {
                     .foregroundStyle(.red)
             }
         }
-        .frame(minHeight: recorderMessage == nil ? 58 : 74)
         .padding(.vertical, 4)
         .overlay(alignment: .topTrailing) {
             if let toastMessage {
@@ -550,20 +860,13 @@ private struct ShortcutCaptureField: View {
                 Spacer(minLength: 12)
 
                 Image(systemName: "pencil")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Color.secondary)
             }
         }
-        .padding(.horizontal, 10)
-        .frame(width: 188, height: 40)
-        .background(
-            RoundedRectangle(cornerRadius: 7)
-                .fill(Color(NSColor.controlBackgroundColor))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 7)
-                .stroke(Color.secondary.opacity(isActive ? 0.42 : 0.26), lineWidth: isActive ? 1.25 : 1)
-        )
+        .padding(.horizontal, 8)
+        .frame(width: 188)
+        .fieldSurface(focused: isActive)
     }
 }
 
@@ -572,16 +875,16 @@ private struct ShortcutKeycap: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 14, weight: .medium, design: .rounded))
+            .font(.system(size: 12.5, weight: .medium))
             .foregroundStyle(.primary)
-            .padding(.horizontal, 8)
-            .frame(minWidth: 34, minHeight: 26)
+            .padding(.horizontal, 7)
+            .frame(minWidth: 28, minHeight: 22)
             .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Color(NSColor.windowBackgroundColor))
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(Color(nsColor: .windowBackgroundColor))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 5)
                     .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
             )
     }
