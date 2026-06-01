@@ -29,6 +29,6 @@
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>InkIt records your voice while you hold the dictation hotkey and streams it to Cartesia STT for transcription.</string>
+	<string>InkIt needs microphone access to transcribe your speech to text while you hold the dictation hotkey.</string>
 </dict>
 </plist>
