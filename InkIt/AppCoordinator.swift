@@ -409,8 +409,13 @@ final class AppCoordinator: ObservableObject {
 
         switch ContextCorrectionGate.decision(for: snapshot) {
         case .pasteRaw(let reason):
-            DebugLog.info("[\(runID)] correctedTranscript: raw fallback reason=\(reason)")
-            return Correction(text: raw, outcome: .off, original: nil)
+            // Context was unusable (chrome-only, empty, or the window changed
+            // mid-capture). Don't feed junk to the model — degrade to a
+            // context-free polish so filler/homophone cleanup still happens.
+            DebugLog.info("[\(runID)] correctedTranscript: context unusable (\(reason)) — context-free polish")
+            state = .rewriting
+            let rewritten = await rewriter.rewriteWithoutContext(transcript: raw, runID: runID)
+            return Self.polishResult(raw: raw, rewritten: rewritten)
         case .rewrite(let snapshot):
             state = .rewriting
             let rewritten = await rewriter.rewriteWithRawContext(

@@ -52,6 +52,12 @@ final class FocusedWindowAXProvider: ContextProvider {
     /// other panes. 30 children is plenty of breadth for any realistic
     /// content view.
     private let maxChildrenPerParent = 30
+    /// Minimum characters captured from genuine *content* roles (text areas,
+    /// static text, web content — not window titles, tabs, or buttons) for a
+    /// capture to count as usable context. Terminal apps (Claude Code, vim,
+    /// tmux) expose only window/tab chrome through AX; that chrome is noise the
+    /// rewriter shouldn't be anchored to, so below this we send no context.
+    private let minContentChars = 24
 
     func captureContext(for target: TargetAppSnapshot, runID: String) async -> ContextSnapshot {
         let pid = target.processIdentifier
@@ -89,10 +95,10 @@ final class FocusedWindowAXProvider: ContextProvider {
         let maxNodes = self.maxNodes
         let maxChars = self.maxChars
         let maxChildren = self.maxChildrenPerParent
-        let context = await Task.detached(priority: .userInitiated) {
+        let result = await Task.detached(priority: .userInitiated) {
             Self.walk(pid: pid, maxDepth: maxDepth, maxNodes: maxNodes, maxChars: maxChars, maxChildren: maxChildren, deadline: deadline)
         }.value
-        guard let context, !context.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        guard let result, !result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return ContextSnapshot(
                 source: .accessibility,
                 confidence: .none,
@@ -105,15 +111,36 @@ final class FocusedWindowAXProvider: ContextProvider {
                 rejectionReason: "AX capture returned empty payload"
             )
         }
+        // A capture that's all window/tab/button chrome (e.g. a terminal) gives
+        // the rewriter no real subject matter — sending it only risks anchoring
+        // corrections to noise. Treat it as unusable so we fall back to a
+        // context-free polish instead.
+        guard result.contentChars >= minContentChars else {
+            DebugLog.info("[\(runID)] AX capture: chrome-only (contentChars=\(result.contentChars), total=\(result.text.count)) — skipping context")
+            return ContextSnapshot(
+                source: .accessibility,
+                confidence: .low,
+                target: target,
+                payload: "",
+                evidence: [
+                    "pid": "\(pid)",
+                    "title": currentTitle ?? "nil",
+                    "chars": "\(result.text.count)",
+                    "contentChars": "\(result.contentChars)"
+                ],
+                rejectionReason: "chrome-only context (\(result.contentChars) content chars)"
+            )
+        }
         return ContextSnapshot(
             source: .accessibility,
             confidence: .high,
             target: target,
-            payload: context,
+            payload: result.text,
             evidence: [
                 "pid": "\(pid)",
                 "title": currentTitle ?? "nil",
-                "chars": "\(context.count)"
+                "chars": "\(result.text.count)",
+                "contentChars": "\(result.contentChars)"
             ],
             rejectionReason: nil
         )
@@ -143,12 +170,19 @@ final class FocusedWindowAXProvider: ContextProvider {
         return nil
     }
 
+    /// Captured text plus how much of it came from genuine content roles (vs.
+    /// chrome like window titles, tabs, and buttons).
+    private struct WalkResult {
+        let text: String
+        let contentChars: Int
+    }
+
     private static func walk(pid: pid_t,
                              maxDepth: Int,
                              maxNodes: Int,
                              maxChars: Int,
                              maxChildren: Int,
-                             deadline: Date) -> String? {
+                             deadline: Date) -> WalkResult? {
         let appElement = AXUIElementCreateApplication(pid)
         guard let root = rootWindow(forApp: appElement) else {
             DebugLog.info("AX capture: no focused/main/first window for pid=\(pid)")
@@ -164,6 +198,7 @@ final class FocusedWindowAXProvider: ContextProvider {
         let traceLimit = 60
         var traceCount = 0
         var collected = ""
+        var contentChars = 0
         var nodes = 0
         // Breadth-first walk: visit all siblings at each depth before going
         // deeper. With DFS, a wide-but-shallow node like the Notes sidebar
@@ -201,14 +236,23 @@ final class FocusedWindowAXProvider: ContextProvider {
             }
 
             let captured = collected.count - beforeCollectedCount
+            // Read the role only when this node contributed text (for chrome
+            // classification) or while we're still tracing — one AX IPC call.
+            var role: String? = nil
+            if captured > 0 {
+                role = readString(element, attr: kAXRoleAttribute as CFString) ?? "?"
+                if let role, !chromeRoles.contains(role) {
+                    contentChars += captured
+                }
+            }
             let children = readChildren(of: element)
             let pushedChildren = min(children.count, maxChildren)
 
             if traceCount < traceLimit {
-                let role = readString(element, attr: kAXRoleAttribute as CFString) ?? "?"
+                let roleForTrace = role ?? readString(element, attr: kAXRoleAttribute as CFString) ?? "?"
                 let attrPart = firstAttrPreview.map { " first=\($0.name)(\($0.length)c)" } ?? ""
                 let capNote = pushedChildren < children.count ? " (capped from \(children.count))" : ""
-                DebugLog.info("AX node[\(nodes)] role=\(role) depth=\(depth) kids=\(children.count)\(capNote) captured=\(captured)c\(attrPart)")
+                DebugLog.info("AX node[\(nodes)] role=\(roleForTrace) depth=\(depth) kids=\(children.count)\(capNote) captured=\(captured)c\(attrPart)")
                 traceCount += 1
             }
 
@@ -231,8 +275,19 @@ final class FocusedWindowAXProvider: ContextProvider {
         if collected.count > maxChars {
             collected = String(collected.prefix(maxChars))
         }
-        return collected
+        return WalkResult(text: collected, contentChars: contentChars)
     }
+
+    /// Roles whose text is window/app chrome, not document content: window
+    /// titles, tab strips, buttons, menus, toolbars. A capture made up only of
+    /// these (the typical terminal-emulator AX tree) carries no subject matter
+    /// for the rewriter, so it doesn't count toward usable content.
+    private static let chromeRoles: Set<String> = [
+        "AXWindow", "AXButton", "AXRadioButton", "AXTabGroup",
+        "AXToolbar", "AXMenuBar", "AXMenuBarItem", "AXMenu",
+        "AXMenuItem", "AXMenuButton", "AXPopUpButton", "AXCheckBox",
+        "AXImage", "AXSplitter", "AXDisclosureTriangle"
+    ]
 
     /// Some apps populate only `kAXChildrenAttribute`; others use
     /// `kAXVisibleChildrenAttribute` (e.g. virtualized scroll content).
