@@ -284,14 +284,14 @@ final class AppCoordinator: ObservableObject {
                     return
                 }
 
-                let corrected = await self.correctedTranscript(
+                let correction = await self.correctedTranscript(
                     raw: raw,
                     targetSnapshot: capturedSnapshot
                 )
                 let polishFinished = DispatchTime.now()
 
                 self.state = .pasting
-                self.paste.paste(text: corrected, targetApp: capturedTargetApp) { ok in
+                self.paste.paste(text: correction.text, targetApp: capturedTargetApp) { ok in
                     Task { @MainActor in
                         self.pasteTargetApp = nil
                         self.contextTargetSnapshot = nil
@@ -306,12 +306,12 @@ final class AppCoordinator: ObservableObject {
                                     pasteMs: Self.elapsedMs(polishFinished, pasteFinished)
                                 )
                             }
-                            // Record the raw transcript only when the rewrite
-                            // actually changed it — every disabled/fallback path
-                            // returns `raw` untouched, so inequality is a clean
-                            // signal that correction ran and applied.
-                            let original = corrected != raw ? raw : nil
-                            self.history.add(corrected, original: original, latency: latency)
+                            self.history.add(
+                                correction.text,
+                                original: correction.original,
+                                latency: latency,
+                                polish: correction.outcome
+                            )
                             self.state = .idle
                         }
                     }
@@ -341,14 +341,33 @@ final class AppCoordinator: ObservableObject {
         client?.finalizeAndClose()
     }
 
+    /// Result of the optional AI-correction pass: the text to paste plus how
+    /// correction turned out, so history can show the right indicator.
+    private struct Correction {
+        let text: String
+        let outcome: TranscriptHistoryStore.PolishOutcome
+        let original: String?
+    }
+
+    /// Maps a rewriter result to a `Correction`. A non-nil rewrite is a success
+    /// (kept alongside the raw text for diffing, even when unchanged); `nil`
+    /// means the rewrite call failed (e.g. rate limit) and we fall back to raw.
+    private static func polishResult(raw: String, rewritten: String?) -> Correction {
+        guard let rewritten else {
+            return Correction(text: raw, outcome: .failed, original: nil)
+        }
+        return Correction(text: rewritten, outcome: .polished, original: raw)
+    }
+
     /// Optionally runs the raw transcript through the AI correction pipeline.
-    /// Returns the corrected text on success, or `raw` if correction is
-    /// disabled or anything fails. Never throws — the user must always get
-    /// at least the raw transcript pasted.
+    /// Returns the corrected text and outcome on success, or `raw`/`.off` if
+    /// correction is disabled or skipped, or `raw`/`.failed` if the rewrite
+    /// errored. Never throws — the user must always get at least the raw
+    /// transcript pasted.
     private func correctedTranscript(
         raw: String,
         targetSnapshot: TargetAppSnapshot?
-    ) async -> String {
+    ) async -> Correction {
         let runID = Self.makeCorrectionRunID()
         let enabled = settings.correctionEnabled
         let hasKey = !settings.apiKey(for: settings.rewriteProvider).isEmpty
@@ -357,7 +376,7 @@ final class AppCoordinator: ObservableObject {
         DebugLog.info("[\(runID)] correctedTranscript: raw=\"\(raw)\" enabled=\(enabled) hasKey=\(hasKey) hasAX=\(hasAX) screenContext=\(screenContext)")
         guard enabled, hasKey else {
             DebugLog.info("[\(runID)] correctedTranscript: skipping (enabled=\(enabled) hasKey=\(hasKey))")
-            return raw
+            return Correction(text: raw, outcome: .off, original: nil)
         }
 
         let provider = settings.rewriteProvider
@@ -370,7 +389,7 @@ final class AppCoordinator: ObservableObject {
             DebugLog.info("[\(runID)] correctedTranscript: screen context disabled — context-free polish")
             state = .rewriting
             let rewritten = await rewriter.rewriteWithoutContext(transcript: raw, runID: runID)
-            return rewritten ?? raw
+            return Self.polishResult(raw: raw, rewritten: rewritten)
         }
 
         let targetDesc: String = {
@@ -381,7 +400,7 @@ final class AppCoordinator: ObservableObject {
 
         guard hasAX, targetSnapshot != nil else {
             DebugLog.info("[\(runID)] correctedTranscript: raw fallback reason=\(!hasAX ? "missing accessibility" : "missing target snapshot")")
-            return raw
+            return Correction(text: raw, outcome: .off, original: nil)
         }
 
         let snapshot = await contextResolver.captureContext(target: targetSnapshot, runID: runID)
@@ -391,7 +410,7 @@ final class AppCoordinator: ObservableObject {
         switch ContextCorrectionGate.decision(for: snapshot) {
         case .pasteRaw(let reason):
             DebugLog.info("[\(runID)] correctedTranscript: raw fallback reason=\(reason)")
-            return raw
+            return Correction(text: raw, outcome: .off, original: nil)
         case .rewrite(let snapshot):
             state = .rewriting
             let rewritten = await rewriter.rewriteWithRawContext(
@@ -399,7 +418,7 @@ final class AppCoordinator: ObservableObject {
                 context: snapshot.payload,
                 runID: runID
             )
-            return rewritten ?? raw
+            return Self.polishResult(raw: raw, rewritten: rewritten)
         }
     }
 

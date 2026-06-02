@@ -270,6 +270,7 @@ struct MainWindowView: View {
             timestamp: Self.timeFmt.string(from: entry.timestamp),
             latency: entry.latency,
             original: entry.original,
+            polish: entry.polish,
             copied: copiedID == entry.id
         ) {
             copy(entry)
@@ -308,13 +309,22 @@ private struct TranscriptHistoryRow: View {
     let text: String
     let timestamp: String
     let latency: TranscriptHistoryStore.Latency?
-    /// Raw pre-rewrite transcript; non-nil only when AI correction changed the
-    /// text. Drives the "polished" sparkle and its before/after diff.
+    /// Raw pre-rewrite transcript; non-nil whenever correction ran successfully
+    /// (identical to `text` for a no-op rewrite). Feeds the before/after diff.
     let original: String?
+    /// How AI correction turned out; drives the row indicator.
+    let polish: TranscriptHistoryStore.PolishOutcome?
     let copied: Bool
     let copy: () -> Void
     @State private var hovering = false
     @State private var showingDiff = false
+
+    /// Resolves the indicator to show. Legacy entries (no stored `polish`) fall
+    /// back to "polished if there's a diff to show, otherwise nothing."
+    private var outcome: TranscriptHistoryStore.PolishOutcome {
+        if let polish { return polish }
+        return original != nil ? .polished : .off
+    }
 
     // The list stays clean at rest — just the cleaned-up transcript. The
     // detail line (timestamp, latency, sparkle) fades in on hover. Its height
@@ -365,8 +375,10 @@ private struct TranscriptHistoryRow: View {
                 .font(.caption)
                 .foregroundStyle(.tertiary)
 
-            if original != nil {
-                sparkle
+            switch outcome {
+            case .polished: sparkle
+            case .failed: failureMark
+            case .off: EmptyView()
             }
 
             Spacer(minLength: 8)
@@ -390,8 +402,17 @@ private struct TranscriptHistoryRow: View {
             .onTapGesture {}  // swallow taps so the row's copy doesn't fire
             .help("Polished — hover to see what changed")
             .popover(isPresented: $showingDiff, arrowEdge: .bottom) {
-                DiffPopover(before: original ?? "", after: text)
+                DiffPopover(before: original ?? text, after: text)
             }
+    }
+
+    /// Polish ran but the rewrite call failed (e.g. rate limit); the raw
+    /// transcript was pasted instead. Warning-amber, distinct from the sparkle.
+    private var failureMark: some View {
+        Image(systemName: "exclamationmark.triangle.fill")
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(.orange)
+            .help("Polish failed (rate limit or network) — raw transcript pasted")
     }
 
     /// e.g. `1.1s · transcribe 640ms · polish 410ms · paste 50ms`
@@ -421,9 +442,11 @@ private struct DiffPopover: View {
     let before: String
     let after: String
 
+    private var changed: Bool { before != after }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Polished")
+            Text(changed ? "Polished" : "Polished — no changes")
                 .font(.caption2.weight(.semibold))
                 .textCase(.uppercase)
                 .foregroundStyle(.secondary)
@@ -432,14 +455,16 @@ private struct DiffPopover: View {
                 .font(.callout)
                 .fixedSize(horizontal: false, vertical: true)
 
-            HStack(spacing: 12) {
-                Label("added", systemImage: "circle.fill")
-                    .foregroundStyle(Self.addColor)
-                Label("removed", systemImage: "circle.fill")
-                    .foregroundStyle(.secondary)
+            if changed {
+                HStack(spacing: 12) {
+                    Label("added", systemImage: "circle.fill")
+                        .foregroundStyle(Self.addColor)
+                    Label("removed", systemImage: "circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .font(.caption2)
+                .labelStyle(DiffLegendLabelStyle())
             }
-            .font(.caption2)
-            .labelStyle(DiffLegendLabelStyle())
         }
         .padding(14)
         .frame(width: 300)

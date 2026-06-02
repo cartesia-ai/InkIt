@@ -14,17 +14,30 @@ final class TranscriptHistoryStore: ObservableObject {
         var totalMs: Int { transcribeMs + polishMs + pasteMs }
     }
 
+    /// Whether AI correction ran for a transcript, and how it turned out.
+    /// Persisted so the history row can show the right indicator. `nil` on
+    /// entries written before this was tracked; the UI then falls back to
+    /// `original != nil` to decide whether to show the polished mark.
+    enum PolishOutcome: String, Codable {
+        case off       // correction disabled, no key, or skipped — no indicator
+        case polished  // ran and succeeded (text may or may not have changed)
+        case failed    // ran but errored (e.g. rate limit) — raw text pasted
+    }
+
     struct Entry: Identifiable, Equatable, Codable {
         var id = UUID()
         let text: String
         let timestamp: Date
         // Optional so v1 entries persisted before latency tracking still decode.
         var latency: Latency?
-        // The raw pre-rewrite transcript. Set only when AI correction was
-        // enabled and actually changed the text, so the UI can show a
-        // before/after diff. `nil` means no rewrite was applied (or it was a
-        // no-op), and there's nothing to compare.
+        // The raw pre-rewrite transcript, kept whenever AI correction ran
+        // successfully so the UI can show a before/after diff — identical to
+        // `text` when the rewrite was a no-op. `nil` when correction didn't run
+        // (off) or failed.
         var original: String?
+        // Outcome of AI correction; drives the row indicator. `nil` on legacy
+        // entries (see PolishOutcome).
+        var polish: PolishOutcome?
     }
 
     static let shared = TranscriptHistoryStore()
@@ -38,10 +51,10 @@ final class TranscriptHistoryStore: ObservableObject {
         load()
     }
 
-    func add(_ text: String, original: String? = nil, latency: Latency? = nil) {
+    func add(_ text: String, original: String? = nil, latency: Latency? = nil, polish: PolishOutcome? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        entries.insert(Entry(text: trimmed, timestamp: Date(), latency: latency, original: original), at: 0)
+        entries.insert(Entry(text: trimmed, timestamp: Date(), latency: latency, original: original, polish: polish), at: 0)
         if entries.count > limit {
             entries.removeLast(entries.count - limit)
         }
