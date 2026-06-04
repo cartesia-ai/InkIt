@@ -60,3 +60,24 @@ enum LLMProvider: String, CaseIterable, Identifiable, Hashable {
         }
     }
 }
+
+/// Validates a Groq key via a credit-free `GET /openai/v1/models`, used by the
+/// optional onboarding "Polish" step so a good key earns a reassuring
+/// "verified" before the user finishes setup.
+///
+/// Groq-only by design: onboarding pins Groq as the recommended provider and
+/// hides the picker, so a focused subclass is less code than a per-provider
+/// one. Provider switching lives in Settings. See `APIKeyValidator` for the
+/// shared debounce/verdict machinery. Purely advisory — never blocks.
+@MainActor
+final class GroqKeyValidator: APIKeyValidator {
+    init() {
+        super.init(makeRequest: { key in
+            var req = URLRequest(url: URL(string: "https://api.groq.com/openai/v1/models")!)
+            req.httpMethod = "GET"
+            req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+            req.timeoutInterval = 8
+            return req
+        })
+    }
+}

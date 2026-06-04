@@ -1,25 +1,22 @@
 import Foundation
 import Combine
 
-/// Advisory check that an API key authenticates against Cartesia, used during
+/// Advisory check that an API key authenticates against a service, used during
 /// onboarding so a good key earns a reassuring "verified" before the user
-/// reaches the Try-it step.
+/// proceeds.
 ///
-/// Performs a lightweight, credit-free `GET /voices?limit=1`. Listing voices
-/// costs nothing and requires a valid key, so the HTTP status is an honest
+/// The shared machinery lives here: a 0.6s keystroke debounce, a generation
+/// counter so stale (or cancelled) completions are ignored, and `settledKey`
+/// caching so a key that already has a verdict isn't re-hit. Subclasses supply
+/// only the credit-free probe request via `makeRequest`. The HTTP status is the
 /// verdict:
-///   - 2xx                  → key authenticated (`verified`)
-///   - 401 / 403            → key rejected (`invalidKey`) — we can say so plainly
+///   - 2xx                   → key authenticated (`verified`)
+///   - 401 / 403             → key rejected (`invalidKey`) — we can say so plainly
 ///   - other / transport err → `couldNotVerify` (most likely offline)
 ///
-/// Distinguishing a rejected key from an offline machine is the reason we use
-/// HTTP here rather than the STT websocket handshake, where both failures look
-/// identical (the socket simply never opens).
-///
-/// This is purely advisory and never blocks the flow. `Continue` stays enabled
-/// on any non-empty key.
+/// This is purely advisory and never blocks the flow.
 @MainActor
-final class CartesiaKeyValidator: ObservableObject {
+class APIKeyValidator: ObservableObject {
     enum State: Equatable {
         case idle
         case checking
@@ -30,15 +27,18 @@ final class CartesiaKeyValidator: ObservableObject {
 
     @Published private(set) var state: State = .idle
 
-    private let cartesiaVersion = "2026-03-01"
+    /// Builds the credit-free probe request for a given key. Should target an
+    /// endpoint that needs auth but costs nothing (e.g. a list call).
+    private let makeRequest: (String) -> URLRequest
+
     private var task: URLSessionDataTask?
     private var debounce: DispatchWorkItem?
-    /// Bumped on every new check so stale (or cancelled) completions can be
-    /// recognised and ignored.
     private var generation = 0
-    /// The key the current `state` describes — lets the view avoid re-checking
-    /// a key it already has a verdict for.
     private var settledKey: String?
+
+    init(makeRequest: @escaping (String) -> URLRequest) {
+        self.makeRequest = makeRequest
+    }
 
     /// Debounced entry point: call on every keystroke. Empty keys reset to idle.
     func keyChanged(_ raw: String) {
@@ -65,17 +65,7 @@ final class CartesiaKeyValidator: ObservableObject {
         let gen = generation
         state = .checking
 
-        var comps = URLComponents(string: "https://api.cartesia.ai/voices")!
-        comps.queryItems = [URLQueryItem(name: "limit", value: "1")]
-        guard let url = comps.url else { settle(.couldNotVerify, key: key, gen: gen); return }
-
-        var req = URLRequest(url: url)
-        req.httpMethod = "GET"
-        req.setValue(key, forHTTPHeaderField: "X-API-Key")
-        req.setValue(cartesiaVersion, forHTTPHeaderField: "Cartesia-Version")
-        req.timeoutInterval = 8
-
-        task = URLSession.shared.dataTask(with: req) { [weak self] _, response, error in
+        task = URLSession.shared.dataTask(with: makeRequest(key)) { [weak self] _, response, error in
             let verdict: State
             if error != nil {
                 verdict = .couldNotVerify
@@ -102,5 +92,25 @@ final class CartesiaKeyValidator: ObservableObject {
     private func cancelInFlight() {
         task?.cancel()
         task = nil
+    }
+}
+
+/// Validates a Cartesia key via a credit-free `GET /voices?limit=1`: listing
+/// voices costs nothing and requires a valid key. Using HTTP (rather than the
+/// STT websocket handshake, where a rejected key and an offline machine look
+/// identical) lets us tell those two failures apart.
+@MainActor
+final class CartesiaKeyValidator: APIKeyValidator {
+    init() {
+        super.init(makeRequest: { key in
+            var comps = URLComponents(string: "https://api.cartesia.ai/voices")!
+            comps.queryItems = [URLQueryItem(name: "limit", value: "1")]
+            var req = URLRequest(url: comps.url!)
+            req.httpMethod = "GET"
+            req.setValue(key, forHTTPHeaderField: "X-API-Key")
+            req.setValue("2026-03-01", forHTTPHeaderField: "Cartesia-Version")
+            req.timeoutInterval = 8
+            return req
+        })
     }
 }
