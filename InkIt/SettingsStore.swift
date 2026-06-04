@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 import AppKit
 import Carbon.HIToolbox
+import Security
 
 /// The kind of hotkey binding currently in use.
 ///
@@ -126,8 +127,15 @@ final class SettingsStore: ObservableObject {
         static let debugLogging = DebugLog.isEnabledKey
     }
 
+    /// API keys live in the macOS Keychain, never in UserDefaults (which is a
+    /// plaintext plist on disk). Accounts under one service, keyed by name.
+    private enum KeychainAccount {
+        static let cartesia = "cartesiaAPIKey"
+        static func llm(_ provider: LLMProvider) -> String { "llm." + provider.rawValue }
+    }
+
     @Published var cartesiaAPIKey: String {
-        didSet { defaults.set(cartesiaAPIKey, forKey: Keys.apiKey) }
+        didSet { Keychain.set(cartesiaAPIKey, for: KeychainAccount.cartesia) }
     }
 
     /// Light / Dark / follow-System. Persisted and applied on change.
@@ -157,10 +165,6 @@ final class SettingsStore: ObservableObject {
         didSet { defaults.set(screenContextEnabled, forKey: Keys.screenContextEnabled) }
     }
 
-    @Published var anthropicAPIKey: String {
-        didSet { defaults.set(anthropicAPIKey, forKey: Keys.anthropicAPIKey) }
-    }
-
     /// Selected LLM provider + model for the rewrite ("Polish transcripts").
     @Published var rewriteProvider: LLMProvider {
         didSet { defaults.set(rewriteProvider.rawValue, forKey: Keys.rewriteProvider) }
@@ -170,13 +174,29 @@ final class SettingsStore: ObservableObject {
         didSet { defaults.set(rewriteModel, forKey: Keys.rewriteModel) }
     }
 
-    /// Per-provider API keys, keyed by `LLMProvider.rawValue`.
+    /// Per-provider API keys, keyed by `LLMProvider.rawValue`. Persisted to the
+    /// Keychain, one item per provider; an empty value removes that item.
     @Published var llmAPIKeys: [String: String] {
-        didSet { defaults.set(llmAPIKeys, forKey: Keys.llmKeys) }
+        didSet {
+            for provider in LLMProvider.allCases {
+                Keychain.set(llmAPIKeys[provider.rawValue] ?? "", for: KeychainAccount.llm(provider))
+            }
+        }
     }
 
     func apiKey(for provider: LLMProvider) -> String { llmAPIKeys[provider.rawValue] ?? "" }
     func setAPIKey(_ key: String, for provider: LLMProvider) { llmAPIKeys[provider.rawValue] = key }
+
+    /// Turn on the LLM "Polish transcripts" rewrite for `provider`, keeping the
+    /// selected model valid. Centralizes the provider/model/enabled trio so the
+    /// onboarding Polish step and Settings stay in lockstep.
+    func enablePolish(provider: LLMProvider) {
+        rewriteProvider = provider
+        if !provider.models.contains(rewriteModel) {
+            rewriteModel = provider.defaultModel
+        }
+        correctionEnabled = true
+    }
 
     @Published var hotkey: HotkeyBinding {
         didSet { saveHotkey() }
@@ -221,7 +241,16 @@ final class SettingsStore: ObservableObject {
     }
 
     private init() {
-        self.cartesiaAPIKey = defaults.string(forKey: Keys.apiKey) ?? ""
+        // --- Secrets live in the Keychain. Read them there, migrating any
+        // plaintext keys written by older builds, then scrub the plaintext. ---
+        if let stored = Keychain.string(for: KeychainAccount.cartesia) {
+            self.cartesiaAPIKey = stored
+        } else {
+            let legacy = defaults.string(forKey: Keys.apiKey) ?? ""
+            self.cartesiaAPIKey = legacy
+            if !legacy.isEmpty { Keychain.set(legacy, for: KeychainAccount.cartesia) }
+        }
+        defaults.removeObject(forKey: Keys.apiKey)
         // Default to Light so first-run onboarding is light; users can switch
         // to Dark or System in Settings (applied instantly). See DESIGN_SYSTEM.md.
         self.appearance = defaults.string(forKey: Keys.appearance)
@@ -234,11 +263,30 @@ final class SettingsStore: ObservableObject {
         } else {
             self.screenContextEnabled = defaults.bool(forKey: Keys.screenContextEnabled)
         }
-        self.anthropicAPIKey = defaults.string(forKey: Keys.anthropicAPIKey) ?? ""
         self.rewriteProvider = defaults.string(forKey: Keys.rewriteProvider)
             .flatMap(LLMProvider.init(rawValue:)) ?? .groq
         self.rewriteModel = defaults.string(forKey: Keys.rewriteModel) ?? LLMProvider.groq.defaultModel
-        self.llmAPIKeys = (defaults.dictionary(forKey: Keys.llmKeys) as? [String: String]) ?? [:]
+        // Per-provider LLM keys: Keychain first, migrating from the legacy
+        // UserDefaults map (and the even older standalone Anthropic key).
+        let legacyLLMKeys = (defaults.dictionary(forKey: Keys.llmKeys) as? [String: String]) ?? [:]
+        let legacyAnthropic = defaults.string(forKey: Keys.anthropicAPIKey) ?? ""
+        var loadedLLMKeys: [String: String] = [:]
+        for provider in LLMProvider.allCases {
+            let account = KeychainAccount.llm(provider)
+            if let stored = Keychain.string(for: account), !stored.isEmpty {
+                loadedLLMKeys[provider.rawValue] = stored
+            } else if let legacy = legacyLLMKeys[provider.rawValue], !legacy.isEmpty {
+                loadedLLMKeys[provider.rawValue] = legacy
+                Keychain.set(legacy, for: account)
+            }
+        }
+        if loadedLLMKeys[LLMProvider.anthropic.rawValue] == nil, !legacyAnthropic.isEmpty {
+            loadedLLMKeys[LLMProvider.anthropic.rawValue] = legacyAnthropic
+            Keychain.set(legacyAnthropic, for: KeychainAccount.llm(.anthropic))
+        }
+        self.llmAPIKeys = loadedLLMKeys
+        defaults.removeObject(forKey: Keys.llmKeys)
+        defaults.removeObject(forKey: Keys.anthropicAPIKey)
         self.hasCompletedOnboarding = defaults.bool(forKey: Keys.hasCompletedOnboarding)
         self.debugLoggingEnabled = defaults.bool(forKey: Keys.debugLogging)
         if defaults.object(forKey: Keys.playFeedbackSounds) == nil {
@@ -266,10 +314,6 @@ final class SettingsStore: ObservableObject {
             self.hotkey = .fn
         }
 
-        // Migrate the legacy standalone Anthropic key into the per-provider map.
-        if !anthropicAPIKey.isEmpty, (llmAPIKeys[LLMProvider.anthropic.rawValue] ?? "").isEmpty {
-            llmAPIKeys[LLMProvider.anthropic.rawValue] = anthropicAPIKey
-        }
         // Keep model valid for the selected provider.
         if !rewriteProvider.models.contains(rewriteModel) {
             rewriteModel = rewriteProvider.defaultModel
@@ -289,5 +333,109 @@ final class SettingsStore: ObservableObject {
 
     private static func clampedNotchPosition(_ value: Double) -> Double {
         min(0.96, max(0.04, value))
+    }
+}
+
+/// Thin wrapper over the macOS Keychain for InkIt's API keys. Secrets are stored
+/// as generic-password items under one service so they never touch UserDefaults
+/// (a plaintext plist). Calls are synchronous and best-effort: a Keychain miss
+/// or error degrades to an absent value rather than crashing.
+///
+/// Keychain items are bound to the app's code signature, so they only survive a
+/// rebuild when the signature is stable. Signed release builds qualify; ad-hoc
+/// "Sign to Run Locally" builds (what a contributor without a Developer ID gets)
+/// re-sign each build, which would orphan the items. For those builds only we
+/// fall back to a namespaced UserDefaults key — friendlier for contributors,
+/// while shipped builds keep secrets out of plaintext. (VoiceInk does the same.)
+enum Keychain {
+    private static let service = Bundle.main.bundleIdentifier ?? "InkIt"
+    /// Distinct from any legacy `Keys` so the migration's plaintext-scrub can't
+    /// delete a value we just wrote here.
+    private static let fallbackPrefix = "secretFallback."
+
+    /// True when the running build is signed with a stable identity (not ad-hoc
+    /// or unsigned), so Keychain items persist across rebuilds. Computed once.
+    static let usesKeychain: Bool = isStablySigned()
+
+    static func string(for account: String) -> String? {
+        guard usesKeychain else {
+            return UserDefaults.standard.string(forKey: fallbackPrefix + account)
+        }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+              let data = item as? Data,
+              let value = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return value
+    }
+
+    /// Stores `value` for `account`. An empty value removes the item, so the
+    /// store never holds a blank secret.
+    static func set(_ value: String, for account: String) {
+        guard !value.isEmpty else {
+            remove(account)
+            return
+        }
+        guard usesKeychain else {
+            UserDefaults.standard.set(value, forKey: fallbackPrefix + account)
+            return
+        }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+        let attributes: [String: Any] = [
+            kSecValueData as String: Data(value.utf8),
+            // Readable while locked so dictation works without an unlock prompt;
+            // still excluded from iCloud/backup sync.
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
+        ]
+        let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if status == errSecItemNotFound {
+            SecItemAdd(query.merging(attributes) { _, new in new } as CFDictionary, nil)
+        }
+    }
+
+    static func remove(_ account: String) {
+        guard usesKeychain else {
+            UserDefaults.standard.removeObject(forKey: fallbackPrefix + account)
+            return
+        }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+
+    /// Inspects the running binary's code signature. Returns true only when it
+    /// carries a signing identifier and is not ad-hoc — i.e. the signature is
+    /// stable enough for Keychain items to survive a rebuild.
+    private static func isStablySigned() -> Bool {
+        var code: SecCode?
+        guard SecCodeCopySelf(SecCSFlags(), &code) == errSecSuccess, let code else { return false }
+        var staticCode: SecStaticCode?
+        guard SecCodeCopyStaticCode(code, SecCSFlags(), &staticCode) == errSecSuccess,
+              let staticCode else { return false }
+        var infoCF: CFDictionary?
+        let flags = SecCSFlags(rawValue: UInt32(kSecCSSigningInformation))
+        guard SecCodeCopySigningInformation(staticCode, flags, &infoCF) == errSecSuccess,
+              let info = infoCF as? [String: Any],
+              info[kSecCodeInfoIdentifier as String] != nil else {
+            return false  // unsigned
+        }
+        let signatureFlags = (info[kSecCodeInfoFlags as String] as? NSNumber)?.uint32Value ?? 0
+        let adhoc: UInt32 = 0x2  // kSecCodeSignatureAdhoc
+        return (signatureFlags & adhoc) == 0
     }
 }

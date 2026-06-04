@@ -197,9 +197,12 @@ extension View {
     }
 }
 
-/// Redaction follows the common dashboard convention (Stripe / OpenAI): a key
-/// at rest is shown only by its last four characters, the rest masked. The eye
-/// reveals the full value; tapping the field lets you edit it (hidden) in place.
+/// Secret-field handling follows the standard macOS convention (Stripe / GitHub
+/// / 1Password): the value is hidden by default, an eye toggles reveal, and an
+/// explicit Copy button puts the key on the pasteboard without revealing it —
+/// macOS secure text entry blocks ⌘C from a `SecureField`, so the button is the
+/// accessible way to copy. The field owns its own clicks (no overlaid tap
+/// gesture), so the caret places and text selects normally for editing.
 private struct APIKeyField: View {
     let title: String
     @Binding var text: String
@@ -207,6 +210,7 @@ private struct APIKeyField: View {
     let linkURL: URL
 
     @State private var isRevealed = false
+    @State private var didCopy = false
     @FocusState private var isFocused: Bool
 
     var body: some View {
@@ -217,32 +221,24 @@ private struct APIKeyField: View {
                     .font(.system(size: 13, design: .monospaced))
                     .focused($isFocused)
 
-                Button {
-                    isRevealed.toggle()
-                    if isRevealed { isFocused = false }
-                } label: {
-                    Image(systemName: isRevealed ? "eye.slash" : "eye")
-                        .imageScale(.medium)
-                        .foregroundStyle(.secondary)
-                        .frame(width: SettingsMetrics.accessoryButton,
-                               height: SettingsMetrics.accessoryButton)
+                if !text.isEmpty {
+                    accessoryButton(
+                        systemName: didCopy ? "checkmark" : "doc.on.doc",
+                        help: didCopy ? "Copied" : "Copy \(title)",
+                        tint: didCopy ? Color.accentColor : .secondary,
+                        action: copy
+                    )
                 }
-                .buttonStyle(.borderless)
-                .contentShape(Rectangle())
-                .help(isRevealed ? "Hide \(title)" : "Show \(title)")
-                .modifier(PointingHandCursor())
+
+                accessoryButton(
+                    systemName: isRevealed ? "eye.slash" : "eye",
+                    help: isRevealed ? "Hide \(title)" : "Show \(title)",
+                    action: { isRevealed.toggle() }
+                )
             }
             .padding(.horizontal, 10)
             .fieldSurface(focused: isFocused)
-            .contentShape(Rectangle())
-            .onTapGesture { isFocused = true }
             .frame(width: 230)
-            // Click anywhere outside while editing or revealed → snap back to the
-            // redacted resting state.
-            .dismissOnClickOutside(isActive: isFocused || isRevealed) {
-                isFocused = false
-                isRevealed = false
-            }
         } label: {
             VStack(alignment: .leading, spacing: SettingsMetrics.captionSpacing) {
                 Text(title)
@@ -253,38 +249,41 @@ private struct APIKeyField: View {
         }
     }
 
-    /// The editable field stays mounted at all times so focus lands reliably:
-    /// revealed shows plaintext, hidden shows a `SecureField`. At rest, a masked
-    /// preview (last four characters) is overlaid on top of the secure field —
-    /// taps fall through to focus the field beneath, so the key can be edited
-    /// in place even while redacted.
+    /// Revealed shows the plaintext (selectable / copyable); hidden uses a
+    /// `SecureField`, which renders bullets and is editable in place.
     @ViewBuilder private var editor: some View {
-        ZStack(alignment: .leading) {
-            if isRevealed {
-                TextField("", text: $text)
-            } else {
-                SecureField("", text: $text)
-            }
-
-            if !isRevealed && !isFocused && !text.isEmpty {
-                Text(Self.redacted(text))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .truncationMode(.head)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(SettingsMetrics.fieldBackground)
-                    .allowsHitTesting(false)
-            }
+        if isRevealed {
+            TextField("sk_car_…", text: $text)
+        } else {
+            SecureField("sk_car_…", text: $text)
         }
     }
 
-    /// Masks all but the trailing `visible` characters with a fixed-length run
-    /// of bullets, so neither the key nor its exact length is exposed at rest.
-    private static func redacted(_ key: String, visible: Int = 4) -> String {
-        guard key.count > visible else {
-            return String(repeating: "•", count: max(key.count, 1))
+    private func accessoryButton(
+        systemName: String,
+        help: String,
+        tint: Color = .secondary,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .imageScale(.medium)
+                .foregroundStyle(tint)
+                .frame(width: SettingsMetrics.accessoryButton,
+                       height: SettingsMetrics.accessoryButton)
         }
-        return String(repeating: "•", count: 12) + key.suffix(visible)
+        .buttonStyle(.borderless)
+        .contentShape(Rectangle())
+        .help(help)
+        .modifier(PointingHandCursor())
+    }
+
+    private func copy() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        didCopy = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { didCopy = false }
     }
 }
 
