@@ -2,29 +2,118 @@ import SwiftUI
 import AppKit
 import Combine
 
+// MARK: - Metrics
+
+private enum HUDMetrics {
+    /// Window is wide enough to host the centered transcript panel and the
+    /// centered live pill that drops below the notch; the rest is click-through.
+    static let windowWidth: CGFloat = 520
+    static let maxContentHeight: CGFloat = 250
+    static let panelWidth: CGFloat = 360
+    static let panelContentHeight: CGFloat = 240
+    /// Live/status pill extends this far below the notch, and overhangs the
+    /// notch by `pillOverhang` on each side so the two merge visually.
+    static let pillContentHeight: CGFloat = 30
+    static let pillOverhang: CGFloat = 48
+    static let minPillWidth: CGFloat = 220
+}
+
+// MARK: - Notch geometry
+
+/// Describes where the camera notch is (or where a simulated one should go) so
+/// the HUD can anchor itself to the center of the screen and merge with it.
+struct NotchGeometry: Equatable {
+    /// X coordinate (screen space) of the notch center.
+    var centerX: CGFloat
+    /// Width of the physical (or simulated) notch.
+    var notchWidth: CGFloat
+    /// Height of the menu-bar / notch strip. The status tab lives in this band
+    /// (beside the notch); the transcript panel drops below it.
+    var menuBarHeight: CGFloat
+    var hasPhysicalNotch: Bool
+
+    static func detect(on screen: NSScreen) -> NotchGeometry {
+        let frame = screen.frame
+        let topInset = screen.safeAreaInsets.top
+        if topInset > 0,
+           let left = screen.auxiliaryTopLeftArea,
+           let right = screen.auxiliaryTopRightArea {
+            let notchLeft = frame.minX + left.width
+            let notchRight = frame.maxX - right.width
+            let width = max(notchRight - notchLeft, 120)
+            return NotchGeometry(
+                centerX: (notchLeft + notchRight) / 2,
+                notchWidth: width,
+                menuBarHeight: topInset,
+                hasPhysicalNotch: true
+            )
+        }
+        // No physical notch: simulate one centered at the top.
+        return NotchGeometry(
+            centerX: frame.midX,
+            notchWidth: 180,
+            menuBarHeight: 24,
+            hasPhysicalNotch: false
+        )
+    }
+}
+
+/// Shared layout state. `geometry` drives the SwiftUI view; `hitRect` is the
+/// region (top-left window coords) that should swallow mouse events — read by
+/// the passthrough hit test so the menu bar stays clickable everywhere else.
+@MainActor
+final class HUDLayout: ObservableObject {
+    @Published var geometry: NotchGeometry
+    /// Whether the transcript panel is open. Toggled by clicking the island;
+    /// cleared by clicking anywhere outside it.
+    @Published var expanded: Bool = false
+    var hitRect: CGRect
+
+    init(geometry: NotchGeometry) {
+        self.geometry = geometry
+        let w = geometry.notchWidth
+        self.hitRect = CGRect(x: (HUDMetrics.windowWidth - w) / 2, y: 0,
+                              width: w, height: geometry.menuBarHeight)
+    }
+}
+
+// MARK: - Passthrough hosting view
+
+/// Hosting view that only swallows mouse events within `layout.hitRect`.
+/// Everywhere else returns nil so the menu bar and desktop stay clickable
+/// through the otherwise wide transparent window.
+private final class PassthroughHostingView<Content: View>: NSHostingView<Content> {
+    weak var layout: HUDLayout?
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let layout else { return super.hitTest(point) }
+        let local = convert(point, from: superview)
+        let r = layout.hitRect // top-left window coords
+        let rect = isFlipped
+            ? r
+            : CGRect(x: r.minX, y: bounds.height - r.maxY, width: r.width, height: r.height)
+        return rect.contains(local) ? super.hitTest(point) : nil
+    }
+}
+
 // MARK: - Window controller
 
-/// Floating notch-anchored pill that reflects dictation state. Stays small
-/// so it doesn't intercept clicks across the menu bar.
+/// Notch-anchored "ghost island" HUD. Invisible at rest; shows a compact Live
+/// tab beside the notch while streaming (no downward drop), and expands into
+/// the transcript list below the notch on hover.
 @MainActor
 final class NotchHUDController: NSObject {
     private var panel: NSPanel?
-    private var transcriptPanel: NSPanel?
     private var coordinator: AppCoordinator
     private var history: TranscriptHistoryStore
-    private let settings = SettingsStore.shared
+    private var layout: HUDLayout
     private var screenObserver: NSObjectProtocol?
-    private var localMouseDownMonitor: Any?
-    private var globalMouseDownMonitor: Any?
-    private var cancellables = Set<AnyCancellable>()
-    private var dragStartPosition: Double?
-
-    private static let panelSize = NSSize(width: 96, height: 24)
-    fileprivate static let transcriptPanelSize = NSSize(width: 320, height: 300)
 
     init(coordinator: AppCoordinator, history: TranscriptHistoryStore) {
         self.coordinator = coordinator
         self.history = history
+        let screen = NSScreen.main ?? NSScreen.screens.first!
+        self.layout = HUDLayout(geometry: .detect(on: screen))
         super.init()
         present()
         screenObserver = NotificationCenter.default.addObserver(
@@ -34,27 +123,17 @@ final class NotchHUDController: NSObject {
         ) { [weak self] _ in
             Task { @MainActor in self?.reposition() }
         }
-        settings.$notchHorizontalPosition
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.reposition() }
-            .store(in: &cancellables)
     }
 
     deinit {
         if let observer = screenObserver {
             NotificationCenter.default.removeObserver(observer)
         }
-        if let localMouseDownMonitor {
-            NSEvent.removeMonitor(localMouseDownMonitor)
-        }
-        if let globalMouseDownMonitor {
-            NSEvent.removeMonitor(globalMouseDownMonitor)
-        }
     }
 
     private func present() {
         let panel = NSPanel(
-            contentRect: NSRect(origin: .zero, size: Self.panelSize),
+            contentRect: NSRect(origin: .zero, size: windowSize()),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -67,20 +146,11 @@ final class NotchHUDController: NSObject {
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
         panel.hidesOnDeactivate = false
 
-        let host = NSHostingView(rootView: NotchHUDView(
-            onTap: { [weak self] in
-                self?.toggleTranscriptPanel()
-            },
-            onDragChanged: { [weak self] translation in
-                self?.drag(translationX: translation)
-            },
-            onDragEnded: { [weak self] in
-                self?.commitDrag()
-            }
-        )
+        let host = PassthroughHostingView(rootView: NotchHUDView(layout: layout)
             .environmentObject(coordinator)
             .environmentObject(history))
-        host.frame = NSRect(origin: .zero, size: Self.panelSize)
+        host.layout = layout
+        host.frame = NSRect(origin: .zero, size: windowSize())
         panel.contentView = host
 
         self.panel = panel
@@ -88,162 +158,22 @@ final class NotchHUDController: NSObject {
         panel.orderFrontRegardless()
     }
 
+    private func windowSize() -> NSSize {
+        NSSize(width: HUDMetrics.windowWidth,
+               height: layout.geometry.menuBarHeight + HUDMetrics.maxContentHeight)
+    }
+
     private func reposition() {
         guard let panel else { return }
         guard let screen = NSScreen.main else { return }
-        let size = panel.frame.size
-        let x = xOrigin(for: settings.notchHorizontalPosition, on: screen, panelWidth: size.width)
-        // Top of pill flush with top of screen — same vertical strip as the
-        // menu bar. On notched Macs the user can drag horizontally to avoid
-        // the camera notch.
+        layout.geometry = .detect(on: screen)
+        let size = windowSize()
+        let x = layout.geometry.centerX - size.width / 2
         let y = screen.frame.maxY - size.height
-        panel.setFrameOrigin(NSPoint(x: x, y: y))
-        if transcriptPanel?.isVisible == true {
-            positionTranscriptPanel()
-        }
-    }
-
-    private func xOrigin(for position: Double, on screen: NSScreen, panelWidth: CGFloat) -> CGFloat {
-        let minX = screen.frame.minX + 8
-        let maxX = screen.frame.maxX - panelWidth - 8
-        let raw = screen.frame.minX + screen.frame.width * CGFloat(position) - panelWidth / 2
-        return min(max(raw, minX), maxX)
-    }
-
-    private func normalizedPosition(for xOrigin: CGFloat, on screen: NSScreen, panelWidth: CGFloat) -> Double {
-        let centerX = xOrigin + panelWidth / 2
-        let normalized = (centerX - screen.frame.minX) / screen.frame.width
-        return Double(min(max(normalized, 0.04), 0.96))
-    }
-
-    private func drag(translationX: CGFloat) {
-        guard let panel, let screen = panel.screen ?? NSScreen.main else { return }
-        if dragStartPosition == nil {
-            dragStartPosition = settings.notchHorizontalPosition
-            transcriptPanel?.orderOut(nil)
-        }
-        let start = dragStartPosition ?? settings.notchHorizontalPosition
-        let startX = xOrigin(for: start, on: screen, panelWidth: panel.frame.width)
-        let nextX = startX + translationX
-        let clampedX = min(max(nextX, screen.frame.minX + 8),
-                           screen.frame.maxX - panel.frame.width - 8)
-        let y = screen.frame.maxY - panel.frame.height
-        panel.setFrameOrigin(NSPoint(x: clampedX, y: y))
-    }
-
-    private func commitDrag() {
-        defer { dragStartPosition = nil }
-        guard let panel, let screen = panel.screen ?? NSScreen.main else { return }
-        let finalPosition = normalizedPosition(for: panel.frame.origin.x,
-                                               on: screen,
-                                               panelWidth: panel.frame.width)
-        if settings.notchHorizontalPosition != finalPosition {
-            settings.notchHorizontalPosition = finalPosition
-        }
-    }
-
-    private func toggleTranscriptPanel() {
-        if transcriptPanel?.isVisible == true {
-            hideTranscriptPanel()
-        } else {
-            showTranscriptPanel()
-        }
-    }
-
-    private func showTranscriptPanel() {
-        let panel: NSPanel
-        if let existing = transcriptPanel {
-            panel = existing
-        } else {
-            panel = NSPanel(
-                contentRect: NSRect(origin: .zero, size: Self.transcriptPanelSize),
-                styleMask: [.borderless, .nonactivatingPanel],
-                backing: .buffered,
-                defer: false
-            )
-            panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.statusWindow)) + 2)
-            panel.isOpaque = false
-            panel.backgroundColor = .clear
-            panel.hasShadow = true
-            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
-            panel.hidesOnDeactivate = false
-            panel.contentView = NSHostingView(rootView: LatestTranscriptPanelView()
-                .environmentObject(history))
-            transcriptPanel = panel
-        }
-        positionTranscriptPanel()
-        panel.orderFrontRegardless()
-        installOutsideClickMonitors()
-    }
-
-    private func hideTranscriptPanel() {
-        transcriptPanel?.orderOut(nil)
-        removeOutsideClickMonitors()
-    }
-
-    private func installOutsideClickMonitors() {
-        guard localMouseDownMonitor == nil, globalMouseDownMonitor == nil else { return }
-
-        let events: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
-        localMouseDownMonitor = NSEvent.addLocalMonitorForEvents(matching: events) { [weak self] event in
-            self?.dismissTranscriptPanelIfClickIsOutside(event)
-            return event
-        }
-        globalMouseDownMonitor = NSEvent.addGlobalMonitorForEvents(matching: events) { [weak self] event in
-            Task { @MainActor in
-                self?.dismissTranscriptPanelIfClickIsOutside(event)
-            }
-        }
-    }
-
-    private func removeOutsideClickMonitors() {
-        if let localMouseDownMonitor {
-            NSEvent.removeMonitor(localMouseDownMonitor)
-            self.localMouseDownMonitor = nil
-        }
-        if let globalMouseDownMonitor {
-            NSEvent.removeMonitor(globalMouseDownMonitor)
-            self.globalMouseDownMonitor = nil
-        }
-    }
-
-    private func dismissTranscriptPanelIfClickIsOutside(_ event: NSEvent) {
-        guard transcriptPanel?.isVisible == true else { return }
-
-        let clickLocation = screenLocation(for: event)
-        if panel?.frame.contains(clickLocation) == true {
-            return
-        }
-        if transcriptPanel?.frame.contains(clickLocation) == true {
-            return
-        }
-
-        hideTranscriptPanel()
-    }
-
-    private func screenLocation(for event: NSEvent) -> NSPoint {
-        guard let window = event.window else {
-            return NSEvent.mouseLocation
-        }
-        return window.convertPoint(toScreen: event.locationInWindow)
-    }
-
-    private func positionTranscriptPanel() {
-        guard let hudPanel = panel, let transcriptPanel else { return }
-        guard let screen = hudPanel.screen ?? NSScreen.main else { return }
-        let size = transcriptPanel.frame.size
-        let hud = hudPanel.frame
-        let x = min(
-            max(hud.midX - size.width / 2, screen.visibleFrame.minX + 8),
-            screen.visibleFrame.maxX - size.width - 8
-        )
-        let y = max(hud.minY - size.height - 8, screen.visibleFrame.minY + 8)
-        transcriptPanel.setFrameOrigin(NSPoint(x: x, y: y))
+        panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
     }
 
     func dismiss() {
-        hideTranscriptPanel()
-        transcriptPanel = nil
         panel?.orderOut(nil)
         panel = nil
     }
@@ -251,138 +181,264 @@ final class NotchHUDController: NSObject {
 
 // MARK: - SwiftUI view
 
+private enum HUDPresentation: Equatable {
+    case hidden
+    case live
+    case status(String)
+    case transcripts
+}
+
 private struct NotchHUDView: View {
     @EnvironmentObject var coordinator: AppCoordinator
-    var onTap: () -> Void = {}
-    var onDragChanged: (CGFloat) -> Void = { _ in }
-    var onDragEnded: () -> Void = {}
-    @GestureState private var didDrag = false
+    @EnvironmentObject var history: TranscriptHistoryStore
+    @ObservedObject var layout: HUDLayout
+    @State private var outsideClickMonitor: Any?
 
-    var isRecording: Bool { coordinator.state == .recording }
-    var isRewriting: Bool { coordinator.state == .rewriting }
-    var isFinalizing: Bool {
+    private var mode: HUDPresentation {
+        if layout.expanded { return .transcripts }
         switch coordinator.state {
-        case .finalizing, .pasting: return true
-        default: return false
+        case .recording: return .live
+        case .rewriting: return .status("Polishing")
+        case .finalizing: return .status("Done")
+        case .pasting:    return .status("Paste")
+        default:          return .hidden
         }
     }
 
-    var mode: HUDMode {
-        if isRecording { return .recording }
-        if isRewriting { return .rewriting }
-        if isFinalizing { return .finalizing }
-        return .idle
+    // MARK: Geometry (window-local, top-left origin)
+
+    private var menuBar: CGFloat { layout.geometry.menuBarHeight }
+    private var W: CGFloat { HUDMetrics.windowWidth }
+    private var H: CGFloat { menuBar + HUDMetrics.maxContentHeight }
+
+    private var notchRect: CGRect {
+        let w = layout.geometry.notchWidth
+        return CGRect(x: (W - w) / 2, y: 0, width: w, height: menuBar)
     }
 
+    /// Live/status pill: centered under the notch, wide enough to overhang it
+    /// on both sides so the two black shapes merge into one island.
+    private var pillWidth: CGFloat {
+        max(layout.geometry.notchWidth + HUDMetrics.pillOverhang * 2, HUDMetrics.minPillWidth)
+    }
+
+    private var pillRect: CGRect {
+        CGRect(x: (W - pillWidth) / 2, y: 0,
+               width: pillWidth, height: menuBar + HUDMetrics.pillContentHeight)
+    }
+
+    private var panelRect: CGRect {
+        CGRect(x: (W - HUDMetrics.panelWidth) / 2, y: 0,
+               width: HUDMetrics.panelWidth,
+               height: menuBar + HUDMetrics.panelContentHeight)
+    }
+
+    /// Transparent click target that opens the panel: the visible island
+    /// (notch when idle, pill while dictating). While expanded it sits behind
+    /// the panel and is inert — the panel handles its own clicks.
+    private func triggerRect(for mode: HUDPresentation) -> CGRect {
+        switch mode {
+        case .hidden:                return notchRect
+        case .live, .status:         return pillRect
+        case .transcripts:           return panelRect
+        }
+    }
+
+    /// Region that swallows clicks so the visible island is never click-through.
+    private func hitRect(for mode: HUDPresentation) -> CGRect {
+        switch mode {
+        case .hidden:                return notchRect
+        case .live, .status:         return pillRect
+        case .transcripts:           return panelRect
+        }
+    }
+
+    // MARK: Body
+
     var body: some View {
-        NotchPill()
-            .overlay(content)
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 6)
-                    .updating($didDrag) { _, state, _ in state = true }
-                    .onChanged { value in onDragChanged(value.translation.width) }
-                    .onEnded { _ in onDragEnded() }
-            )
-            .simultaneousGesture(
-                TapGesture().onEnded {
-                    if !didDrag { onTap() }
+        let trigger = triggerRect(for: mode)
+        ZStack(alignment: .topLeading) {
+            Color.clear
+                .frame(width: trigger.width, height: trigger.height)
+                .contentShape(Rectangle())
+                .position(x: trigger.midX, y: trigger.midY)
+                .onTapGesture { open() }
+
+            visibleIsland
+        }
+        .frame(width: W, height: H, alignment: .topLeading)
+        .animation(.spring(response: 0.42, dampingFraction: 0.82), value: mode)
+        .onAppear { layout.hitRect = hitRect(for: mode) }
+        .onChange(of: mode) { _, newValue in
+            layout.hitRect = hitRect(for: newValue)
+            updateOutsideClickMonitor(open: newValue == .transcripts)
+        }
+        .onChange(of: layout.geometry) { _, _ in layout.hitRect = hitRect(for: mode) }
+        .onDisappear { updateOutsideClickMonitor(open: false) }
+    }
+
+    private func open() {
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) {
+            layout.expanded = true
+        }
+    }
+
+    private func close() {
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) {
+            layout.expanded = false
+        }
+    }
+
+    /// While the panel is open, watch for a click anywhere outside the app
+    /// (menu bar, other windows, desktop) and collapse. Clicks inside the
+    /// panel are local events the monitor never sees, so they don't dismiss it.
+    private func updateOutsideClickMonitor(open: Bool) {
+        if open {
+            guard outsideClickMonitor == nil else { return }
+            outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
+                matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+            ) { [layout] _ in
+                Task { @MainActor in
+                    withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) {
+                        layout.expanded = false
+                    }
                 }
-            )
-            .animation(.spring(response: 0.42, dampingFraction: 0.82), value: mode)
+            }
+        } else if let monitor = outsideClickMonitor {
+            NSEvent.removeMonitor(monitor)
+            outsideClickMonitor = nil
+        }
     }
 
     @ViewBuilder
-    private var content: some View {
+    private var visibleIsland: some View {
         switch mode {
-        case .idle:       idleContent
-        case .recording:  recordingContent
-        case .rewriting:  rewritingContent
-        case .finalizing: finalizingContent
+        case .hidden:
+            EmptyView()
+        case .live:
+            pill(content: liveContent)
+        case .status(let label):
+            pill(content: statusContent(label))
+        case .transcripts:
+            panel
+                .frame(width: panelRect.width, height: panelRect.height)
+                .position(x: panelRect.midX, y: panelRect.midY)
         }
     }
 
-    private var idleContent: some View {
-        HStack(spacing: 6) {
-            Circle().fill(.white.opacity(0.55)).frame(width: 5, height: 5)
-            Text("InkIt").font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.white.opacity(0.65))
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-    }
+    // MARK: Shapes
 
-    private var recordingContent: some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(Color(red: 1.0, green: 0.62, blue: 0.04))
-                .frame(width: 5.5, height: 5.5)
-                .shadow(color: Color(red: 1.0, green: 0.62, blue: 0.04).opacity(0.7), radius: 4)
-            HUDWaveform(level: coordinator.inputLevel)
-                .frame(width: 34, height: 13)
-            Spacer(minLength: 0)
-        }
-        .padding(.leading, 16)
-        .padding(.trailing, 10)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-    }
-
-    private var finalizingContent: some View {
-        HStack(spacing: 5) {
-            ProgressView()
-                .controlSize(.mini)
-                .tint(.white)
-                .scaleEffect(0.65)
-            Text(coordinator.state == .pasting ? "Paste" : "Done")
-                .font(.system(size: 9, weight: .medium))
-                .foregroundStyle(.white.opacity(0.82))
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-    }
-
-    private var rewritingContent: some View {
-        HStack(spacing: 5) {
-            ProgressView()
-                .controlSize(.mini)
-                .tint(.white)
-                .scaleEffect(0.65)
-            Text("Polish")
-                .font(.system(size: 9, weight: .medium))
-                .foregroundStyle(.white.opacity(0.82))
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-    }
-}
-
-private enum HUDMode: Equatable {
-    case idle, recording, rewriting, finalizing
-}
-
-// MARK: - Pill shape (rounded bottom, square top, anchored to screen edge)
-
-private struct NotchPill: View {
-    private let cornerRadius: CGFloat = 11
-
-    var body: some View {
-        // Top corners are square (flush with screen edge), bottom corners
-        // rounded. On notched Macs this visually extends the camera notch.
+    private func shape(radius: CGFloat) -> some View {
+        // Square top corners (flush with screen edge / notch), rounded bottom.
         UnevenRoundedRectangle(
-            cornerRadii: .init(
-                topLeading: 0, bottomLeading: cornerRadius,
-                bottomTrailing: cornerRadius, topTrailing: 0
-            ),
+            cornerRadii: .init(topLeading: 0, bottomLeading: radius,
+                               bottomTrailing: radius, topTrailing: 0),
             style: .continuous
         )
         .fill(.black)
         .overlay(
             UnevenRoundedRectangle(
-                cornerRadii: .init(
-                    topLeading: 0, bottomLeading: cornerRadius,
-                    bottomTrailing: cornerRadius, topTrailing: 0
-                ),
+                cornerRadii: .init(topLeading: 0, bottomLeading: radius,
+                                   bottomTrailing: radius, topTrailing: 0),
                 style: .continuous
             )
             .stroke(.white.opacity(0.08), lineWidth: 0.5)
         )
+    }
+
+    /// Centered island that merges with the notch and hangs straight down.
+    /// Not hit-testable so the transparent trigger behind it catches the click.
+    private func pill<C: View>(content: C) -> some View {
+        shape(radius: 14)
+            .overlay {
+                VStack(spacing: 0) {
+                    Spacer(minLength: 0).frame(height: menuBar) // clear the notch
+                    content.frame(height: HUDMetrics.pillContentHeight)
+                }
+            }
+            .frame(width: pillRect.width, height: pillRect.height)
+            .position(x: pillRect.midX, y: pillRect.midY)
+            .allowsHitTesting(false)
+    }
+
+    private var panel: some View {
+        shape(radius: 14)
+            .overlay {
+                VStack(spacing: 0) {
+                    Spacer(minLength: 0).frame(height: menuBar) // reserve notch
+                    transcriptsBody
+                }
+            }
+    }
+
+    // MARK: Content
+
+    private var liveContent: some View {
+        HStack(spacing: 7) {
+            Text("InkIt")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.85))
+            HUDWaveform(level: coordinator.inputLevel)
+                .frame(width: 30, height: 11)
+            Text("Live")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.white.opacity(0.55))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    }
+
+    private func statusContent(_ label: String) -> some View {
+        HStack(spacing: 6) {
+            ProgressView()
+                .controlSize(.mini)
+                .tint(.white)
+                .scaleEffect(0.7)
+            Text(label)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.white.opacity(0.82))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    }
+
+    private var transcriptsBody: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 7) {
+                Text("InkIt")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.92))
+                if coordinator.state == .recording {
+                    Circle().fill(Color(red: 1.0, green: 0.62, blue: 0.04))
+                        .frame(width: 5, height: 5)
+                    Text("Live")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.5))
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 8)
+            .padding(.bottom, 8)
+            .contentShape(Rectangle())
+            .onTapGesture { close() }
+
+            if history.entries.isEmpty {
+                Text("No transcripts yet")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.white.opacity(0.5))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 4) {
+                        ForEach(history.entries) { entry in
+                            TranscriptRow(entry: entry)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 10)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }
 
@@ -403,7 +459,7 @@ private struct HUDWaveform: View {
                     let height = 3 + (geo.size.height - 3) * loudness * (0.32 + 0.68 * wobble)
                     Capsule(style: .continuous)
                         .fill(.white.opacity(0.95))
-                        .frame(width: 2.8, height: height)
+                        .frame(width: 2.6, height: height)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -416,83 +472,20 @@ private struct HUDWaveform: View {
     }
 }
 
-private struct LatestTranscriptPanelView: View {
-    @EnvironmentObject var history: TranscriptHistoryStore
-    @State private var copiedID: TranscriptHistoryStore.Entry.ID?
+// MARK: - Transcript row
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Transcripts")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.6))
-                .padding(.horizontal, 14)
-                .padding(.top, 12)
-                .padding(.bottom, 8)
-
-            if history.entries.isEmpty {
-                Text("No transcripts yet")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(0.5))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-            } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 4) {
-                        ForEach(history.entries) { entry in
-                            transcriptRow(entry)
-                        }
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 10)
-                }
-            }
-        }
-        .frame(width: NotchHUDController.transcriptPanelSize.width, height: NotchHUDController.transcriptPanelSize.height)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.black)
-                .shadow(color: .black.opacity(0.4), radius: 16, y: 8)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(.white.opacity(0.08), lineWidth: 0.5)
-        )
-    }
-
-    private func transcriptRow(_ entry: TranscriptHistoryStore.Entry) -> some View {
-        LatestTranscriptRow(
-            text: entry.text,
-            copied: copiedID == entry.id
-        ) {
-            copy(entry)
-        }
-    }
-
-    private func copy(_ entry: TranscriptHistoryStore.Entry) {
-        let pb = NSPasteboard.general
-        pb.declareTypes([.string], owner: nil)
-        pb.setString(entry.text, forType: .string)
-        copiedID = entry.id
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-            if copiedID == entry.id { copiedID = nil }
-        }
-    }
-}
-
-private struct LatestTranscriptRow: View {
-    let text: String
-    let copied: Bool
-    let copy: () -> Void
+private struct TranscriptRow: View {
+    let entry: TranscriptHistoryStore.Entry
     @State private var hovering = false
+    @State private var copied = false
 
     var body: some View {
         Button(action: copy) {
             HStack(alignment: .top, spacing: 8) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(text)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.white.opacity(0.92))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
+                Text(entry.text)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
                     .font(.system(size: 11, weight: .medium))
@@ -505,52 +498,28 @@ private struct LatestTranscriptRow: View {
             .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(rowFill)
+                    .fill(.white.opacity(hovering ? 0.09 : 0.04))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .stroke(rowStroke, lineWidth: hovering || copied ? 1 : 0)
+                    .stroke(.white.opacity(hovering || copied ? (copied ? 0.28 : 0.18) : 0),
+                            lineWidth: hovering || copied ? 1 : 0)
             )
-            .overlay(alignment: .topTrailing) {
-                if hovering && !copied {
-                    Text("Copy")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.9))
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(
-                            Capsule(style: .continuous)
-                                .fill(.black.opacity(0.85))
-                        )
-                        .overlay(
-                            Capsule(style: .continuous)
-                                .stroke(.white.opacity(0.18), lineWidth: 0.5)
-                        )
-                        .padding(6)
-                        .transition(.opacity)
-                        .allowsHitTesting(false)
-                }
-            }
         }
         .buttonStyle(.plain)
         .onHover { isHovering in
-            withAnimation(.easeOut(duration: 0.12)) {
-                hovering = isHovering
-            }
+            withAnimation(.easeOut(duration: 0.12)) { hovering = isHovering }
         }
         .animation(.easeOut(duration: 0.15), value: copied)
         .help(copied ? "Copied" : "Copy transcript")
         .accessibilityLabel(copied ? "Copied transcript" : "Copy transcript")
     }
 
-    private var rowFill: Color {
-        if hovering {
-            return .white.opacity(0.09)
-        }
-        return .white.opacity(0.04)
-    }
-
-    private var rowStroke: Color {
-        copied ? .white.opacity(0.28) : .white.opacity(0.18)
+    private func copy() {
+        let pb = NSPasteboard.general
+        pb.declareTypes([.string], owner: nil)
+        pb.setString(entry.text, forType: .string)
+        copied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { copied = false }
     }
 }
