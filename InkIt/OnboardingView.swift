@@ -298,7 +298,7 @@ private struct APIKeyStep: View {
                     Link(destination: URL(string: "https://play.cartesia.ai/keys")!) {
                         HStack(spacing: 4) {
                             Image(systemName: "arrow.up.right.square")
-                            Text("Get a free Cartesia API key")
+                            Text("Get your free Cartesia API key")
                         }
                         .font(.subheadline.weight(.medium))
                     }
@@ -701,7 +701,7 @@ private struct PolishStep: View {
                     Link(destination: LLMProvider.groq.keyURL) {
                         HStack(spacing: 4) {
                             Image(systemName: "arrow.up.right.square")
-                            Text("Get a Groq API key")
+                            Text("Get your free Groq API key")
                         }
                         .font(.subheadline.weight(.medium))
                     }

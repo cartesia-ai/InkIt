@@ -22,6 +22,18 @@ enum LLMProvider: String, CaseIterable, Identifiable, Hashable {
         }
     }
 
+    /// Placeholder hint for the Settings key field — the provider's key prefix
+    /// so it's obvious you've pasted the right credential. Shown only while the
+    /// field is empty.
+    var keyPlaceholder: String {
+        switch self {
+        case .groq:      return "gsk_…"
+        case .gemini:    return "AIza…"
+        case .openai:    return "sk-…"
+        case .anthropic: return "sk-ant-…"
+        }
+    }
+
     /// Chat endpoint. Anthropic uses its native Messages API; the rest are
     /// OpenAI-compatible `/chat/completions`.
     var endpoint: URL {

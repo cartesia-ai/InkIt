@@ -10,8 +10,6 @@ private enum SettingsMetrics {
     static let fieldHeight: CGFloat = 30
     /// Corner radius for those fields.
     static let fieldCornerRadius: CGFloat = 7
-    /// Side of the borderless eye / inline glyph accessory buttons.
-    static let accessoryButton: CGFloat = 24
     /// Gap between a control and its caption.
     static let captionSpacing: CGFloat = 3
 
@@ -197,93 +195,164 @@ extension View {
     }
 }
 
-/// Secret-field handling follows the standard macOS convention (Stripe / GitHub
-/// / 1Password): the value is hidden by default, an eye toggles reveal, and an
-/// explicit Copy button puts the key on the pasteboard without revealing it —
-/// macOS secure text entry blocks ⌘C from a `SecureField`, so the button is the
-/// accessible way to copy. The field owns its own clicks (no overlaid tap
-/// gesture), so the caret places and text selects normally for editing.
+/// Secret-field handling follows the minimal convention used by macOS
+/// dictation apps (e.g. VoiceInk): the key is always redacted — a `SecureField`
+/// renders bullets and never reveals the plaintext — and there is no eye or
+/// copy accessory. The field owns its own clicks, so clicking in places the
+/// caret and you edit (or replace) the key in place while it stays masked.
 private struct APIKeyField: View {
     let title: String
     @Binding var text: String
+    let placeholder: String
     let linkTitle: String
     let linkURL: URL
 
-    @State private var isRevealed = false
-    @State private var didCopy = false
-    @FocusState private var isFocused: Bool
+    @State private var isFocused = false
 
     var body: some View {
         LabeledContent {
-            HStack(spacing: 8) {
-                editor
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13, design: .monospaced))
-                    .focused($isFocused)
-
-                if !text.isEmpty {
-                    accessoryButton(
-                        systemName: didCopy ? "checkmark" : "doc.on.doc",
-                        help: didCopy ? "Copied" : "Copy \(title)",
-                        tint: didCopy ? Color.accentColor : .secondary,
-                        action: copy
-                    )
-                }
-
-                accessoryButton(
-                    systemName: isRevealed ? "eye.slash" : "eye",
-                    help: isRevealed ? "Hide \(title)" : "Show \(title)",
-                    action: { isRevealed.toggle() }
-                )
+            RevealableSecureField(text: $text, placeholder: placeholder) { focused in
+                isFocused = focused
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 10)
             .fieldSurface(focused: isFocused)
             .frame(width: 230)
         } label: {
             VStack(alignment: .leading, spacing: SettingsMetrics.captionSpacing) {
                 Text(title)
-                Link(linkTitle, destination: linkURL)
-                    .font(.caption)
-                    .modifier(PointingHandCursor())
+                Link(destination: linkURL) {
+                    HStack(spacing: 3) {
+                        Text(linkTitle)
+                        Image(systemName: "arrow.up.right")
+                    }
+                }
+                .font(.caption)
+                .modifier(PointingHandCursor())
             }
         }
     }
+}
 
-    /// Revealed shows the plaintext (selectable / copyable); hidden uses a
-    /// `SecureField`, which renders bullets and is editable in place.
-    @ViewBuilder private var editor: some View {
-        if isRevealed {
-            TextField("sk_car_…", text: $text)
-        } else {
-            SecureField("sk_car_…", text: $text)
+/// A single-line credential field that reveals its plaintext while it is the
+/// first responder and masks to bullets at rest — focus-reveal without an eye
+/// toggle. It toggles secure entry *in place* on one `NSTextField` (swapping
+/// the cell at a safe moment) rather than swapping a SwiftUI `TextField` for a
+/// `SecureField`, which crashes AppKit's layout pass when the swap lands inside
+/// a focus change. Native placeholder rendering gives the leading, gray hint
+/// for free.
+private struct RevealableSecureField: NSViewRepresentable {
+    @Binding var text: String
+    let placeholder: String
+    let onFocusChange: (Bool) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> RevealingTextField {
+        let field = RevealingTextField()
+        field.delegate = context.coordinator
+        field.isBordered = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.placeholderString = placeholder
+        field.applySecure(true)          // masked at rest
+        field.stringValue = text
+        field.onFocusChange = onFocusChange
+        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        return field
+    }
+
+    func updateNSView(_ field: RevealingTextField, context: Context) {
+        context.coordinator.parent = self
+        field.onFocusChange = onFocusChange
+        if field.placeholderString != placeholder { field.placeholderString = placeholder }
+        // Don't clobber what the user is mid-edit; only sync external changes.
+        if !field.isEditing, field.stringValue != text { field.stringValue = text }
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var parent: RevealableSecureField
+        init(_ parent: RevealableSecureField) { self.parent = parent }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let field = notification.object as? NSTextField else { return }
+            parent.text = field.stringValue
+        }
+    }
+}
+
+/// `NSTextField` that swaps between a plain and a secure cell as it gains and
+/// loses first-responder status, preserving its string, font, and placeholder.
+private final class RevealingTextField: NSTextField {
+    var onFocusChange: ((Bool) -> Void)?
+    private(set) var isEditing = false
+    private var clickMonitor: Any?
+
+    deinit { removeClickMonitor() }
+
+    /// Rebuilds the cell as secure (bullets) or plain (plaintext), carrying the
+    /// styling and current value across the swap.
+    func applySecure(_ secure: Bool) {
+        let value = stringValue
+        let cell: NSTextFieldCell = secure ? NSSecureTextFieldCell() : NSTextFieldCell()
+        cell.isEditable = true
+        cell.isSelectable = true
+        cell.isBordered = false
+        cell.isBezeled = false
+        cell.focusRingType = .none      // the outer FieldSurface accent border is our only focus cue
+        cell.drawsBackground = false
+        cell.usesSingleLineMode = true
+        cell.lineBreakMode = .byTruncatingTail
+        cell.isScrollable = true
+        cell.wraps = false
+        cell.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
+        cell.placeholderString = placeholderString
+        cell.alignment = .natural
+        (cell as? NSSecureTextFieldCell)?.echosBullets = true
+        self.cell = cell
+        self.stringValue = value
+    }
+
+    // Reveal just before we actually take focus, while we are not yet the first
+    // responder, so the cell swap can't reenter AppKit's editing machinery.
+    override func becomeFirstResponder() -> Bool {
+        applySecure(false)
+        let became = super.becomeFirstResponder()
+        if became {
+            isEditing = true
+            onFocusChange?(true)
+            installClickMonitor()
+        }
+        return became
+    }
+
+    override func textDidEndEditing(_ notification: Notification) {
+        super.textDidEndEditing(notification)
+        isEditing = false
+        removeClickMonitor()
+        applySecure(true)                // re-mask once editing ends
+        onFocusChange?(false)
+    }
+
+    /// A click in a SwiftUI `Form`'s dead space doesn't resign first responder,
+    /// so we watch for a mouse-down outside our bounds while editing and end
+    /// editing ourselves — that fires `textDidEndEditing`, re-masking the key
+    /// and clearing the focus border.
+    private func installClickMonitor() {
+        removeClickMonitor()
+        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+            guard let self, let window = self.window, event.window === window else { return event }
+            let point = self.convert(event.locationInWindow, from: nil)
+            if !self.bounds.contains(point) {
+                window.makeFirstResponder(nil)   // → textDidEndEditing
+            }
+            return event                          // never consume; the click still lands
         }
     }
 
-    private func accessoryButton(
-        systemName: String,
-        help: String,
-        tint: Color = .secondary,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .imageScale(.medium)
-                .foregroundStyle(tint)
-                .frame(width: SettingsMetrics.accessoryButton,
-                       height: SettingsMetrics.accessoryButton)
-        }
-        .buttonStyle(.borderless)
-        .contentShape(Rectangle())
-        .help(help)
-        .modifier(PointingHandCursor())
-    }
-
-    private func copy() {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
-        didCopy = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { didCopy = false }
+    private func removeClickMonitor() {
+        if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
+        clickMonitor = nil
     }
 }
 
@@ -313,7 +382,8 @@ struct SettingsView: View {
                 APIKeyField(
                     title: "Cartesia API key",
                     text: $settings.cartesiaAPIKey,
-                    linkTitle: "Manage Cartesia API key",
+                    placeholder: "sk_car_…",
+                    linkTitle: "Get your Cartesia API key",
                     linkURL: URL(string: "https://play.cartesia.ai/keys")!
                 )
             } header: {
@@ -376,7 +446,8 @@ struct SettingsView: View {
                     APIKeyField(
                         title: "\(settings.rewriteProvider.displayName) API key",
                         text: llmKeyBinding,
-                        linkTitle: "Get a \(settings.rewriteProvider.displayName) API key",
+                        placeholder: settings.rewriteProvider.keyPlaceholder,
+                        linkTitle: "Get your \(settings.rewriteProvider.displayName) API key",
                         linkURL: settings.rewriteProvider.keyURL
                     )
                 }
