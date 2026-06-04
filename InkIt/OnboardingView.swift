@@ -330,9 +330,9 @@ private struct APIKeyStep: View {
 
             Group {
                 if showKey {
-                    TextField("sk-cartesia-…", text: $settings.cartesiaAPIKey)
+                    TextField("sk_car_…", text: $settings.cartesiaAPIKey)
                 } else {
-                    SecureField("sk-cartesia-…", text: $settings.cartesiaAPIKey)
+                    SecureField("sk_car_…", text: $settings.cartesiaAPIKey)
                 }
             }
             .textFieldStyle(.plain)
@@ -385,6 +385,9 @@ private struct APIKeyStep: View {
         case .verified:
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(.green)
+        case .invalidKey:
+            Image(systemName: "xmark.circle.fill")
+                .foregroundStyle(.red)
         case .couldNotVerify:
             Image(systemName: "exclamationmark.circle")
                 .foregroundStyle(.secondary)
@@ -408,8 +411,12 @@ private struct APIKeyStep: View {
             Label("Key verified", systemImage: "checkmark.circle.fill")
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.green)
+        case .invalidKey:
+            Label("Invalid API key. Double-check you copied the whole key.", systemImage: "xmark.circle.fill")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.red)
         case .couldNotVerify:
-            Label("Couldn’t verify — check the key or your connection", systemImage: "exclamationmark.circle")
+            Label("Couldn’t verify — check your connection", systemImage: "exclamationmark.circle")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }

@@ -5,29 +5,37 @@ import Combine
 /// onboarding so a good key earns a reassuring "verified" before the user
 /// reaches the Try-it step.
 ///
-/// It reuses the real STT websocket handshake (`CartesiaStreamingClient`): the
-/// server's `connected` event means the key authenticated. It records **no**
-/// audio and closes immediately.
+/// Performs a lightweight, credit-free `GET /voices?limit=1`. Listing voices
+/// costs nothing and requires a valid key, so the HTTP status is an honest
+/// verdict:
+///   - 2xx                  → key authenticated (`verified`)
+///   - 401 / 403            → key rejected (`invalidKey`) — we can say so plainly
+///   - other / transport err → `couldNotVerify` (most likely offline)
 ///
-/// This is purely advisory and never blocks the flow. A wrong key and an
-/// offline machine both fail the websocket upgrade identically (the socket
-/// never opens), so we can't honestly claim "invalid" — failures surface as
-/// "couldn't verify", not an accusation. `Continue` stays enabled on any
-/// non-empty key.
+/// Distinguishing a rejected key from an offline machine is the reason we use
+/// HTTP here rather than the STT websocket handshake, where both failures look
+/// identical (the socket simply never opens).
+///
+/// This is purely advisory and never blocks the flow. `Continue` stays enabled
+/// on any non-empty key.
 @MainActor
 final class CartesiaKeyValidator: ObservableObject {
     enum State: Equatable {
         case idle
         case checking
         case verified
+        case invalidKey
         case couldNotVerify
     }
 
     @Published private(set) var state: State = .idle
 
-    private var client: CartesiaStreamingClient?
+    private let cartesiaVersion = "2026-03-01"
+    private var task: URLSessionDataTask?
     private var debounce: DispatchWorkItem?
-    private var timeout: DispatchWorkItem?
+    /// Bumped on every new check so stale (or cancelled) completions can be
+    /// recognised and ignored.
+    private var generation = 0
     /// The key the current `state` describes — lets the view avoid re-checking
     /// a key it already has a verdict for.
     private var settledKey: String?
@@ -38,13 +46,13 @@ final class CartesiaKeyValidator: ObservableObject {
         debounce?.cancel()
 
         guard !key.isEmpty else {
-            teardown()
+            cancelInFlight()
             state = .idle
             settledKey = nil
             return
         }
         // Already have a verdict for this exact key — don't re-hit the network.
-        if key == settledKey, state == .verified || state == .couldNotVerify { return }
+        if key == settledKey, state != .checking { return }
 
         let work = DispatchWorkItem { [weak self] in self?.start(key: key) }
         debounce = work
@@ -52,47 +60,47 @@ final class CartesiaKeyValidator: ObservableObject {
     }
 
     private func start(key: String) {
-        teardown()
+        cancelInFlight()
+        generation &+= 1
+        let gen = generation
         state = .checking
 
-        let client = CartesiaStreamingClient(apiKey: key)
-        self.client = client
+        var comps = URLComponents(string: "https://api.cartesia.ai/voices")!
+        comps.queryItems = [URLQueryItem(name: "limit", value: "1")]
+        guard let url = comps.url else { settle(.couldNotVerify, key: key, gen: gen); return }
 
-        client.onConnected = { [weak self] in
-            DispatchQueue.main.async { self?.settle(.verified, for: key) }
-        }
-        client.onError = { [weak self] _ in
-            DispatchQueue.main.async { self?.settle(.couldNotVerify, for: key) }
-        }
-        client.onClosed = { [weak self] _ in
-            DispatchQueue.main.async {
-                // A close that arrives before `connected` means we never
-                // authenticated. (A close after `verified` is just our own
-                // teardown and is ignored by the settled-key guard.)
-                self?.settle(.couldNotVerify, for: key)
+        var req = URLRequest(url: url)
+        req.httpMethod = "GET"
+        req.setValue(key, forHTTPHeaderField: "X-API-Key")
+        req.setValue(cartesiaVersion, forHTTPHeaderField: "Cartesia-Version")
+        req.timeoutInterval = 8
+
+        task = URLSession.shared.dataTask(with: req) { [weak self] _, response, error in
+            let verdict: State
+            if error != nil {
+                verdict = .couldNotVerify
+            } else {
+                switch (response as? HTTPURLResponse)?.statusCode ?? 0 {
+                case 200...299: verdict = .verified
+                case 401, 403:  verdict = .invalidKey
+                default:        verdict = .couldNotVerify
+                }
             }
+            DispatchQueue.main.async { self?.settle(verdict, key: key, gen: gen) }
         }
-        client.connect()
-
-        let timeout = DispatchWorkItem { [weak self] in self?.settle(.couldNotVerify, for: key) }
-        self.timeout = timeout
-        DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: timeout)
+        task?.resume()
     }
 
-    private func settle(_ result: State, for key: String) {
-        // Ignore stale callbacks from a superseded check.
-        guard client != nil, state == .checking else { return }
+    private func settle(_ result: State, key: String, gen: Int) {
+        // Ignore stale callbacks from a superseded (or cancelled) check.
+        guard gen == generation, state == .checking else { return }
         state = result
         settledKey = key
-        teardown()
+        task = nil
     }
 
-    private func teardown() {
-        timeout?.cancel(); timeout = nil
-        let c = client
-        client = nil
-        // Drop callbacks so the imminent close doesn't re-enter settle().
-        c?.onConnected = nil; c?.onError = nil; c?.onClosed = nil
-        c?.cancel()
+    private func cancelInFlight() {
+        task?.cancel()
+        task = nil
     }
 }
