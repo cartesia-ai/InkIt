@@ -116,7 +116,7 @@ final class AppCoordinator: ObservableObject {
     private func refreshHUD() {
         if settings.hasCompletedOnboarding {
             if hud == nil {
-                hud = NotchHUDController(coordinator: self, history: history)
+                hud = NotchHUDController(coordinator: self)
             }
             ensureHotkeyRegistration()
         } else {
