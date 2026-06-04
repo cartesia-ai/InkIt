@@ -238,6 +238,13 @@ final class AppCoordinator: ObservableObject {
         if settings.playFeedbackSounds { FeedbackSoundPlayer.shared.playStart() }
         let frontmostApp = NSWorkspace.shared.frontmostApplication
         let ownBundleID = Bundle.main.bundleIdentifier
+        // The onboarding trial box should only capture dictation when InkIt
+        // itself is frontmost — i.e. the user is actually looking at the box.
+        // If they've clicked into another app, behave like normal dictation
+        // and paste at their real cursor; otherwise the box silently swallows
+        // text meant for whatever they were focused on.
+        let routeToOnboardingBox = routesFinalTranscriptToOnboarding
+            && frontmostApp?.bundleIdentifier == ownBundleID
         pasteTargetApp = {
             if let frontmostApp, frontmostApp.bundleIdentifier != ownBundleID {
                 return frontmostApp
@@ -264,7 +271,7 @@ final class AppCoordinator: ObservableObject {
         client.onError = { [weak self] message in
             Task { @MainActor in self?.setError(message) }
         }
-        client.onClosed = { [weak self, capturedTargetApp, capturedSnapshot] finalText in
+        client.onClosed = { [weak self, capturedTargetApp, capturedSnapshot, routeToOnboardingBox] finalText in
             Task { @MainActor in
                 guard let self else { return }
                 let transcriptArrived = DispatchTime.now()
@@ -276,7 +283,7 @@ final class AppCoordinator: ObservableObject {
                     self.state = .idle
                     return
                 }
-                if self.routesFinalTranscriptToOnboarding {
+                if routeToOnboardingBox {
                     self.pasteTargetApp = nil
                     self.contextTargetSnapshot = nil
                     self.liveTranscript = raw
