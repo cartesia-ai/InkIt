@@ -50,6 +50,12 @@ final class AudioCaptureService {
         guard isRunning else { return }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
+        // Drain conversions still queued from the final tap callbacks before we
+        // tear down the converter/callback. Without this barrier, an in-flight
+        // buffer finds `converter`/`onChunk` already nil and is silently dropped
+        // — losing the tail of the last word. The server transcribes all audio
+        // we manage to send before `close`, so anything not flushed here is gone.
+        queue.sync { }
         converter = nil
         onChunk = nil
         isRunning = false

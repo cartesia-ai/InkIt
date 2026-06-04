@@ -41,6 +41,10 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
     private var isConnected = false
     private var pendingAudio: [Data] = []
     private var pendingClose = false
+    // Set once we've requested close. The server then flushes buffered audio
+    // into a final `turn.end` (carrying the last word) before disconnecting, so
+    // we complete on that event rather than racing the socket close.
+    private var awaitingClose = false
     private let stateLock = NSLock()
 
     init(apiKey: String) {
@@ -83,26 +87,34 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
-    /// Request close. Server may emit one final `turn.end` before disconnecting.
+    /// Request close. Per the STT docs, the server processes all buffered audio
+    /// into events — emitting a final `turn.end` with the last word — and then
+    /// disconnects. We therefore complete on that final `turn.end` (see
+    /// `handleMessage`) or on the socket close, whichever lands first; the timer
+    /// below is only a fallback for a socket that never finishes.
     func finalizeAndClose() {
         guard let task, !hasClosed else { onClosed?(joinedTranscript()); return }
         stateLock.lock()
         let connected = isConnected
         if !connected { pendingClose = true }
+        awaitingClose = true
         stateLock.unlock()
         if !connected {
             // Defer the close until buffered audio has been flushed in
-            // `handleConnected()`. The 2.5s safety timer below still fires.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
-                guard let self, !self.hasClosed else { return }
-                self.finishClose(reason: .graceTimerExpired)
-            }
+            // `handleConnected()`. The fallback timer below still fires.
+            scheduleCloseFallback()
             return
         }
         closeRequestedAt = Date()
         task.send(.string(#"{"type":"close"}"#)) { _ in }
-        // Safety: if the server never closes, force-close after 2.5s.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+        scheduleCloseFallback()
+    }
+
+    /// Fallback only: guarantees we don't hang if the server never emits a final
+    /// `turn.end` or closes the socket. The happy path completes earlier, on the
+    /// final `turn.end` or `didCloseWith`.
+    private func scheduleCloseFallback() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
             guard let self, !self.hasClosed else { return }
             self.finishClose(reason: .graceTimerExpired)
         }
@@ -111,8 +123,12 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
     func cancel() { finishClose(reason: .externalCancel) }
 
     private func finishClose(reason: CloseReason) {
-        guard !hasClosed else { return }
+        // Atomic so the final `turn.end` and the socket close racing to finish
+        // can't both report `onClosed`.
+        stateLock.lock()
+        if hasClosed { stateLock.unlock(); return }
         hasClosed = true
+        stateLock.unlock()
         let elapsed = closeRequestedAt.map { Date().timeIntervalSince($0) }
         SessionMetrics.record(reason: reason, elapsedAfterCloseSent: elapsed)
         task?.cancel(with: .goingAway, reason: nil)
@@ -153,14 +169,24 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
         switch type {
         case "turn.update", "turn.eager_end":
             // Cumulative transcript for the in-progress turn.
+            stateLock.lock()
             currentTurn = (json["transcript"] as? String) ?? currentTurn
+            stateLock.unlock()
             onTranscriptUpdate?(joinedTranscript())
 
         case "turn.end":
+            stateLock.lock()
             let finalText = (json["transcript"] as? String) ?? currentTurn
             if !finalText.isEmpty { completedTurns.append(finalText) }
             currentTurn = ""
+            let closing = awaitingClose
+            stateLock.unlock()
             onTranscriptUpdate?(joinedTranscript())
+            // Once we've requested close, this is the flushed final turn carrying
+            // the last word. Complete here so we snapshot the full transcript
+            // instead of racing the socket close (which may report before this
+            // event is processed).
+            if closing { finishClose(reason: .finalTurnReceived) }
 
         case "turn.resume":
             // User continued a previously "eagerly ended" turn; keep current state.
@@ -208,8 +234,10 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
     }
 
     private func joinedTranscript() -> String {
+        stateLock.lock()
         var parts = completedTurns
         if !currentTurn.isEmpty { parts.append(currentTurn) }
+        stateLock.unlock()
         return parts.joined(separator: " ")
             .replacingOccurrences(of: "  ", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -227,8 +255,9 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
 // MARK: - Close-path metrics
 
 enum CloseReason: String, Codable {
-    case serverClosed         // server closed the socket (happy path)
-    case graceTimerExpired    // 2.5s safety timer fired before server closed
+    case finalTurnReceived    // final turn.end after close (happy path: full transcript captured)
+    case serverClosed         // server closed the socket before a post-close turn.end (e.g. nothing to flush)
+    case graceTimerExpired    // safety timer fired before the server finished
     case serverError          // server sent {"type":"error"}
     case receiveFailed        // receive loop errored
     case externalCancel       // cancel() called from outside (e.g. audio start failure, app error)
@@ -275,7 +304,7 @@ enum SessionMetrics {
             byReason[m.reason, default: []].append(m.elapsedAfterCloseSent ?? -1)
         }
         var lines = ["Sessions: \(all.count)"]
-        for reason in [CloseReason.serverClosed, .graceTimerExpired, .serverError, .receiveFailed, .externalCancel] {
+        for reason in [CloseReason.finalTurnReceived, .serverClosed, .graceTimerExpired, .serverError, .receiveFailed, .externalCancel] {
             guard let times = byReason[reason] else { continue }
             let valid = times.filter { $0 >= 0 }
             let pct = Double(times.count) / Double(all.count) * 100
