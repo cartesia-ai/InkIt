@@ -1,0 +1,15 @@
+// Copy this file to Config/Signing.local.xcconfig (gitignored) to produce a
+// notarized, distributable build signed with your Apple Developer ID.
+//
+//   cp Config/Signing.local.xcconfig.example Config/Signing.local.xcconfig
+//
+// Then fill in your Team ID. Find it at https://developer.apple.com/account
+// (Membership details) or run: security find-identity -v -p codesigning
+//
+// Without this file, builds fall back to ad-hoc signing (fine for local dev,
+// but not distributable). See tools/make-dmg.sh / the `release` skill.
+
+DEVELOPMENT_TEAM = YOUR_TEAM_ID
+CODE_SIGN_STYLE = Manual
+CODE_SIGN_IDENTITY = Developer ID Application
+OTHER_CODE_SIGN_FLAGS = --timestamp --options=runtime

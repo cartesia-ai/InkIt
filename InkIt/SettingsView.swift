@@ -401,6 +401,19 @@ struct SettingsView: View {
                     help: "InkIt needs the microphone to record dictation, and Accessibility to read on-screen context and paste into the focused app."
                 )
             }
+
+            Section {
+                SettingsToggle(
+                    "Debug logging",
+                    caption: "Writes a developer trace to ~/Library/Logs/InkIt-debug.log. Off by default — traces include your transcripts and on-screen context.",
+                    isOn: $settings.debugLoggingEnabled
+                )
+            } header: {
+                SectionHeader(
+                    "Advanced",
+                    help: "Enable only when reproducing a bug. The log stays on disk until you delete it."
+                )
+            }
         }
         .formStyle(.grouped)
         .padding()

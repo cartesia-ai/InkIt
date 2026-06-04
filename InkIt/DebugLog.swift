@@ -5,9 +5,22 @@ import os
 /// `~/Library/Logs/InkIt-debug.log`. The file is the reliable channel under
 /// ad-hoc signing + hardened runtime, where NSLog to unified logging is
 /// occasionally suppressed. Use this for any developer-facing trace.
+///
+/// Privacy: traces include raw transcripts and on-screen context, so logging
+/// is OFF by default and gated on `isEnabled`. Flip it on via the toggle in
+/// Settings only while debugging. When disabled, nothing is written anywhere.
 enum DebugLog {
-    private static let logger = Logger(subsystem: "com.aiqiliu.InkIt", category: "trace")
-    private static let queue = DispatchQueue(label: "com.aiqiliu.InkIt.debuglog")
+    /// UserDefaults key for the Settings toggle. Single source of truth shared
+    /// with `SettingsStore`.
+    static let isEnabledKey = "debugLoggingEnabled"
+
+    /// Whether tracing is active. Off by default — no transcript or context
+    /// text touches disk unless the user explicitly opts in.
+    static var isEnabled: Bool { UserDefaults.standard.bool(forKey: isEnabledKey) }
+
+    private static let subsystem = Bundle.main.bundleIdentifier ?? "InkIt"
+    private static let logger = Logger(subsystem: subsystem, category: "trace")
+    private static let queue = DispatchQueue(label: "\(subsystem).debuglog")
     private static let url: URL = {
         let logs = (try? FileManager.default.url(
             for: .libraryDirectory,
@@ -26,11 +39,13 @@ enum DebugLog {
     }()
 
     static func info(_ message: String) {
+        guard isEnabled else { return }
         logger.info("\(message, privacy: .public)")
         write(message)
     }
 
     static func error(_ message: String) {
+        guard isEnabled else { return }
         logger.error("\(message, privacy: .public)")
         write(message)
     }

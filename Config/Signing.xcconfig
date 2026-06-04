@@ -1,0 +1,19 @@
+// Release / distribution signing.
+//
+// Ad-hoc ("-") by default so anyone can produce a local Release build with no
+// Apple Developer account. Maintainers shipping a notarized DMG supply a
+// Developer ID identity + Team ID via Config/Signing.local.xcconfig (gitignored;
+// copy Config/Signing.local.xcconfig.example). The optional include below picks
+// it up when present and is silently skipped when it isn't.
+//
+// Hardened runtime + the get-task-allow=false entitlement are required for
+// notarization. (Local dev/tests use Config/Debug.xcconfig instead, which is
+// debuggable.)
+
+CODE_SIGN_STYLE = Manual
+CODE_SIGN_IDENTITY = -
+CODE_SIGNING_ALLOWED = YES
+ENABLE_HARDENED_RUNTIME = YES
+CODE_SIGN_ENTITLEMENTS = InkIt/InkIt.entitlements
+
+#include? "Signing.local.xcconfig"

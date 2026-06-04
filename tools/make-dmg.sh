@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Build a notarized, stapled InkIt.dmg ready to share.
 #
+# Maintainers only: needs an Apple Developer ID certificate in your Keychain
+# and a Config/Signing.local.xcconfig (see Config/Signing.local.xcconfig.example).
+#
 # One-time setup (run once, stores password in your login Keychain):
 #   xcrun notarytool store-credentials inkit-notary \
 #     --apple-id <your-apple-id-email> \
-#     --team-id Z84U66EYPZ \
+#     --team-id <your-team-id> \
 #     --password <app-specific-password-from-appleid.apple.com>
 #
 # Then any time you want a fresh release DMG:
@@ -27,8 +30,14 @@ fail() { printf "\n\033[1;31mError:\033[0m %s\n" "$1"; exit 1; }
 
 command -v create-dmg >/dev/null 2>&1 || fail "create-dmg not installed. Run: brew install create-dmg"
 command -v xcodebuild >/dev/null 2>&1 || fail "xcodebuild not available — install Xcode."
+command -v xcodegen >/dev/null 2>&1 || fail "xcodegen not installed. Run: brew install xcodegen"
+[ -f Config/Signing.local.xcconfig ] \
+  || fail "Config/Signing.local.xcconfig missing — release builds need a Developer ID. Copy Config/Signing.local.xcconfig.example and fill in your Team ID."
 xcrun notarytool history --keychain-profile "$KEYCHAIN_PROFILE" >/dev/null 2>&1 \
   || fail "Keychain profile '$KEYCHAIN_PROFILE' missing. See setup steps at top of this script."
+
+step "Generating Xcode project from project.yml"
+xcodegen generate
 
 step "Building Release"
 xcodebuild \
@@ -83,7 +92,10 @@ create-dmg \
 rm -rf "$STAGING_DIR"
 
 step "Signing DMG"
-codesign --sign "Developer ID Application: Aiqi Liu (Z84U66EYPZ)" \
+# Matches the single "Developer ID Application" identity in your Keychain.
+# (If you have certs for multiple teams, narrow this to the full identity name
+# or its SHA-1 hash from: security find-identity -v -p codesigning)
+codesign --sign "Developer ID Application" \
   --timestamp \
   "$DMG_PATH"
 

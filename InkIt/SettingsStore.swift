@@ -123,6 +123,7 @@ final class SettingsStore: ObservableObject {
         static let rewriteProvider = "rewriteProvider"
         static let rewriteModel = "rewriteModel"
         static let llmKeys = "llmAPIKeys"
+        static let debugLogging = DebugLog.isEnabledKey
     }
 
     @Published var cartesiaAPIKey: String {
@@ -185,6 +186,13 @@ final class SettingsStore: ObservableObject {
         didSet { defaults.set(hasCompletedOnboarding, forKey: Keys.hasCompletedOnboarding) }
     }
 
+    /// Developer trace logging to `~/Library/Logs/InkIt-debug.log`. Off by
+    /// default because traces include raw transcripts and on-screen context.
+    /// See `DebugLog`.
+    @Published var debugLoggingEnabled: Bool {
+        didSet { defaults.set(debugLoggingEnabled, forKey: Keys.debugLogging) }
+    }
+
     /// Horizontal position of the notch HUD on the active screen, normalized
     /// from 0.0 (left edge) to 1.0 (right edge). Defaults slightly left of
     /// center so it does not sit directly below the camera notch.
@@ -232,6 +240,7 @@ final class SettingsStore: ObservableObject {
         self.rewriteModel = defaults.string(forKey: Keys.rewriteModel) ?? LLMProvider.groq.defaultModel
         self.llmAPIKeys = (defaults.dictionary(forKey: Keys.llmKeys) as? [String: String]) ?? [:]
         self.hasCompletedOnboarding = defaults.bool(forKey: Keys.hasCompletedOnboarding)
+        self.debugLoggingEnabled = defaults.bool(forKey: Keys.debugLogging)
         if defaults.object(forKey: Keys.playFeedbackSounds) == nil {
             self.playFeedbackSounds = true
         } else {

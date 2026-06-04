@@ -1,0 +1,10 @@
+// Local development + tests. Ad-hoc signed, hardened runtime off, and a
+// get-task-allow=true entitlement so the debugger and XCTest runner can attach
+// (Cmd+U / `xcodebuild test`). Not for distribution — see Config/Signing.xcconfig
+// and tools/make-dmg.sh for the notarized Release path.
+
+CODE_SIGN_STYLE = Manual
+CODE_SIGN_IDENTITY = -
+CODE_SIGNING_ALLOWED = YES
+ENABLE_HARDENED_RUNTIME = NO
+CODE_SIGN_ENTITLEMENTS = InkIt/InkIt-Debug.entitlements
