@@ -1,6 +1,20 @@
 import SwiftUI
 import AppKit
 
+/// Swaps the cursor to the pointing-hand while hovering, signalling that a
+/// control is clickable. Shared across Home / Settings / Onboarding.
+struct PointingHandCursor: ViewModifier {
+    func body(content: Content) -> some View {
+        content.onHover { hovering in
+            if hovering {
+                NSCursor.pointingHand.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     // Apply the saved appearance (default Light) as early as possible so the
     // first window doesn't flash the system appearance before settling.
@@ -258,6 +272,7 @@ struct MainWindowView: View {
                     Label("Clear", systemImage: "trash")
                 }
                 .buttonStyle(.borderless)
+                .modifier(PointingHandCursor())
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 10)
@@ -271,6 +286,7 @@ struct MainWindowView: View {
             latency: entry.latency,
             original: entry.original,
             polish: entry.polish,
+            failure: entry.failure,
             copied: copiedID == entry.id
         ) {
             copy(entry)
@@ -314,10 +330,14 @@ private struct TranscriptHistoryRow: View {
     let original: String?
     /// How AI correction turned out; drives the row indicator.
     let polish: TranscriptHistoryStore.PolishOutcome?
+    /// Why polish failed (when `polish == .failed`); drives the warning tooltip.
+    let failure: TranscriptHistoryStore.PolishFailure?
     let copied: Bool
     let copy: () -> Void
     @State private var hovering = false
     @State private var showingDiff = false
+    @State private var showingLatency = false
+    @State private var showingFailure = false
 
     /// Resolves the indicator to show. Legacy entries (no stored `polish`) fall
     /// back to "polished if there's a diff to show, otherwise nothing."
@@ -388,7 +408,12 @@ private struct TranscriptHistoryRow: View {
                     .font(.caption2)
                     .monospacedDigit()
                     .foregroundStyle(.tertiary)
-                    .help("Latency from hotkey release: transcribe + polish + paste")
+                    .contentShape(Rectangle())
+                    .onHover { showingLatency = $0 }
+                    .onTapGesture {}  // swallow taps so the row's copy doesn't fire
+                    .popover(isPresented: $showingLatency, arrowEdge: .bottom) {
+                        LatencyPopover()
+                    }
             }
         }
     }
@@ -408,16 +433,61 @@ private struct TranscriptHistoryRow: View {
 
     /// Polish ran but the rewrite call failed (e.g. rate limit); the raw
     /// transcript was pasted instead. Warning-amber, distinct from the sparkle.
+    /// Hover reveals a concise, actionable reason via our own popover — the
+    /// macOS `.help()` tooltip is too slow to appear/dismiss.
     private var failureMark: some View {
         Image(systemName: "exclamationmark.triangle.fill")
             .font(.system(size: 11, weight: .medium))
             .foregroundStyle(.orange)
-            .help("Polish failed (rate limit or network) — raw transcript pasted")
+            .contentShape(Rectangle())
+            .onHover { showingFailure = $0 }
+            .onTapGesture {}  // swallow taps so the row's copy doesn't fire
+            .popover(isPresented: $showingFailure, arrowEdge: .bottom) {
+                Text(Self.failureMessage(failure))
+                    .font(.callout)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(width: 240, alignment: .leading)
+                    .padding(12)
+            }
+            .accessibilityLabel(Text(Self.failureMessage(failure)))
     }
 
-    /// e.g. `1.1s · transcribe 640ms · polish 410ms · paste 50ms`
+    /// Terse, provider-aware reason for why polish failed, with the action the
+    /// user can take. Computed at hover time so the rate-limit countdown is live.
+    static func failureMessage(_ failure: TranscriptHistoryStore.PolishFailure?) -> String {
+        guard let failure else {
+            return "Polish failed — raw text pasted. Re-dictate to retry."
+        }
+        let p = failure.provider
+        switch failure.reason {
+        case .rateLimited:
+            return "\(p) rate limit — raw text pasted. \(retryHint(failure.retryAt))"
+        case .offline:
+            return "No internet — raw text pasted. Reconnect and re-dictate."
+        case .timedOut:
+            return "Polish timed out — raw text pasted. Re-dictate to retry."
+        case .invalidKey:
+            return "Invalid \(p) API key — raw text pasted. Fix it in Settings."
+        case .serverError:
+            return "\(p) server error — raw text pasted. Try again shortly."
+        case .unknown:
+            return "Polish failed — raw text pasted. Re-dictate to retry."
+        }
+    }
+
+    private static func retryHint(_ retryAt: Date?) -> String {
+        guard let retryAt else { return "Retry soon or switch provider." }
+        let secs = retryAt.timeIntervalSinceNow
+        if secs <= 5 { return "Try again now or switch provider." }
+        let mins = Int(ceil(secs / 60))
+        if mins <= 1 { return "Try again in ~1 min or switch provider." }
+        return "Try again in ~\(mins) min or switch provider."
+    }
+
+    /// e.g. `Time to text: 1.1s`
     private static func latencyString(_ l: TranscriptHistoryStore.Latency) -> String {
-        "\(fmt(l.totalMs)) · transcribe \(fmt(l.transcribeMs)) · polish \(fmt(l.polishMs)) · paste \(fmt(l.pasteMs))"
+        "Time to text: \(fmt(l.totalMs))"
     }
 
     private static func fmt(_ ms: Int) -> String {
@@ -433,6 +503,24 @@ private struct TranscriptHistoryRow: View {
 
     private var rowStroke: Color {
         Color.accentColor.opacity(copied ? 0.32 : 0.28)
+    }
+}
+
+/// Brief explainer shown when hovering the "Time to text" stat on a row.
+private struct LatencyPopover: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Time to text")
+                .font(.caption2.weight(.semibold))
+                .textCase(.uppercase)
+                .foregroundStyle(.secondary)
+
+            Text("Hotkey release → text on screen")
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .frame(width: 220)
     }
 }
 

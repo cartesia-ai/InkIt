@@ -2,18 +2,6 @@ import SwiftUI
 import AppKit
 import Carbon.HIToolbox
 
-private struct PointingHandCursor: ViewModifier {
-    func body(content: Content) -> some View {
-        content.onHover { hovering in
-            if hovering {
-                NSCursor.pointingHand.push()
-            } else {
-                NSCursor.pop()
-            }
-        }
-    }
-}
-
 /// Shared style tokens for the editable controls in Settings (API-key fields
 /// and the hotkey recorder) so they read as one consistent family. Colors are
 /// semantic system tokens, never hardcoded literals — see DESIGN_SYSTEM.md.
@@ -137,13 +125,78 @@ private struct SettingsToggle: View {
         }
         .toggleStyle(.switch)
         .tint(.accentColor)
-        .controlSize(.regular)
+        .controlSize(.small)
     }
 }
 
 /// A secure API-key entry: bordered field sharing the Settings field surface,
 /// show/hide eye toggle, and a caption link to where the key is managed.
 ///
+/// Reports its own frame in window coordinates (bottom-left origin, matching
+/// `NSEvent.locationInWindow`) so a mouse-down monitor can tell inside-clicks
+/// from outside-clicks without any coordinate flipping.
+private struct WindowFrameReader: NSViewRepresentable {
+    let onFrame: (CGRect) -> Void
+
+    func makeNSView(context: Context) -> TrackingView {
+        let v = TrackingView()
+        v.onFrame = onFrame
+        return v
+    }
+
+    func updateNSView(_ nsView: TrackingView, context: Context) {
+        nsView.onFrame = onFrame
+    }
+
+    final class TrackingView: NSView {
+        var onFrame: ((CGRect) -> Void)?
+        private func report() { if window != nil { onFrame?(convert(bounds, to: nil)) } }
+        override func layout() { super.layout(); report() }
+        override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); report() }
+    }
+}
+
+/// Restores an inline editing state when the user clicks anywhere outside the
+/// modified view while `isActive`. Uses a local mouse-down monitor + the view's
+/// window-space frame, so it catches clicks a `Form` won't forward as taps (dead
+/// space, labels, other rows). Window-switch dismissal stays the caller's job.
+private struct ClickOutsideDismiss: ViewModifier {
+    let isActive: Bool
+    let onDismiss: () -> Void
+    @State private var frameInWindow: CGRect = .zero
+    @State private var monitor: Any?
+
+    func body(content: Content) -> some View {
+        content
+            .background(WindowFrameReader { frameInWindow = $0 })
+            .onChange(of: isActive) { _, active in active ? install() : remove() }
+            .onDisappear(perform: remove)
+    }
+
+    private func install() {
+        remove()
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { event in
+            guard event.window != nil else { return event }
+            if !frameInWindow.contains(event.locationInWindow) {
+                DispatchQueue.main.async { onDismiss() }
+            }
+            return event  // never consume — the click still does its normal job
+        }
+    }
+
+    private func remove() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+    }
+}
+
+extension View {
+    /// Calls `onDismiss` on a click outside this view while `isActive`.
+    func dismissOnClickOutside(isActive: Bool, perform onDismiss: @escaping () -> Void) -> some View {
+        modifier(ClickOutsideDismiss(isActive: isActive, onDismiss: onDismiss))
+    }
+}
+
 /// Redaction follows the common dashboard convention (Stripe / OpenAI): a key
 /// at rest is shown only by its last four characters, the rest masked. The eye
 /// reveals the full value; tapping the field lets you edit it (hidden) in place.
@@ -158,40 +211,45 @@ private struct APIKeyField: View {
 
     var body: some View {
         LabeledContent {
-            VStack(alignment: .leading, spacing: SettingsMetrics.captionSpacing) {
-                HStack(spacing: 8) {
-                    editor
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 13, design: .monospaced))
-                        .focused($isFocused)
+            HStack(spacing: 8) {
+                editor
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13, design: .monospaced))
+                    .focused($isFocused)
 
-                    Button {
-                        isRevealed.toggle()
-                        if isRevealed { isFocused = false }
-                    } label: {
-                        Image(systemName: isRevealed ? "eye.slash" : "eye")
-                            .imageScale(.medium)
-                            .foregroundStyle(.secondary)
-                            .frame(width: SettingsMetrics.accessoryButton,
-                                   height: SettingsMetrics.accessoryButton)
-                    }
-                    .buttonStyle(.borderless)
-                    .contentShape(Rectangle())
-                    .help(isRevealed ? "Hide \(title)" : "Show \(title)")
-                    .modifier(PointingHandCursor())
+                Button {
+                    isRevealed.toggle()
+                    if isRevealed { isFocused = false }
+                } label: {
+                    Image(systemName: isRevealed ? "eye.slash" : "eye")
+                        .imageScale(.medium)
+                        .foregroundStyle(.secondary)
+                        .frame(width: SettingsMetrics.accessoryButton,
+                               height: SettingsMetrics.accessoryButton)
                 }
-                .padding(.horizontal, 10)
-                .fieldSurface(focused: isFocused)
+                .buttonStyle(.borderless)
                 .contentShape(Rectangle())
-                .onTapGesture { isFocused = true }
-
+                .help(isRevealed ? "Hide \(title)" : "Show \(title)")
+                .modifier(PointingHandCursor())
+            }
+            .padding(.horizontal, 10)
+            .fieldSurface(focused: isFocused)
+            .contentShape(Rectangle())
+            .onTapGesture { isFocused = true }
+            .frame(width: 230)
+            // Click anywhere outside while editing or revealed → snap back to the
+            // redacted resting state.
+            .dismissOnClickOutside(isActive: isFocused || isRevealed) {
+                isFocused = false
+                isRevealed = false
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: SettingsMetrics.captionSpacing) {
+                Text(title)
                 Link(linkTitle, destination: linkURL)
                     .font(.caption)
                     .modifier(PointingHandCursor())
             }
-            .frame(width: 230)
-        } label: {
-            Text(title)
         }
     }
 
@@ -203,9 +261,9 @@ private struct APIKeyField: View {
     @ViewBuilder private var editor: some View {
         ZStack(alignment: .leading) {
             if isRevealed {
-                TextField(title, text: $text)
+                TextField("", text: $text)
             } else {
-                SecureField(title, text: $text)
+                SecureField("", text: $text)
             }
 
             if !isRevealed && !isFocused && !text.isEmpty {
@@ -562,6 +620,8 @@ struct HotkeyRecorder: View {
                 .contentShape(Rectangle())
                 .help(isEditing ? "Press a new shortcut" : "Change dictation shortcut")
                 .modifier(PointingHandCursor())
+                // Click outside while recording → cancel back to the pencil button.
+                .dismissOnClickOutside(isActive: isEditing) { cancelEditing() }
             } label: {
                 VStack(alignment: .leading, spacing: SettingsMetrics.captionSpacing) {
                     Text("Shortcut")

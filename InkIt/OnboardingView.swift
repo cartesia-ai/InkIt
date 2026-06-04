@@ -2,18 +2,6 @@ import SwiftUI
 import AppKit
 import AVFoundation
 
-private struct PointingHandCursor: ViewModifier {
-    func body(content: Content) -> some View {
-        content.onHover { hovering in
-            if hovering {
-                NSCursor.pointingHand.push()
-            } else {
-                NSCursor.pop()
-            }
-        }
-    }
-}
-
 // MARK: - Root
 
 enum OnboardingStep: Int, CaseIterable {

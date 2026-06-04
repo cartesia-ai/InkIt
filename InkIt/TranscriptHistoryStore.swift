@@ -24,6 +24,28 @@ final class TranscriptHistoryStore: ObservableObject {
         case failed    // ran but errored (e.g. rate limit) — raw text pasted
     }
 
+    /// Why a `.failed` polish failed, so the history row can show a concise,
+    /// actionable reason instead of a generic warning.
+    enum PolishFailureReason: String, Codable {
+        case rateLimited   // provider 429
+        case offline       // no network / can't reach host
+        case timedOut      // request exceeded the rewrite timeout
+        case invalidKey    // 401/403 or missing key
+        case serverError   // provider 5xx
+        case unknown       // parse error, sanity reject, anything else
+    }
+
+    /// Details attached to a `.failed` outcome, used to build the warning
+    /// tooltip. Optional on the entry so older entries still decode.
+    struct PolishFailure: Equatable, Codable {
+        let reason: PolishFailureReason
+        /// Display name of the provider that failed (e.g. "Groq").
+        let provider: String
+        /// For rate limits: the absolute time after which a retry is sensible
+        /// (from the Retry-After header). nil when not applicable/known.
+        var retryAt: Date?
+    }
+
     struct Entry: Identifiable, Equatable, Codable {
         var id = UUID()
         let text: String
@@ -38,12 +60,15 @@ final class TranscriptHistoryStore: ObservableObject {
         // Outcome of AI correction; drives the row indicator. `nil` on legacy
         // entries (see PolishOutcome).
         var polish: PolishOutcome?
+        // Why polish failed, when `polish == .failed`. `nil` for success/off and
+        // for entries written before failure reasons were tracked.
+        var failure: PolishFailure?
     }
 
     static let shared = TranscriptHistoryStore()
 
     @Published private(set) var entries: [Entry] = []
-    private let limit = 50
+    private let limit = 100
     private let defaults = UserDefaults.standard
     private let storageKey = "transcriptHistory.v1"
 
@@ -51,10 +76,10 @@ final class TranscriptHistoryStore: ObservableObject {
         load()
     }
 
-    func add(_ text: String, original: String? = nil, latency: Latency? = nil, polish: PolishOutcome? = nil) {
+    func add(_ text: String, original: String? = nil, latency: Latency? = nil, polish: PolishOutcome? = nil, failure: PolishFailure? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        entries.insert(Entry(text: trimmed, timestamp: Date(), latency: latency, original: original, polish: polish), at: 0)
+        entries.insert(Entry(text: trimmed, timestamp: Date(), latency: latency, original: original, polish: polish, failure: failure), at: 0)
         if entries.count > limit {
             entries.removeLast(entries.count - limit)
         }

@@ -310,7 +310,8 @@ final class AppCoordinator: ObservableObject {
                                 correction.text,
                                 original: correction.original,
                                 latency: latency,
-                                polish: correction.outcome
+                                polish: correction.outcome,
+                                failure: correction.failure
                             )
                             self.state = .idle
                         }
@@ -347,16 +348,36 @@ final class AppCoordinator: ObservableObject {
         let text: String
         let outcome: TranscriptHistoryStore.PolishOutcome
         let original: String?
+        var failure: TranscriptHistoryStore.PolishFailure?
     }
 
-    /// Maps a rewriter result to a `Correction`. A non-nil rewrite is a success
-    /// (kept alongside the raw text for diffing, even when unchanged); `nil`
-    /// means the rewrite call failed (e.g. rate limit) and we fall back to raw.
-    private static func polishResult(raw: String, rewritten: String?) -> Correction {
-        guard let rewritten else {
-            return Correction(text: raw, outcome: .failed, original: nil)
+    /// Maps a rewriter result to a `Correction`. `.success` keeps the raw text
+    /// alongside for diffing (even when unchanged); `.failure` falls back to raw
+    /// and records why, so the history row can explain it.
+    private static func polishResult(raw: String,
+                                     result: Result<String, RewriteFailure>,
+                                     provider: LLMProvider) -> Correction {
+        switch result {
+        case .success(let rewritten):
+            return Correction(text: rewritten, outcome: .polished, original: raw)
+        case .failure(let failure):
+            let reason: TranscriptHistoryStore.PolishFailureReason
+            var retryAt: Date?
+            switch failure {
+            case .rateLimited(let at): reason = .rateLimited; retryAt = at
+            case .offline:             reason = .offline
+            case .timedOut:            reason = .timedOut
+            case .invalidKey:          reason = .invalidKey
+            case .serverError:         reason = .serverError
+            case .unknown:             reason = .unknown
+            }
+            let polishFailure = TranscriptHistoryStore.PolishFailure(
+                reason: reason,
+                provider: provider.displayName,
+                retryAt: retryAt
+            )
+            return Correction(text: raw, outcome: .failed, original: nil, failure: polishFailure)
         }
-        return Correction(text: rewritten, outcome: .polished, original: raw)
     }
 
     /// Optionally runs the raw transcript through the AI correction pipeline.
@@ -388,8 +409,8 @@ final class AppCoordinator: ObservableObject {
         guard screenContext else {
             DebugLog.info("[\(runID)] correctedTranscript: screen context disabled — context-free polish")
             state = .rewriting
-            let rewritten = await rewriter.rewriteWithoutContext(transcript: raw, runID: runID)
-            return Self.polishResult(raw: raw, rewritten: rewritten)
+            let result = await rewriter.rewriteWithoutContext(transcript: raw, runID: runID)
+            return Self.polishResult(raw: raw, result: result, provider: provider)
         }
 
         let targetDesc: String = {
@@ -414,16 +435,16 @@ final class AppCoordinator: ObservableObject {
             // context-free polish so filler/homophone cleanup still happens.
             DebugLog.info("[\(runID)] correctedTranscript: context unusable (\(reason)) — context-free polish")
             state = .rewriting
-            let rewritten = await rewriter.rewriteWithoutContext(transcript: raw, runID: runID)
-            return Self.polishResult(raw: raw, rewritten: rewritten)
+            let result = await rewriter.rewriteWithoutContext(transcript: raw, runID: runID)
+            return Self.polishResult(raw: raw, result: result, provider: provider)
         case .rewrite(let snapshot):
             state = .rewriting
-            let rewritten = await rewriter.rewriteWithRawContext(
+            let result = await rewriter.rewriteWithRawContext(
                 transcript: raw,
                 context: snapshot.payload,
                 runID: runID
             )
-            return Self.polishResult(raw: raw, rewritten: rewritten)
+            return Self.polishResult(raw: raw, result: result, provider: provider)
         }
     }
 
