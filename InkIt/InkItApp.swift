@@ -346,9 +346,11 @@ private struct TranscriptHistoryRow: View {
         return original != nil ? .polished : .off
     }
 
-    // The list stays clean at rest — just the cleaned-up transcript. The
-    // detail line (timestamp, latency, sparkle) fades in on hover. Its height
-    // is always reserved so the list never reflows.
+    // Each row is a soft card. At rest it shows the cleaned-up transcript plus a
+    // dimmed timestamp anchor; the rest of the detail line (latency, polish
+    // sparkle) fades in on hover. A failure warning is the one signal that stays
+    // visible at rest. The detail line's height is always reserved so hovering
+    // never reflows the list.
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 10) {
@@ -362,7 +364,6 @@ private struct TranscriptHistoryRow: View {
             }
 
             detailLine
-                .opacity(hovering ? 1 : 0)
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -391,12 +392,16 @@ private struct TranscriptHistoryRow: View {
 
     private var detailLine: some View {
         HStack(spacing: 8) {
+            // Always-on anchor: a dim timestamp keeps the row from reading blank.
+            // Brightens slightly on hover alongside the rest of the detail line.
             Text(timestamp)
                 .font(.caption)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(hovering ? .secondary : .tertiary)
 
+            // Polish sparkle is hover-only; the failure warning stays visible at
+            // rest so a dropped polish never goes unnoticed.
             switch outcome {
-            case .polished: sparkle
+            case .polished: sparkle.opacity(hovering ? 1 : 0)
             case .failed: failureMark
             case .off: EmptyView()
             }
@@ -414,6 +419,7 @@ private struct TranscriptHistoryRow: View {
                     .popover(isPresented: $showingLatency, arrowEdge: .bottom) {
                         LatencyPopover()
                     }
+                    .opacity(hovering ? 1 : 0)
             }
         }
     }
@@ -498,7 +504,9 @@ private struct TranscriptHistoryRow: View {
         if hovering {
             return Color.accentColor.opacity(0.08)
         }
-        return Color(NSColor.controlBackgroundColor)
+        // Soft card: a faint, borderless fill that lifts the row off the window
+        // background just enough to read as a distinct item. Adapts to light/dark.
+        return Color.primary.opacity(0.04)
     }
 
     private var rowStroke: Color {
