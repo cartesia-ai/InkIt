@@ -431,7 +431,8 @@ private struct TranscriptHistoryRow: View {
             .contentShape(Rectangle())
             .onHover { showingDiff = $0 }
             .onTapGesture {}  // swallow taps so the row's copy doesn't fire
-            .help("Polished — hover to see what changed")
+            // No `.help()` here: the native tooltip would double up with our
+            // own DiffPopover below. The popover is the single source of truth.
             .popover(isPresented: $showingDiff, arrowEdge: .bottom) {
                 DiffPopover(before: original ?? text, after: text)
             }
@@ -586,7 +587,9 @@ private struct DiffPopover: View {
 
             Text(Self.diff(from: before, to: after))
                 .font(.callout)
+                .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 280, alignment: .leading)
 
             if changed {
                 HStack(spacing: 12) {
@@ -600,25 +603,149 @@ private struct DiffPopover: View {
             }
         }
         .padding(14)
-        .frame(width: 300)
+        // Size to content (capped at 280pt by the text frame) instead of a
+        // fixed 300pt box, so short diffs read tight and left-aligned rather
+        // than a stub of text floating in dead space.
+        .frame(maxWidth: 308, alignment: .leading)
     }
 
     private static let addColor = Color.green
 
     private enum Kind { case same, added, removed }
-    private struct Token { let kind: Kind; let word: String }
+    // A character-level run inside a single displayed word.
+    private struct Piece { let kind: Kind; let text: String }
+    // One whitespace-delimited slot in the diff output. Most slots hold a single
+    // piece; a refined replacement (e.g. "100%" → "100%.") holds several so only
+    // the changed characters get marked.
+    private struct WordToken { let pieces: [Piece] }
 
     private static func tokenize(_ s: String) -> [String] {
         s.split(whereSeparator: { $0.isWhitespace }).map(String.init)
     }
 
-    private static func diffTokens(from before: String, to after: String) -> [Token] {
+    /// Alphanumeric, lowercased skeleton of a word — used to recognise that a
+    /// removed/added pair differs only in punctuation or case ("So," vs "so").
+    private static func core(_ word: String) -> String {
+        word.lowercased().filter { $0.isLetter || $0.isNumber }
+    }
+
+    private static func diff(from before: String, to after: String) -> AttributedString {
+        let tokens = wordTokens(from: before, to: after)
+        var result = AttributedString()
+        for (i, token) in tokens.enumerated() {
+            for piece in token.pieces {
+                var s = AttributedString(piece.text)
+                switch piece.kind {
+                case .same:
+                    s.foregroundColor = .primary
+                case .added:
+                    s.foregroundColor = addColor
+                    s.backgroundColor = addColor.opacity(0.16)
+                case .removed:
+                    s.foregroundColor = .secondary
+                    s.strikethroughStyle = .single
+                }
+                result += s
+            }
+            // Space only *between* word slots — pieces within a slot stay tight,
+            // so a refined punctuation change reads as one word.
+            if i < tokens.count - 1 {
+                result += AttributedString(" ")
+            }
+        }
+        return result
+    }
+
+    private static func wordTokens(from before: String, to after: String) -> [WordToken] {
         let beforeWords = tokenize(before)
         let afterWords = tokenize(after)
         let changes = afterWords.difference(from: beforeWords)
 
-        var removed = Set<Int>()
-        var inserted = Set<Int>()
+        var removedSet = Set<Int>()
+        var insertedSet = Set<Int>()
+        for change in changes {
+            switch change {
+            case .remove(let offset, _, _): removedSet.insert(offset)
+            case .insert(let offset, _, _): insertedSet.insert(offset)
+            }
+        }
+
+        // Flatten into an ordered stream of word-level changes.
+        struct Raw { let kind: Kind; let word: String }
+        var raw: [Raw] = []
+        var bi = 0, ai = 0
+        while bi < beforeWords.count || ai < afterWords.count {
+            if bi < beforeWords.count, removedSet.contains(bi) {
+                raw.append(Raw(kind: .removed, word: beforeWords[bi]))
+                bi += 1
+            } else if ai < afterWords.count, insertedSet.contains(ai) {
+                raw.append(Raw(kind: .added, word: afterWords[ai]))
+                ai += 1
+            } else {
+                if ai < afterWords.count {
+                    raw.append(Raw(kind: .same, word: afterWords[ai]))
+                }
+                bi += 1
+                ai += 1
+            }
+        }
+
+        // Collapse each removed-run-followed-by-added-run (a replacement region)
+        // so look-alike pairs are refined to a character-level diff instead of a
+        // full strike + re-add.
+        var tokens: [WordToken] = []
+        var i = 0
+        while i < raw.count {
+            if raw[i].kind == .same {
+                tokens.append(WordToken(pieces: [Piece(kind: .same, text: raw[i].word)]))
+                i += 1
+                continue
+            }
+            var removedRun: [String] = []
+            while i < raw.count, raw[i].kind == .removed { removedRun.append(raw[i].word); i += 1 }
+            var addedRun: [String] = []
+            while i < raw.count, raw[i].kind == .added { addedRun.append(raw[i].word); i += 1 }
+            tokens.append(contentsOf: refine(removed: removedRun, added: addedRun))
+        }
+        return tokens
+    }
+
+    /// Pairs each added word with a removed word sharing the same core (a
+    /// punctuation/case-only edit) and renders those as a tight character diff.
+    /// Genuine word swaps and pure insert/deletes stay as whole-word marks.
+    private static func refine(removed: [String], added: [String]) -> [WordToken] {
+        var usedRemoved = Array(repeating: false, count: removed.count)
+        var pairFor: [Int: Int] = [:]   // added index → removed index
+        for (aIdx, a) in added.enumerated() {
+            let ac = core(a)
+            guard !ac.isEmpty else { continue }
+            for rIdx in removed.indices where !usedRemoved[rIdx] && core(removed[rIdx]) == ac {
+                usedRemoved[rIdx] = true
+                pairFor[aIdx] = rIdx
+                break
+            }
+        }
+
+        var tokens: [WordToken] = []
+        // Unpaired removals (genuine deletions) lead, in original order.
+        for rIdx in removed.indices where !usedRemoved[rIdx] {
+            tokens.append(WordToken(pieces: [Piece(kind: .removed, text: removed[rIdx])]))
+        }
+        for (aIdx, a) in added.enumerated() {
+            if let rIdx = pairFor[aIdx] {
+                tokens.append(WordToken(pieces: charPieces(from: removed[rIdx], to: a)))
+            } else {
+                tokens.append(WordToken(pieces: [Piece(kind: .added, text: a)]))
+            }
+        }
+        return tokens
+    }
+
+    /// Character-level diff between two similar words, coalescing runs.
+    private static func charPieces(from before: String, to after: String) -> [Piece] {
+        let b = Array(before), a = Array(after)
+        let changes = a.difference(from: b)
+        var removed = Set<Int>(), inserted = Set<Int>()
         for change in changes {
             switch change {
             case .remove(let offset, _, _): removed.insert(offset)
@@ -626,47 +753,27 @@ private struct DiffPopover: View {
             }
         }
 
-        var tokens: [Token] = []
-        var bi = 0, ai = 0
-        while bi < beforeWords.count || ai < afterWords.count {
-            if bi < beforeWords.count, removed.contains(bi) {
-                tokens.append(Token(kind: .removed, word: beforeWords[bi]))
-                bi += 1
-            } else if ai < afterWords.count, inserted.contains(ai) {
-                tokens.append(Token(kind: .added, word: afterWords[ai]))
-                ai += 1
+        var pieces: [Piece] = []
+        func append(_ kind: Kind, _ ch: Character) {
+            if let last = pieces.last, last.kind == kind {
+                pieces[pieces.count - 1] = Piece(kind: kind, text: last.text + String(ch))
             } else {
-                if ai < afterWords.count {
-                    tokens.append(Token(kind: .same, word: afterWords[ai]))
-                }
-                bi += 1
-                ai += 1
+                pieces.append(Piece(kind: kind, text: String(ch)))
             }
         }
-        return tokens
-    }
 
-    private static func diff(from before: String, to after: String) -> AttributedString {
-        let tokens = diffTokens(from: before, to: after)
-        var result = AttributedString()
-        for (i, token) in tokens.enumerated() {
-            var piece = AttributedString(token.word)
-            switch token.kind {
-            case .same:
-                piece.foregroundColor = .primary
-            case .added:
-                piece.foregroundColor = addColor
-                piece.backgroundColor = addColor.opacity(0.16)
-            case .removed:
-                piece.foregroundColor = .secondary
-                piece.strikethroughStyle = .single
-            }
-            result += piece
-            if i < tokens.count - 1 {
-                result += AttributedString(" ")
+        var bi = 0, ai = 0
+        while bi < b.count || ai < a.count {
+            if bi < b.count, removed.contains(bi) {
+                append(.removed, b[bi]); bi += 1
+            } else if ai < a.count, inserted.contains(ai) {
+                append(.added, a[ai]); ai += 1
+            } else {
+                if ai < a.count { append(.same, a[ai]) }
+                bi += 1; ai += 1
             }
         }
-        return result
+        return pieces
     }
 }
 
