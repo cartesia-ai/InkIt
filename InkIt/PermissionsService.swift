@@ -114,16 +114,16 @@ final class PermissionsService: ObservableObject {
         return "\(name) • \(bundleID)\n\(Bundle.main.bundlePath)"
     }
 
-    /// Triggers the system Accessibility prompt and opens the Privacy pane.
+    /// Sends the user straight to System Settings → Privacy & Security →
+    /// Accessibility to grant the toggle themselves.
     ///
-    /// Passing `kAXTrustedCheckOptionPrompt: true` is what makes macOS open
-    /// System Settings directly to the Accessibility pane. Without it (prompt
-    /// disabled), the `openAccessibilitySettings()` deep-link is the only
-    /// navigation, and on macOS 13+ that URL drops the user on the main
-    /// Settings page instead of Accessibility — so keep the prompt enabled.
+    /// We deliberately do *not* fire the system TCC prompt
+    /// (`AXIsProcessTrustedWithOptions(prompt: true)`). That dialog can only
+    /// be shown once per process and merely pre-adds InkIt to the list in a
+    /// disabled state — the user still has to flip the toggle in Settings. It
+    /// also re-popped on every retry, which read as the app nagging. Polling
+    /// (`refresh`) detects the grant live, so the deep-link is all we need.
     func requestAccessibility() {
-        let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-        _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
         axRequestedAt = Date()
         UserDefaults.standard.set(true, forKey: resumeOnboardingKey)
         openAccessibilitySettings()

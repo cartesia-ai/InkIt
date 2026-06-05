@@ -227,8 +227,10 @@ final class AppCoordinator: ObservableObject {
             return
         }
         guard permissions.hasAccessibility else {
-            setError("Accessibility permission required.")
-            permissions.requestAccessibility()
+            // Don't auto-open System Settings here — pressing the key repeatedly
+            // would keep yanking Settings to the front. The HUD error nudges the
+            // user; granting happens from onboarding or the Settings window.
+            setError("Accessibility permission required — enable it in Settings.")
             return
         }
 
