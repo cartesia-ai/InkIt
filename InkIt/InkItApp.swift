@@ -398,11 +398,12 @@ private struct TranscriptHistoryRow: View {
                 .font(.caption)
                 .foregroundStyle(hovering ? .secondary : .tertiary)
 
-            // Polish sparkle is hover-only; the failure warning stays visible at
-            // rest so a dropped polish never goes unnoticed.
+            // Both indicators are hover-only: the row stays clean at rest and
+            // reveals its polish state (success sparkle or dropped-polish mark)
+            // only when the user is inspecting it.
             switch outcome {
             case .polished: sparkle.opacity(hovering ? 1 : 0)
-            case .failed: failureMark
+            case .failed: failureMark.opacity(hovering ? 1 : 0)
             case .off: EmptyView()
             }
 
@@ -417,7 +418,7 @@ private struct TranscriptHistoryRow: View {
                     .onHover { showingLatency = $0 }
                     .onTapGesture {}  // swallow taps so the row's copy doesn't fire
                     .popover(isPresented: $showingLatency, arrowEdge: .bottom) {
-                        LatencyPopover(latency: latency)
+                        LatencyPopover(latency: latency, polishFailed: outcome == .failed)
                     }
                     .opacity(hovering ? 1 : 0)
             }
@@ -439,11 +440,13 @@ private struct TranscriptHistoryRow: View {
     }
 
     /// Polish ran but the rewrite call failed (e.g. rate limit); the raw
-    /// transcript was pasted instead. Warning-amber, distinct from the sparkle.
-    /// Hover reveals a concise, actionable reason via our own popover — the
-    /// macOS `.help()` tooltip is too slow to appear/dismiss.
+    /// transcript was pasted instead. A struck-through sparkle reads as
+    /// "polish skipped" — it pairs with the success sparkle instead of shouting
+    /// danger, while soft amber still flags it as needing attention. Hover
+    /// reveals a concise, actionable reason via our own popover — the macOS
+    /// `.help()` tooltip is too slow to appear/dismiss.
     private var failureMark: some View {
-        Image(systemName: "exclamationmark.triangle.fill")
+        Image(systemName: "sparkles.slash")
             .font(.system(size: 11, weight: .medium))
             .foregroundStyle(.orange)
             .contentShape(Rectangle())
@@ -520,8 +523,14 @@ private struct TranscriptHistoryRow: View {
 /// transcribe (release → final transcript), polish (the AI rewrite), and
 /// paste (insertion into the target app). The polish row is omitted when
 /// correction didn't run (polishMs == 0), so it never reads as a stalled 0ms.
+/// When polish ran but failed, the same time exists but produced no rewrite, so
+/// the row reads "Polish attempt" — honest about the cost without implying the
+/// text was actually polished.
 private struct LatencyPopover: View {
     let latency: TranscriptHistoryStore.Latency
+    /// Polish was attempted but failed (rate limit, timeout, …); the time landed
+    /// in `polishMs` even though the rewrite was discarded for raw text.
+    var polishFailed = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -540,7 +549,7 @@ private struct LatencyPopover: View {
             VStack(alignment: .leading, spacing: 4) {
                 stageRow("Transcribe", latency.transcribeMs)
                 if latency.polishMs > 0 {
-                    stageRow("Polish", latency.polishMs)
+                    stageRow(polishFailed ? "Polish attempt" : "Polish", latency.polishMs)
                 }
                 stageRow("Paste", latency.pasteMs)
             }
