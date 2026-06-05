@@ -398,12 +398,13 @@ private struct TranscriptHistoryRow: View {
                 .font(.caption)
                 .foregroundStyle(hovering ? .secondary : .tertiary)
 
-            // Both indicators are hover-only: the row stays clean at rest and
-            // reveals its polish state (success sparkle or dropped-polish mark)
-            // only when the user is inspecting it.
+            // The success sparkle is hover-only — a clean polish needs no
+            // attention at rest. The dropped-polish mark stays visible next to
+            // the timestamp so a failed polish (toggle on, but the rewrite
+            // didn't land) is noticeable without hovering.
             switch outcome {
             case .polished: sparkle.opacity(hovering ? 1 : 0)
-            case .failed: failureMark.opacity(hovering ? 1 : 0)
+            case .failed: failureMark
             case .off: EmptyView()
             }
 
