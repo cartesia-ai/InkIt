@@ -114,16 +114,22 @@ final class PermissionsService: ObservableObject {
         return "\(name) • \(bundleID)\n\(Bundle.main.bundlePath)"
     }
 
-    /// Sends the user straight to System Settings → Privacy & Security →
-    /// Accessibility to grant the toggle themselves.
+    /// Fires the system TCC prompt and opens System Settings → Privacy &
+    /// Security → Accessibility.
     ///
-    /// We deliberately do *not* fire the system TCC prompt
-    /// (`AXIsProcessTrustedWithOptions(prompt: true)`). That dialog can only
-    /// be shown once per process and merely pre-adds InkIt to the list in a
-    /// disabled state — the user still has to flip the toggle in Settings. It
-    /// also re-popped on every retry, which read as the app nagging. Polling
-    /// (`refresh`) detects the grant live, so the deep-link is all we need.
+    /// `AXIsProcessTrustedWithOptions(prompt: true)` is the only API that
+    /// pre-adds InkIt to the Accessibility list (disabled), so the user can
+    /// just flip the toggle instead of hunting for the "+" button. macOS only
+    /// shows the dialog once per decision, so calling this again after a Deny
+    /// silently no-ops and just re-opens Settings.
+    ///
+    /// Only call this from an explicit user action (the onboarding/Settings
+    /// "Enable" button) — never from the dictation hot path, or repeated key
+    /// presses would keep re-popping the dialog. Polling (`refresh`) detects
+    /// the grant live once the user flips the toggle.
     func requestAccessibility() {
+        let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+        _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
         axRequestedAt = Date()
         UserDefaults.standard.set(true, forKey: resumeOnboardingKey)
         openAccessibilitySettings()
