@@ -27,6 +27,7 @@ targets:
           - Info.plist
     resources:
       - path: InkIt/Assets.xcassets
+      - path: InkIt/Sounds
     info:
       path: InkIt/Info.plist
       properties:
