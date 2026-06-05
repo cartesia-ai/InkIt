@@ -10,9 +10,15 @@ private enum HUDMetrics {
     static let windowWidth: CGFloat = 520
     /// Live/status pill extends this far below the notch, and overhangs the
     /// notch by `pillOverhang` on each side so the two merge visually.
-    static let pillContentHeight: CGFloat = 22
-    static let pillOverhang: CGFloat = 48
-    static let minPillWidth: CGFloat = 220
+    /// Total drop below the notch = a small gap under the notch, the content
+    /// row, then padding beneath it so the text/waveform aren't jammed against
+    /// the notch's bottom edge.
+    static let contentTopGap: CGFloat = 3
+    static let contentRowHeight: CGFloat = 6
+    static let contentBottomPad: CGFloat = 6
+    static let pillContentHeight: CGFloat = contentTopGap + contentRowHeight + contentBottomPad
+    static let pillOverhang: CGFloat = 22
+    static let minPillWidth: CGFloat = 168
 }
 
 // MARK: - Notch geometry
@@ -161,12 +167,12 @@ private struct NotchHUDView: View {
     @ObservedObject var layout: HUDLayout
 
     private var mode: HUDPresentation {
+        // Pure live surface: the island is only present while recording and
+        // collapses the moment the hotkey is released. Polishing/pasting happen
+        // silently in the background (the menu bar still reflects them).
         switch coordinator.state {
         case .recording: return .live
-        case .rewriting: return .status("Polishing")
-        case .finalizing: return .status("Done")
-        case .pasting:    return .status("Paste")
-        default:          return .hidden
+        default:         return .hidden
         }
     }
 
@@ -182,28 +188,38 @@ private struct NotchHUDView: View {
         max(layout.geometry.notchWidth + HUDMetrics.pillOverhang * 2, HUDMetrics.minPillWidth)
     }
 
-    private var pillRect: CGRect {
-        CGRect(x: (W - pillWidth) / 2, y: 0,
-               width: pillWidth, height: menuBar + HUDMetrics.pillContentHeight)
-    }
-
     // MARK: Body
 
+    private var isVisible: Bool { mode != .hidden }
+
+    /// Collapsed, the island shrinks to exactly the notch footprint (notch width
+    /// × menu-bar height), so it retracts *into* the notch and vanishes there —
+    /// black-on-black, no opacity fade. Active, it widens and drops the content
+    /// strip below the notch. Animating the geometry (not the alpha) is what
+    /// makes release read as a smooth contraction instead of a flicker.
+    private var displayedWidth: CGFloat {
+        isVisible ? pillWidth : layout.geometry.notchWidth
+    }
+    private var displayedHeight: CGFloat {
+        menuBar + (isVisible ? HUDMetrics.pillContentHeight : 0)
+    }
+
     var body: some View {
-        visibleIsland
-            .frame(width: W, height: H, alignment: .topLeading)
-            .animation(.spring(response: 0.42, dampingFraction: 0.82), value: mode)
+        pill(content: islandContent)
+            .frame(width: W, height: H, alignment: .top)
+            .animation(.spring(response: 0.32, dampingFraction: 0.9), value: isVisible)
     }
 
     @ViewBuilder
-    private var visibleIsland: some View {
+    private var islandContent: some View {
         switch mode {
+        case .live:
+            liveContent
+        case .status(let label):
+            statusContent(label)
+                .id(label) // cross-fade only when the label actually changes
         case .hidden:
             EmptyView()
-        case .live:
-            pill(content: liveContent)
-        case .status(let label):
-            pill(content: statusContent(label))
         }
     }
 
@@ -228,29 +244,40 @@ private struct NotchHUDView: View {
     }
 
     /// Centered island that merges with the notch and hangs straight down.
+    /// Width/height track `displayed*`, so the whole shape contracts up into the
+    /// notch on release; the content strip is clipped as the pill collapses.
     private func pill<C: View>(content: C) -> some View {
-        shape(radius: 14)
+        shape(radius: 9)
             .overlay {
                 VStack(spacing: 0) {
-                    Spacer(minLength: 0).frame(height: menuBar) // clear the notch
-                    content.frame(height: HUDMetrics.pillContentHeight)
+                    // Clear the notch, then a small gap so content isn't jammed
+                    // against the notch's bottom edge.
+                    Spacer(minLength: 0)
+                        .frame(height: menuBar + HUDMetrics.contentTopGap)
+                    content
+                        .frame(height: HUDMetrics.contentRowHeight)
+                        .opacity(isVisible ? 1 : 0)
+                        .animation(.easeInOut(duration: 0.16), value: mode)
+                    Spacer(minLength: 0) // padding below the content row
                 }
+                .frame(height: displayedHeight, alignment: .top)
+                .clipped()
             }
-            .frame(width: pillRect.width, height: pillRect.height)
-            .position(x: pillRect.midX, y: pillRect.midY)
+            .frame(width: displayedWidth, height: displayedHeight)
+            .position(x: W / 2, y: displayedHeight / 2)
     }
 
     // MARK: Content
 
     private var liveContent: some View {
-        HStack(spacing: 7) {
+        HStack(spacing: 5) {
             Text("InkIt")
-                .font(.system(size: 10, weight: .semibold))
+                .font(.system(size: 8, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.85))
             HUDWaveform(level: coordinator.inputLevel)
-                .frame(width: 30, height: 11)
+                .frame(width: 26, height: 6)
             Text("Live")
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: 8, weight: .medium))
                 .foregroundStyle(.white.opacity(0.55))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
@@ -281,10 +308,12 @@ private struct HUDWaveform: View {
         GeometryReader { geo in
             HStack(alignment: .center, spacing: 3) {
                 ForEach(0..<barCount, id: \.self) { i in
-                    let t = phase + CGFloat(i) * 0.18
+                    let t = phase + CGFloat(i) * 0.30
                     let wobble = (sin(t * .pi * 2) + 1) / 2
-                    let loudness = CGFloat(min(1, max(0.15, level)))
-                    let height = 3 + (geo.size.height - 3) * loudness * (0.32 + 0.68 * wobble)
+                    // Punch up quiet input and widen the per-bar swing so the
+                    // waveform reads as lively rather than a faint shimmer.
+                    let loudness = CGFloat(min(1, max(0.18, level * 1.7)))
+                    let height = 2 + (geo.size.height - 2) * loudness * (0.12 + 0.88 * wobble)
                     Capsule(style: .continuous)
                         .fill(.white.opacity(0.95))
                         .frame(width: 2.6, height: height)
@@ -293,7 +322,7 @@ private struct HUDWaveform: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .onAppear {
-            withAnimation(.linear(duration: 1.1).repeatForever(autoreverses: false)) {
+            withAnimation(.linear(duration: 0.8).repeatForever(autoreverses: false)) {
                 phase = 1
             }
         }
