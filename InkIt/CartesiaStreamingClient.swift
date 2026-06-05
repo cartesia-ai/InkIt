@@ -98,23 +98,30 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
         let connected = isConnected
         if !connected { pendingClose = true }
         awaitingClose = true
+        // If nothing has been transcribed yet, there's no trailing word to
+        // protect — the long flush window only exists to catch the final
+        // `turn.end`. Collapse fast in that case so silent presses don't leave
+        // the "Done" pill hanging for the full grace period.
+        let hasContent = !completedTurns.isEmpty || !currentTurn.isEmpty
         stateLock.unlock()
+        let fallback: TimeInterval = hasContent ? 3.0 : 2.0
         if !connected {
             // Defer the close until buffered audio has been flushed in
             // `handleConnected()`. The fallback timer below still fires.
-            scheduleCloseFallback()
+            scheduleCloseFallback(after: fallback)
             return
         }
         closeRequestedAt = Date()
         task.send(.string(#"{"type":"close"}"#)) { _ in }
-        scheduleCloseFallback()
+        scheduleCloseFallback(after: fallback)
     }
 
     /// Fallback only: guarantees we don't hang if the server never emits a final
     /// `turn.end` or closes the socket. The happy path completes earlier, on the
-    /// final `turn.end` or `didCloseWith`.
-    private func scheduleCloseFallback() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+    /// final `turn.end` or `didCloseWith`. The delay is shortened when no
+    /// transcript content was received, since there's no last word to wait for.
+    private func scheduleCloseFallback(after delay: TimeInterval) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self, !self.hasClosed else { return }
             self.finishClose(reason: .graceTimerExpired)
         }
