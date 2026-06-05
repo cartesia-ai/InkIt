@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // first window doesn't flash the system appearance before settling.
     func applicationDidFinishLaunching(_ notification: Notification) {
         SettingsStore.shared.applyAppearance()
+        UpdateManager.shared.start()
     }
 
     // Restore the main window when the user clicks the Dock icon after
@@ -62,6 +63,12 @@ struct InkItApp: App {
             // Strip the system menu bar down to the bare minimum. macOS won't
             // let us remove the leading "InkIt" menu (About/Quit live there)
             // while we keep the Dock icon, but everything else can go.
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") {
+                    UpdateManager.shared.checkForUpdates()
+                }
+                .disabled(!UpdateManager.shared.canCheckForUpdates)
+            }
             CommandGroup(replacing: .newItem) {}
             CommandGroup(replacing: .saveItem) {}
             CommandGroup(replacing: .printItem) {}

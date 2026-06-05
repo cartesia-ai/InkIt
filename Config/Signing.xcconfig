@@ -10,6 +10,8 @@
 // notarization. (Local dev/tests use Config/Debug.xcconfig instead, which is
 // debuggable.)
 
+#include "Sparkle.xcconfig"
+
 CODE_SIGN_STYLE = Manual
 CODE_SIGN_IDENTITY = -
 CODE_SIGNING_ALLOWED = YES

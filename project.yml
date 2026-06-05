@@ -10,6 +10,11 @@ settings:
     SWIFT_VERSION: "5.0"
     MACOSX_DEPLOYMENT_TARGET: "14.0"
 
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: 2.9.2
+
 targets:
   InkIt:
     type: application
@@ -28,6 +33,8 @@ targets:
     resources:
       - path: InkIt/Assets.xcassets
       - path: InkIt/Sounds
+    dependencies:
+      - package: Sparkle
     info:
       path: InkIt/Info.plist
       properties:
@@ -44,6 +51,9 @@ targets:
         NSHighResolutionCapable: true
         NSMicrophoneUsageDescription: "InkIt records your voice while you hold the dictation hotkey and streams it to Cartesia STT for transcription."
         NSAppleEventsUsageDescription: "InkIt pastes the transcribed text into the focused app."
+        SUFeedURL: "https://github.com/cartesia-ai/InkIt/releases/latest/download/appcast.xml"
+        SUPublicEDKey: "$(SPARKLE_PUBLIC_ED_KEY)"
+        SUEnableAutomaticChecks: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.cartesia.InkIt

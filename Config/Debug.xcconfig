@@ -3,6 +3,8 @@
 // (Cmd+U / `xcodebuild test`). Not for distribution — see Config/Signing.xcconfig
 // and tools/make-dmg.sh for the notarized Release path.
 
+#include "Sparkle.xcconfig"
+
 CODE_SIGN_STYLE = Manual
 CODE_SIGN_IDENTITY = -
 CODE_SIGNING_ALLOWED = YES

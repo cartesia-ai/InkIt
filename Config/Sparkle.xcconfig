@@ -1,0 +1,10 @@
+// Sparkle update configuration.
+//
+// Before shipping the first public Sparkle-enabled release, generate Sparkle's
+// EdDSA keypair on the release maintainer's Mac and paste the public key here.
+// The private key stays in that maintainer's login Keychain and is used only
+// when signing appcast entries for GitHub Releases.
+//
+// See: https://sparkle-project.org/documentation/
+
+SPARKLE_PUBLIC_ED_KEY =
