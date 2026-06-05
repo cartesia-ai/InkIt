@@ -269,10 +269,43 @@ private struct PermissionCard: View {
 
 // MARK: - API key
 
+/// Compact validation status shown inside the field's trailing edge — a glyph
+/// plus a concise label so the verdict reads in place without a caption below.
+/// Shared by both key steps since both validators expose the same
+/// `APIKeyValidator.State`.
+private struct KeyValidationLabel: View {
+    let state: APIKeyValidator.State
+
+    var body: some View {
+        switch state {
+        case .idle:
+            EmptyView()
+        case .checking:
+            ProgressView().controlSize(.small)
+        case .verified:
+            label("checkmark.circle.fill", "Verified", .green)
+        case .invalidKey:
+            label("xmark.circle.fill", "Invalid key", .red)
+        case .couldNotVerify:
+            label("exclamationmark.circle", "Couldn’t verify",
+                  Color(nsColor: .secondaryLabelColor))
+        }
+    }
+
+    private func label(_ icon: String, _ text: String, _ color: Color) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+            Text(text)
+        }
+        .font(.subheadline.weight(.medium))
+        .foregroundStyle(color)
+        .fixedSize()
+    }
+}
+
 private struct APIKeyStep: View {
     let next: () -> Void
     @EnvironmentObject var settings: SettingsStore
-    @State private var showKey = false
     @FocusState private var fieldFocused: Bool
     @StateObject private var validator = CartesiaKeyValidator()
 
@@ -292,9 +325,6 @@ private struct APIKeyStep: View {
                 keyField
 
                 HStack(alignment: .firstTextBaseline) {
-                    validationLabel
-                        .animation(.easeInOut(duration: 0.2), value: validator.state)
-                    Spacer(minLength: 16)
                     Link(destination: URL(string: "https://play.cartesia.ai/keys")!) {
                         HStack(spacing: 4) {
                             Image(systemName: "arrow.up.right.square")
@@ -303,6 +333,7 @@ private struct APIKeyStep: View {
                         .font(.subheadline.weight(.medium))
                     }
                     .modifier(PointingHandCursor())
+                    Spacer(minLength: 0)
                 }
                 .frame(minHeight: 18)
                 .padding(.horizontal, 2)
@@ -322,41 +353,23 @@ private struct APIKeyStep: View {
     }
 
     /// Custom credential field: CardBG container matching the rest of onboarding,
-    /// taller and narrower than a system field, with a leading key glyph, the
-    /// eye toggle and a live status icon tucked inside the trailing edge.
+    /// taller and narrower than a system field, with a leading key glyph and the
+    /// live validation status tucked inside the trailing edge. Always masked —
+    /// the key is never rendered in plain text.
     private var keyField: some View {
         HStack(spacing: 12) {
             Image(systemName: "key.fill")
                 .font(.system(size: 15))
                 .foregroundStyle(.secondary)
 
-            Group {
-                if showKey {
-                    TextField("sk_car_…", text: $settings.cartesiaAPIKey)
-                } else {
-                    SecureField("sk_car_…", text: $settings.cartesiaAPIKey)
-                }
-            }
-            .textFieldStyle(.plain)
-            .font(.system(size: 15, design: .monospaced))
-            .focused($fieldFocused)
+            SecureField("sk_car_…", text: $settings.cartesiaAPIKey)
+                .textFieldStyle(.plain)
+                .font(.system(size: 15, design: .monospaced))
+                .focused($fieldFocused)
 
-            statusIcon
+            KeyValidationLabel(state: validator.state)
                 .transition(.opacity.combined(with: .scale))
                 .animation(.easeInOut(duration: 0.2), value: validator.state)
-
-            Button {
-                showKey.toggle()
-            } label: {
-                Image(systemName: showKey ? "eye.slash" : "eye")
-                    .imageScale(.medium)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 22, height: 22)
-            }
-            .buttonStyle(.borderless)
-            .contentShape(Rectangle())
-            .help(showKey ? "Hide API key" : "Show API key")
-            .modifier(PointingHandCursor())
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 15)
@@ -376,53 +389,6 @@ private struct APIKeyStep: View {
         .onTapGesture { fieldFocused = true }
     }
 
-    /// Compact inline cue inside the field — mirrors the text status below it.
-    @ViewBuilder
-    private var statusIcon: some View {
-        switch validator.state {
-        case .idle:
-            EmptyView()
-        case .checking:
-            ProgressView().controlSize(.small)
-        case .verified:
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-        case .invalidKey:
-            Image(systemName: "xmark.circle.fill")
-                .foregroundStyle(.red)
-        case .couldNotVerify:
-            Image(systemName: "exclamationmark.circle")
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    @ViewBuilder
-    private var validationLabel: some View {
-        switch validator.state {
-        case .idle:
-            Text("Paste your key to verify it.")
-                .font(.subheadline)
-                .foregroundStyle(.tertiary)
-        case .checking:
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.small)
-                Text("Checking…").foregroundStyle(.secondary)
-            }
-            .font(.subheadline)
-        case .verified:
-            Label("Key verified", systemImage: "checkmark.circle.fill")
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.green)
-        case .invalidKey:
-            Label("Invalid API key. Double-check you copied the whole key.", systemImage: "xmark.circle.fill")
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.red)
-        case .couldNotVerify:
-            Label("Couldn’t verify — check your connection", systemImage: "exclamationmark.circle")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-    }
 }
 
 // MARK: - Try it
@@ -431,12 +397,7 @@ private struct TryItStep: View {
     let next: () -> Void
     @EnvironmentObject var coordinator: AppCoordinator
 
-    /// A real prompt a technical user might dictate to an AI assistant. Spoken
-    /// numbers ("two thousand dollars", "five day") that ink-2 renders as
-    /// "$2,000" / "5-day" are the at-a-glance accuracy flex — and it reads
-    /// cleanly verbatim, since the LLM rewrite is off by default.
-    private let sampleWords = "Plan a 5-day trip to Tokyo in April with a budget around $2,000."
-        .split(separator: " ").map(String.init)
+    private let sampleLine = "Help me plan a slow Sunday full of pancakes, sunshine, and a long nap."
 
     /// Matches the HUD's recording dot/waveform color (see NotchHUD): amber is
     /// the app's "live recording" signal, distinct from the resting indigo.
@@ -459,12 +420,19 @@ private struct TryItStep: View {
 
     var body: some View {
         VStack(spacing: 24) {
-            Text("Your turn")
-                .font(.system(size: 28, weight: .bold))
-                .foregroundStyle(.primary)
+            VStack(spacing: 6) {
+                Text("Try it")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundStyle(.primary)
+                Text("Hold the key, read the line aloud, then let go.")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
 
-            composer
+            promptCard
             pushToTalk
+            resultField
 
             Button("Skip for now") { next() }
                 .buttonStyle(.plain)
@@ -478,28 +446,59 @@ private struct TryItStep: View {
         .onReceive(caretTimer) { _ in caretOn.toggle() }
     }
 
-    // MARK: Composer — the always-focused field the words land in
+    // MARK: Prompt card — the line to read aloud, kept separate from the result
 
-    private var composer: some View {
-        VStack(alignment: .leading, spacing: 12) {
+    private var promptCard: some View {
+        HStack(alignment: .top, spacing: 13) {
+            Text("\u{275D}")
+                .font(.system(size: 16))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 30, height: 30)
+                .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color.accentSoft))
+            VStack(alignment: .leading, spacing: 4) {
+                Text("READ THIS ALOUD")
+                    .font(.system(size: 11, weight: .bold))
+                    .tracking(0.8)
+                    .foregroundStyle(Color.accentColor)
+                Text(sampleLine)
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 16)
+        .padding(.horizontal, 18)
+        .frame(maxWidth: 540)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.accentSoft))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.accentColor.opacity(0.28), lineWidth: 1)
+        )
+    }
+
+    // MARK: Result field — the clean box the words land in after release
+
+    private var resultField: some View {
+        VStack(alignment: .leading, spacing: 10) {
             boxText
                 .font(.system(size: 18))
                 .lineSpacing(4)
                 .multilineTextAlignment(.leading)
                 .frame(maxWidth: .infinity, minHeight: 54, alignment: .topLeading)
 
-            Divider()
-
             HStack {
-                Text(isComplete ? "Looks right? Send it →" : "Anywhere you can type")
-                    .font(.caption)
-                    .foregroundStyle(isComplete ? Color.accentColor : Color.secondary)
+                if isComplete {
+                    Text("Looks right? Send it →")
+                        .font(.caption)
+                        .foregroundStyle(Color.accentColor)
+                }
                 Spacer()
                 sendButton
             }
         }
         .padding(18)
-        .frame(maxWidth: 564)
+        .frame(maxWidth: 540)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(Color("CardBG"))
@@ -511,21 +510,15 @@ private struct TryItStep: View {
         .shadow(color: Color.accentColor.opacity(0.22), radius: 7)
     }
 
-    /// Live transcript in solid ink, with the unread remainder of the sample
-    /// trailing it in ghost gray and a blinking caret at the boundary — so the
-    /// box is both the script and the result, no extra captions.
+    /// Live transcript in solid ink with a blinking caret — empty until the user
+    /// releases the key. The line to read lives in the prompt card above, so the
+    /// box stays a clean result surface (matches the "Try it" prototype, option A).
     private var boxText: Text {
-        let spokenCount = transcript.isEmpty ? 0 : transcript.split(separator: " ").count
-        let remaining = sampleWords.dropFirst(spokenCount).joined(separator: " ")
         var t = Text("")
         if !transcript.isEmpty {
-            t = t + Text(transcript).foregroundStyle(.primary)
-            if !remaining.isEmpty { t = t + Text(" ") }
+            t = t + Text(transcript).foregroundStyle(.primary) + Text(" ")
         }
-        t = t + Text("▏").foregroundStyle(caretOn ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(Color.clear))
-        if !remaining.isEmpty {
-            t = t + Text(remaining).foregroundStyle(.tertiary)
-        }
+        t = t + Text("\u{258F}").foregroundStyle(caretOn ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(Color.clear))
         return t
     }
 
@@ -675,7 +668,6 @@ private struct PolishStep: View {
     let next: () -> Void
     @EnvironmentObject var settings: SettingsStore
     @State private var key: String = ""
-    @State private var showKey = false
     @FocusState private var fieldFocused: Bool
     @StateObject private var validator = GroqKeyValidator()
 
@@ -695,9 +687,6 @@ private struct PolishStep: View {
                 keyField
 
                 HStack(alignment: .firstTextBaseline) {
-                    validationLabel
-                        .animation(.easeInOut(duration: 0.2), value: validator.state)
-                    Spacer(minLength: 16)
                     Link(destination: LLMProvider.groq.keyURL) {
                         HStack(spacing: 4) {
                             Image(systemName: "arrow.up.right.square")
@@ -706,6 +695,7 @@ private struct PolishStep: View {
                         .font(.subheadline.weight(.medium))
                     }
                     .modifier(PointingHandCursor())
+                    Spacer(minLength: 0)
                 }
                 .frame(minHeight: 18)
                 .padding(.horizontal, 2)
@@ -752,39 +742,21 @@ private struct PolishStep: View {
     }
 
     /// Same custom credential field as the Cartesia step, bound to the Groq key.
+    /// Always masked — the key is never rendered in plain text.
     private var keyField: some View {
         HStack(spacing: 12) {
             Image(systemName: "key.fill")
                 .font(.system(size: 15))
                 .foregroundStyle(.secondary)
 
-            Group {
-                if showKey {
-                    TextField("gsk_…", text: $key)
-                } else {
-                    SecureField("gsk_…", text: $key)
-                }
-            }
-            .textFieldStyle(.plain)
-            .font(.system(size: 15, design: .monospaced))
-            .focused($fieldFocused)
+            SecureField("gsk_…", text: $key)
+                .textFieldStyle(.plain)
+                .font(.system(size: 15, design: .monospaced))
+                .focused($fieldFocused)
 
-            statusIcon
+            KeyValidationLabel(state: validator.state)
                 .transition(.opacity.combined(with: .scale))
                 .animation(.easeInOut(duration: 0.2), value: validator.state)
-
-            Button {
-                showKey.toggle()
-            } label: {
-                Image(systemName: showKey ? "eye.slash" : "eye")
-                    .imageScale(.medium)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 22, height: 22)
-            }
-            .buttonStyle(.borderless)
-            .contentShape(Rectangle())
-            .help(showKey ? "Hide API key" : "Show API key")
-            .modifier(PointingHandCursor())
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 15)
@@ -802,53 +774,6 @@ private struct PolishStep: View {
         .animation(.easeInOut(duration: 0.15), value: fieldFocused)
         .contentShape(Rectangle())
         .onTapGesture { fieldFocused = true }
-    }
-
-    @ViewBuilder
-    private var statusIcon: some View {
-        switch validator.state {
-        case .idle:
-            EmptyView()
-        case .checking:
-            ProgressView().controlSize(.small)
-        case .verified:
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-        case .invalidKey:
-            Image(systemName: "xmark.circle.fill")
-                .foregroundStyle(.red)
-        case .couldNotVerify:
-            Image(systemName: "exclamationmark.circle")
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    @ViewBuilder
-    private var validationLabel: some View {
-        switch validator.state {
-        case .idle:
-            Text("Paste your key to verify it.")
-                .font(.subheadline)
-                .foregroundStyle(.tertiary)
-        case .checking:
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.small)
-                Text("Checking…").foregroundStyle(.secondary)
-            }
-            .font(.subheadline)
-        case .verified:
-            Label("Key verified", systemImage: "checkmark.circle.fill")
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.green)
-        case .invalidKey:
-            Label("Invalid API key. Double-check you copied the whole key.", systemImage: "xmark.circle.fill")
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.red)
-        case .couldNotVerify:
-            Label("Couldn’t verify — check your connection", systemImage: "exclamationmark.circle")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
     }
 }
 
