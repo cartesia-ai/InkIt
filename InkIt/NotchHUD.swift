@@ -13,12 +13,12 @@ private enum HUDMetrics {
     /// Total drop below the notch = a small gap under the notch, the content
     /// row, then padding beneath it so the text/waveform aren't jammed against
     /// the notch's bottom edge.
-    static let contentTopGap: CGFloat = 1
+    static let contentTopGap: CGFloat = 0
     static let contentRowHeight: CGFloat = 9
-    static let contentBottomPad: CGFloat = 5
+    static let contentBottomPad: CGFloat = 4
     static let pillContentHeight: CGFloat = contentTopGap + contentRowHeight + contentBottomPad
-    static let pillOverhang: CGFloat = 22
-    static let minPillWidth: CGFloat = 168
+    static let pillOverhang: CGFloat = 14
+    static let minPillWidth: CGFloat = 150
 }
 
 // MARK: - Notch geometry
