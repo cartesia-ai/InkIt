@@ -204,12 +204,22 @@ final class AppCoordinator: ObservableObject {
         routesFinalTranscriptToOnboarding = true
         liveTranscript = ""
         ensureHotkeyRegistration()
+        // Surface the real Notch HUD during the trial so the "Try it" step
+        // mimics actual use — the recording island and live waveform appear up
+        // by the notch, exactly as they will every day after onboarding.
+        if hud == nil {
+            hud = NotchHUDController(coordinator: self)
+        }
     }
 
     func endOnboardingTrial() {
         routesFinalTranscriptToOnboarding = false
         if !settings.hasCompletedOnboarding {
             unregisterHotkey()
+            // Tear the HUD back down so it doesn't linger over the remaining
+            // onboarding steps; refreshHUD re-creates it once onboarding completes.
+            hud?.dismiss()
+            hud = nil
         }
     }
 
@@ -247,6 +257,11 @@ final class AppCoordinator: ObservableObject {
         // text meant for whatever they were focused on.
         let routeToOnboardingBox = routesFinalTranscriptToOnboarding
             && frontmostApp?.bundleIdentifier == ownBundleID
+        // Interim transcript should likewise only stream into the onboarding box
+        // when InkIt is frontmost. If the user is dictating into another app, the
+        // box must stay empty — the final text pastes at their real cursor, and
+        // the live preview must not leak into a box they aren't looking at.
+        let suppressLivePreview = routesFinalTranscriptToOnboarding && !routeToOnboardingBox
         pasteTargetApp = {
             if let frontmostApp, frontmostApp.bundleIdentifier != ownBundleID {
                 return frontmostApp
@@ -267,8 +282,11 @@ final class AppCoordinator: ObservableObject {
         let client = CartesiaStreamingClient(apiKey: settings.cartesiaAPIKey)
         self.client = client
 
-        client.onTranscriptUpdate = { [weak self] text in
-            Task { @MainActor in self?.liveTranscript = text }
+        client.onTranscriptUpdate = { [weak self, suppressLivePreview] text in
+            Task { @MainActor in
+                guard let self, !suppressLivePreview else { return }
+                self.liveTranscript = text
+            }
         }
         client.onError = { [weak self] message in
             Task { @MainActor in self?.setError(message) }

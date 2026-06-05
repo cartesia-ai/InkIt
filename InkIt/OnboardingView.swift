@@ -492,9 +492,16 @@ private struct TryItStep: View {
     /// the app's "live recording" signal, distinct from the resting indigo.
     private static let recordingAmber = Color(red: 1.0, green: 0.62, blue: 0.04)
 
-    @State private var caretOn = true
     @State private var invite = false
-    private let caretTimer = Timer.publish(every: 0.55, on: .main, in: .common).autoconnect()
+    /// Once the user has held the key even once, the inviting glow ring retires —
+    /// it exists only to prompt the very first press, and pulsing forever reads
+    /// as distracting after that.
+    @State private var hasPressed = false
+    /// The editable contents of the result box. Seeded from the live transcript
+    /// while dictating, then fully the user's to edit by keyboard afterward —
+    /// the whole point being that a mistranscription is fixable in place.
+    @State private var editedText = ""
+    @FocusState private var boxFocused: Bool
 
     var isRecording: Bool { coordinator.state == .recording }
     var isFinalizing: Bool {
@@ -504,12 +511,15 @@ private struct TryItStep: View {
         }
     }
     var transcript: String { coordinator.liveTranscript }
-    /// Released the key and got something back — ready to send.
-    var isComplete: Bool { !isRecording && !isFinalizing && !transcript.isEmpty }
+    /// There's text to send and we're not mid-take.
+    var isComplete: Bool {
+        !isRecording && !isFinalizing
+            && !editedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     var body: some View {
-        VStack(spacing: 24) {
-            VStack(spacing: 6) {
+        VStack(spacing: 30) {
+            VStack(spacing: 8) {
                 Text("Try it")
                     .font(.system(size: 28, weight: .bold))
                     .foregroundStyle(.primary)
@@ -519,9 +529,7 @@ private struct TryItStep: View {
                     .multilineTextAlignment(.center)
             }
 
-            promptCard
-            pushToTalk
-            resultField
+            panel
 
             Button("Skip for now") { next() }
                 .buttonStyle(.plain)
@@ -530,85 +538,121 @@ private struct TryItStep: View {
                 .padding(.top, 2)
                 .modifier(PointingHandCursor())
         }
-        .onAppear { coordinator.beginOnboardingTrial() }
-        .onDisappear { coordinator.endOnboardingTrial() }
-        .onReceive(caretTimer) { _ in caretOn.toggle() }
-    }
-
-    // MARK: Prompt card — the line to read aloud, kept separate from the result
-
-    private var promptCard: some View {
-        HStack(alignment: .top, spacing: 13) {
-            Text("\u{275D}")
-                .font(.system(size: 16))
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 30, height: 30)
-                .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color.accentSoft))
-            VStack(alignment: .leading, spacing: 4) {
-                Text("READ THIS ALOUD")
-                    .font(.system(size: 11, weight: .bold))
-                    .tracking(0.8)
-                    .foregroundStyle(Color.accentColor)
-                Text(sampleLine)
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(.primary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 0)
+        .onAppear {
+            coordinator.beginOnboardingTrial()
+            // Land with the cursor already in the box, ready to dictate or type.
+            DispatchQueue.main.async { boxFocused = true }
         }
-        .padding(.vertical, 16)
-        .padding(.horizontal, 18)
-        .frame(maxWidth: 540)
-        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.accentSoft))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.accentColor.opacity(0.28), lineWidth: 1)
-        )
+        .onDisappear { coordinator.endOnboardingTrial() }
+        .onChange(of: isRecording) { _, recording in
+            if recording { hasPressed = true }
+        }
+        // Mirror the transcript into the editable field as it streams in and when
+        // it finalizes. liveTranscript only changes during a take, so the user's
+        // manual edits afterward are never clobbered.
+        .onChange(of: transcript) { _, newValue in
+            editedText = newValue
+        }
     }
 
-    // MARK: Result field — the clean box the words land in after release
+    // MARK: Unified panel — prompt, the key, and the result in one calm card.
+    // The waveform and live status now live in the real Notch HUD (shown during
+    // the trial), so the screen itself stays quiet: read the line, hold the key,
+    // watch the words land here.
 
-    private var resultField: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            boxText
-                .font(.system(size: 18))
-                .lineSpacing(4)
-                .multilineTextAlignment(.leading)
-                .frame(maxWidth: .infinity, minHeight: 54, alignment: .topLeading)
+    private var panel: some View {
+        VStack(spacing: 28) {
+            promptBar
+            keyCap
+            resultBox
+        }
+        .padding(.horizontal, 30)
+        .padding(.vertical, 30)
+        .frame(maxWidth: 600)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color("CardBG"))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.06), radius: 14, y: 6)
+    }
 
-            HStack {
+    // MARK: Prompt — the line to read aloud, marked by a quiet left accent bar
+
+    private var promptBar: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("READ THIS ALOUD")
+                .font(.system(size: 11, weight: .bold))
+                .tracking(0.8)
+                .foregroundStyle(Color.accentColor)
+            Text(sampleLine)
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.leading, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(Color.accentColor)
+                .frame(width: 3)
+        }
+    }
+
+    // MARK: Result — a real editable field. Lands focused (cursor already in it),
+    // fills from the transcript, and stays fully keyboard-editable so a
+    // mistranscription can be fixed in place before sending.
+
+    private var resultBox: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
                 if isComplete {
-                    Text("Looks right? Send it →")
-                        .font(.caption)
-                        .foregroundStyle(Color.accentColor)
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.green)
                 }
+                Text("What InkIt heard")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            ZStack(alignment: .topLeading) {
+                if editedText.isEmpty {
+                    Text("Your words appear here after you let go.")
+                        .font(.system(size: 17))
+                        .foregroundStyle(.tertiary)
+                        .padding(.leading, 5)
+                        .padding(.top, 1)
+                        .allowsHitTesting(false)
+                }
+                TextEditor(text: $editedText)
+                    .font(.system(size: 17))
+                    .lineSpacing(3)
+                    .scrollContentBackground(.hidden)
+                    .background(Color.clear)
+                    .tint(Color.accentColor)
+                    .focused($boxFocused)
+                    .frame(minHeight: 72)
+            }
+            HStack {
                 Spacer()
                 sendButton
             }
         }
-        .padding(18)
-        .frame(maxWidth: 540)
+        .padding(20)
+        .frame(maxWidth: .infinity)
         .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color("CardBG"))
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color("PaperBG"))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.accentColor, lineWidth: 2)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(boxFocused ? Color.accentColor.opacity(0.5) : Color(nsColor: .separatorColor),
+                        lineWidth: boxFocused ? 1.5 : 1)
         )
-        .shadow(color: Color.accentColor.opacity(0.22), radius: 7)
-    }
-
-    /// Live transcript in solid ink with a blinking caret — empty until the user
-    /// releases the key. The line to read lives in the prompt card above, so the
-    /// box stays a clean result surface (matches the "Try it" prototype, option A).
-    private var boxText: Text {
-        var t = Text("")
-        if !transcript.isEmpty {
-            t = t + Text(transcript).foregroundStyle(.primary) + Text(" ")
-        }
-        t = t + Text("\u{258F}").foregroundStyle(caretOn ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(Color.clear))
-        return t
+        .animation(.easeOut(duration: 0.15), value: boxFocused)
     }
 
     private var sendButton: some View {
@@ -621,23 +665,13 @@ private struct TryItStep: View {
         }
         .buttonStyle(.plain)
         .disabled(!isComplete)
-        .opacity(isComplete ? 1 : 0.35)
+        .opacity(isComplete ? 1 : 0.3)
         .scaleEffect(isComplete ? 1 : 0.9)
         .animation(.spring(response: 0.35, dampingFraction: 0.6), value: isComplete)
         .modifier(PointingHandCursor())
     }
 
-    // MARK: Push-to-talk — the hero control
-
-    private var pushToTalk: some View {
-        VStack(spacing: 14) {
-            keyCap
-            WaveformBar(level: coordinator.inputLevel, active: isRecording, tint: Self.recordingAmber)
-                .frame(width: 200, height: 30)
-                .opacity(isRecording ? 1 : 0.25)
-            statusLine.frame(minHeight: 20)
-        }
-    }
+    // MARK: Push-to-talk key — the hero control
 
     private var keyCap: some View {
         HStack(spacing: 12) {
@@ -648,7 +682,7 @@ private struct TryItStep: View {
                     .shadow(color: Self.recordingAmber.opacity(0.7), radius: 5)
             } else {
                 Image(systemName: "mic.fill")
-                    .font(.system(size: 20))
+                    .font(.system(size: 19))
                     .foregroundStyle(.primary)
             }
             HStack(spacing: 7) {
@@ -660,31 +694,35 @@ private struct TryItStep: View {
                     .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.accentSoft))
                 Text("to talk")
             }
-            .font(.system(size: 19, weight: .bold))
+            .font(.system(size: 17, weight: .bold))
             .foregroundStyle(.primary)
         }
-        .padding(.horizontal, 32).padding(.vertical, 18)
+        .padding(.horizontal, 26).padding(.vertical, 13)
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(isRecording ? Color.accentSoft : Color("CardBG"))
+            RoundedRectangle(cornerRadius: 15, style: .continuous)
+                .fill(isRecording ? Color.accentSoft : Color("PaperBG"))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: 15, style: .continuous)
                 .stroke(isRecording ? Self.recordingAmber : Color(nsColor: .separatorColor),
                         lineWidth: 1.5)
         )
         .scaleEffect(isRecording ? 0.97 : 1)
-        .shadow(color: .black.opacity(0.12), radius: isRecording ? 4 : 10, y: isRecording ? 2 : 6)
-        .overlay(inviteRing.opacity(isRecording ? 0 : 1))
+        .shadow(color: .black.opacity(0.06), radius: 5, y: 2)
+        .overlay(inviteRing.opacity(showInvite ? 1 : 0))
         .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isRecording)
+        .animation(.easeOut(duration: 0.4), value: showInvite)
     }
 
-    /// A soft pulsing ring while idle, to pull the eye to the key.
+    /// The glow only invites the *first* press — once `hasPressed` flips it never
+    /// returns, and it's always hidden while actively recording.
+    private var showInvite: Bool { !hasPressed && !isRecording }
+
     private var inviteRing: some View {
-        RoundedRectangle(cornerRadius: 22, style: .continuous)
+        RoundedRectangle(cornerRadius: 19, style: .continuous)
             .stroke(Color.accentColor, lineWidth: 2)
-            .padding(-7)
-            .scaleEffect(invite ? 1.1 : 0.97)
+            .padding(-6)
+            .scaleEffect(invite ? 1.09 : 0.97)
             .opacity(invite ? 0 : 0.5)
             .allowsHitTesting(false)
             .onAppear {
@@ -692,57 +730,6 @@ private struct TryItStep: View {
                     invite = true
                 }
             }
-    }
-
-    @ViewBuilder
-    private var statusLine: some View {
-        if isRecording {
-            Label("Listening… keep holding", systemImage: "circle.fill")
-                .imageScale(.small)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Self.recordingAmber)
-        } else if isFinalizing {
-            Text("Finalizing…")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        } else if isComplete {
-            Label("Heard you, word for word.", systemImage: "checkmark.circle.fill")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.green)
-        } else {
-            Text("InkIt listens only while you hold the key.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-    }
-}
-
-private struct WaveformBar: View {
-    let level: Float
-    let active: Bool
-    var tint: Color = .accentColor
-    @State private var phase: CGFloat = 0
-
-    var body: some View {
-        GeometryReader { geo in
-            HStack(spacing: 4) {
-                ForEach(0..<24, id: \.self) { i in
-                    let t = (CGFloat(i) / 24) + phase
-                    let wobble = (sin(t * .pi * 2) + 1) / 2
-                    let lvl = CGFloat(max(0.08, level)) * (0.5 + 0.5 * wobble)
-                    Capsule()
-                        .fill(tint)
-                        .frame(width: 4, height: max(4, geo.size.height * lvl))
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .opacity(active ? 1 : 0.35)
-        }
-        .onAppear {
-            withAnimation(.linear(duration: 1.2).repeatForever(autoreverses: false)) {
-                phase = 1
-            }
-        }
     }
 }
 
