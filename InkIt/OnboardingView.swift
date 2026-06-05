@@ -203,19 +203,25 @@ private struct PermissionsStep: View {
                     icon: "mic.fill",
                     title: "Microphone",
                     subtitle: "So InkIt can hear you. Asleep until you hold the key.",
-                    granted: permissions.hasMicrophone
-                ) {
-                    permissions.requestMicrophone { _ in }
-                }
+                    state: permissions.microphoneState,
+                    deniedWhy: "This is how InkIt hears you. Without microphone access, there’s nothing for InkIt to transcribe. Let’s turn it back on.",
+                    settingsPath: "Privacy & Security ▸ Microphone",
+                    enable: { permissions.requestMicrophone { _ in } },
+                    openSettings: { permissions.openMicrophoneSettings() }
+                )
 
                 PermissionCard(
                     icon: "accessibility",
                     title: "Accessibility",
                     subtitle: "So your words paste instantly, right at your cursor.",
-                    granted: permissions.hasAccessibility
-                ) {
-                    permissions.requestAccessibility()
-                }
+                    state: permissions.accessibilityState,
+                    deniedWhy: "This is how InkIt types your words straight into whatever app you’re in. Without it, your dictation has nowhere to land. Let’s turn it back on.",
+                    settingsPath: "Privacy & Security ▸ Accessibility",
+                    enable: { permissions.requestAccessibility() },
+                    // Re-route through requestAccessibility so InkIt stays pre-added
+                    // to the Accessibility list (toggle present, just off).
+                    openSettings: { permissions.requestAccessibility() }
+                )
             }
             .frame(maxWidth: 560)
 
@@ -234,10 +240,42 @@ private struct PermissionCard: View {
     let icon: String
     let title: String
     let subtitle: String
-    let granted: Bool
-    let action: () -> Void
+    let state: PermissionState
+    /// Friendly one-liner explaining why the permission is required, shown only
+    /// in the `needsManual` state.
+    let deniedWhy: String
+    /// The System Settings pane to send the user to, e.g.
+    /// "Privacy & Security ▸ Accessibility".
+    let settingsPath: String
+    /// Fire the system TCC prompt (only meaningful in `notRequested`).
+    let enable: () -> Void
+    /// Jump straight to the relevant System Settings pane (the `needsManual`
+    /// action — never re-fires the prompt).
+    let openSettings: () -> Void
+
+    var manual: Bool { state == .needsManual }
 
     var body: some View {
+        Group {
+            if manual {
+                manualBody
+            } else {
+                defaultRow
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(manual ? Color.accentSoft : Color("CardBG"))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(manual ? Color.accentColor.opacity(0.4) : Color(nsColor: .separatorColor),
+                        lineWidth: 1)
+        )
+    }
+
+    private var defaultRow: some View {
         HStack(spacing: 14) {
             GlyphTile(icon: icon, size: 48, corner: 13, iconSize: 22)
             VStack(alignment: .leading, spacing: 4) {
@@ -245,25 +283,76 @@ private struct PermissionCard: View {
                 Text(subtitle).font(.body).foregroundStyle(.secondary)
             }
             Spacer()
-            if granted {
+            if state == .granted {
                 Label("Enabled", systemImage: "checkmark.circle.fill")
                     .font(.body.weight(.semibold))
                     .foregroundStyle(.green)
             } else {
-                Button("Enable", action: action)
+                Button("Enable", action: enable)
                     .buttonStyle(InkButtonStyle(compact: true))
                     .modifier(PointingHandCursor())
             }
         }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color("CardBG"))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
-        )
+    }
+
+    private var manualBody: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 14) {
+                // Stronger amber tile so the glyph reads against the tinted card.
+                ZStack {
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .fill(Color.accentColor.opacity(0.22))
+                        .frame(width: 48, height: 48)
+                    Image(systemName: icon)
+                        .font(.system(size: 22, weight: .medium))
+                        .foregroundStyle(Color.accentColor)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title).font(.title3.weight(.semibold)).foregroundStyle(.primary)
+                    Label("Just one more step to start dictating",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(Color.accentColor)
+                }
+                Spacer()
+            }
+
+            Text(deniedWhy)
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(alignment: .leading, spacing: 8) {
+                ManualStep(number: 1, prefix: "Open ", emphasis: settingsPath)
+                ManualStep(number: 2, prefix: "Turn on ", emphasis: title)
+            }
+
+            Button("Open System Settings", action: openSettings)
+                .buttonStyle(InkButtonStyle(compact: true))
+                .modifier(PointingHandCursor())
+        }
+    }
+}
+
+/// A numbered instruction line — amber badge + "prefix **emphasis**" text — used
+/// in the permission card's manual-fix state.
+private struct ManualStep: View {
+    let number: Int
+    let prefix: String
+    let emphasis: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text("\(number)")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.black.opacity(0.85))
+                .frame(width: 18, height: 18)
+                .background(Circle().fill(Color.accentColor))
+            (Text(prefix) + Text(emphasis).fontWeight(.semibold))
+                .font(.body)
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 

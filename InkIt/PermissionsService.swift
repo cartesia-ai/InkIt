@@ -4,6 +4,19 @@ import AppKit
 import ApplicationServices
 import Combine
 
+/// Tri-state for a single permission, used to drive the onboarding card UI.
+///
+/// `needsManual` is the important one: macOS shows its TCC prompt only once per
+/// decision, so after a denial — or after we've already fired the prompt — a
+/// second "Enable" tap silently no-ops (just re-opening Settings). That's the
+/// "bubble keeps popping" loop. In `needsManual` the card stops offering a
+/// re-prompt and instead walks the user to the manual toggle.
+enum PermissionState: Equatable {
+    case granted
+    case notRequested
+    case needsManual
+}
+
 /// Observable permission status with periodic polling. macOS gives no
 /// notification when the user toggles Accessibility in System Settings, so
 /// polling is the pragmatic option.
@@ -13,6 +26,8 @@ final class PermissionsService: ObservableObject {
 
     @Published private(set) var hasMicrophone: Bool = false
     @Published private(set) var hasAccessibility: Bool = false
+    @Published private(set) var microphoneState: PermissionState = .notRequested
+    @Published private(set) var accessibilityState: PermissionState = .notRequested
 
     private var timer: Timer?
     private var axRequestedAt: Date?
@@ -58,6 +73,31 @@ final class PermissionsService: ObservableObject {
         let ax = AXIsProcessTrusted()
         if mic != hasMicrophone { hasMicrophone = mic }
         if ax != hasAccessibility { hasAccessibility = ax }
+
+        let micState = currentMicrophoneState()
+        if micState != microphoneState { microphoneState = micState }
+        let axState = currentAccessibilityState(trusted: ax)
+        if axState != accessibilityState { accessibilityState = axState }
+    }
+
+    private func currentMicrophoneState() -> PermissionState {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:          return .granted
+        case .notDetermined:       return .notRequested
+        case .denied, .restricted: return .needsManual
+        @unknown default:          return .needsManual
+        }
+    }
+
+    private func currentAccessibilityState(trusted: Bool) -> PermissionState {
+        if trusted { return .granted }
+        // macOS exposes no "denied" status for Accessibility — AXIsProcessTrusted
+        // is just false either way. But once we've fired the prompt, re-firing it
+        // is a no-op, so the only way forward is a manual toggle. The resume flag
+        // persists this across the AX relaunch so the manual state survives it.
+        let prompted = axRequestedAt != nil
+            || UserDefaults.standard.bool(forKey: resumeOnboardingKey)
+        return prompted ? .needsManual : .notRequested
     }
 
     var microphoneStatusString: String {
@@ -101,7 +141,7 @@ final class PermissionsService: ObservableObject {
         }
     }
 
-    private func openMicrophoneSettings() {
+    func openMicrophoneSettings() {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") else {
             return
         }
