@@ -53,6 +53,11 @@ struct InkItApp: App {
                 .environmentObject(history)
         }
         .windowResizability(.contentMinSize)
+        // The onboarding view is flexible (maxWidth/maxHeight: .infinity), so its
+        // idealWidth/idealHeight never reach the window — SwiftUI falls back to a
+        // small default. defaultSize is the reliable way to set the first-launch
+        // window size; once a frame is saved it takes over on later launches.
+        .defaultSize(width: 1159, height: 862)
         .commands {
             // Strip the system menu bar down to the bare minimum. macOS won't
             // let us remove the leading "InkIt" menu (About/Quit live there)
@@ -79,8 +84,8 @@ struct RootView: View {
                     .frame(minWidth: 520, minHeight: 480)
             } else {
                 OnboardingRootView()
-                    .frame(minWidth: 620, idealWidth: 940, maxWidth: .infinity,
-                           minHeight: 560, idealHeight: 820, maxHeight: .infinity)
+                    .frame(minWidth: 620, idealWidth: 1159, maxWidth: .infinity,
+                           minHeight: 560, idealHeight: 862, maxHeight: .infinity)
             }
         }
         .onAppear { settings.applyAppearance() }
