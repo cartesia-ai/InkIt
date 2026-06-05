@@ -14,8 +14,8 @@ private enum HUDMetrics {
     /// row, then padding beneath it so the text/waveform aren't jammed against
     /// the notch's bottom edge.
     static let contentTopGap: CGFloat = 3
-    static let contentRowHeight: CGFloat = 6
-    static let contentBottomPad: CGFloat = 6
+    static let contentRowHeight: CGFloat = 9
+    static let contentBottomPad: CGFloat = 3
     static let pillContentHeight: CGFloat = contentTopGap + contentRowHeight + contentBottomPad
     static let pillOverhang: CGFloat = 22
     static let minPillWidth: CGFloat = 168
@@ -270,15 +270,12 @@ private struct NotchHUDView: View {
     // MARK: Content
 
     private var liveContent: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 7) {
             Text("InkIt")
                 .font(.system(size: 8, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.85))
             HUDWaveform(level: coordinator.inputLevel)
-                .frame(width: 26, height: 6)
-            Text("Live")
-                .font(.system(size: 8, weight: .medium))
-                .foregroundStyle(.white.opacity(0.55))
+                .frame(width: 32, height: 9)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
