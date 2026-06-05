@@ -417,7 +417,7 @@ private struct TranscriptHistoryRow: View {
                     .onHover { showingLatency = $0 }
                     .onTapGesture {}  // swallow taps so the row's copy doesn't fire
                     .popover(isPresented: $showingLatency, arrowEdge: .bottom) {
-                        LatencyPopover()
+                        LatencyPopover(latency: latency)
                     }
                     .opacity(hovering ? 1 : 0)
             }
@@ -514,21 +514,58 @@ private struct TranscriptHistoryRow: View {
     }
 }
 
-/// Brief explainer shown when hovering the "Time to text" stat on a row.
+/// Per-stage breakdown shown when hovering the "Time to text" stat on a row.
+/// The row keeps the clean total; this reveals where the time went —
+/// transcribe (release → final transcript), polish (the AI rewrite), and
+/// paste (insertion into the target app). The polish row is omitted when
+/// correction didn't run (polishMs == 0), so it never reads as a stalled 0ms.
 private struct LatencyPopover: View {
+    let latency: TranscriptHistoryStore.Latency
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             Text("Time to text")
                 .font(.caption2.weight(.semibold))
                 .textCase(.uppercase)
                 .foregroundStyle(.secondary)
 
             Text("Hotkey release → text on screen")
-                .font(.callout)
+                .font(.caption)
+                .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 4) {
+                stageRow("Transcribe", latency.transcribeMs)
+                if latency.polishMs > 0 {
+                    stageRow("Polish", latency.polishMs)
+                }
+                stageRow("Paste", latency.pasteMs)
+            }
+
+            Divider()
+
+            stageRow("Total", latency.totalMs, emphasized: true)
         }
         .padding(14)
         .frame(width: 220)
+    }
+
+    private func stageRow(_ label: String, _ ms: Int, emphasized: Bool = false) -> some View {
+        HStack {
+            Text(label)
+                .foregroundStyle(emphasized ? .primary : .secondary)
+            Spacer(minLength: 12)
+            Text(Self.fmt(ms))
+                .monospacedDigit()
+                .foregroundStyle(.primary)
+        }
+        .font(emphasized ? .caption.weight(.semibold) : .caption)
+    }
+
+    private static func fmt(_ ms: Int) -> String {
+        ms < 1000 ? "\(ms)ms" : String(format: "%.1fs", Double(ms) / 1000)
     }
 }
 
