@@ -104,9 +104,8 @@ struct MainWindowView: View {
     @EnvironmentObject var settings: SettingsStore
     @EnvironmentObject var history: TranscriptHistoryStore
     @State private var copiedID: UUID?
-    @State private var tab: MainTab = .home
-
-    private enum MainTab: Hashable { case home, settings }
+    @State private var showSettings = false
+    @State private var settingsPane: SettingsView.Pane = .general
 
     private struct TranscriptGroup: Identifiable {
         let id: Date
@@ -142,34 +141,76 @@ struct MainWindowView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            tabBar
-            Divider()
-            ZStack {
-                switch tab {
-                case .home:
-                    homeView.transition(.opacity)
-                case .settings:
-                    SettingsView().transition(.opacity)
-                }
-            }
+        homeView
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .background(Color(NSColor.windowBackgroundColor))
-        .background(settingsShortcut)
-        .background(WindowTitleHider())
+            // "InkIt" rides in the native titlebar (no glass). No dedicated top
+            // strip — the gear pins to the top-right corner and the dictation
+            // hint tucks inline next to the History header (see transcriptList).
+            .overlay(alignment: .topTrailing) {
+                gearButton
+                    .padding(.top, 6)
+                    .padding(.trailing, 14)
+            }
+            .background(Color("HomeCanvas"))
+            .background(settingsShortcut)
+            .background(WindowChrome())
+            .overlay { settingsModal }
     }
 
-    // In-app tab bar. Lives in the content rather than the window toolbar so
-    // the native title bar stays clean — just the traffic lights.
-    private var tabBar: some View {
-        HStack(spacing: 6) {
-            tabButton(.home, title: "Home", icon: "house")
-            tabButton(.settings, title: "Settings", icon: "gearshape")
-            Spacer()
+    // Settings as a centered modal over a dimmed backdrop (Flow-style), not a
+    // gear-anchored popover. Click-out or the pane's ✕ / Esc dismisses it.
+    @ViewBuilder private var settingsModal: some View {
+        if showSettings {
+            ZStack {
+                Color.black.opacity(0.18)
+                    .contentShape(Rectangle())
+                    .onTapGesture { dismissSettings() }
+                SettingsPopover(pane: $settingsPane, onClose: dismissSettings)
+                    .background(Color(nsColor: .windowBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .strokeBorder(Color.primary.opacity(0.08))
+                    )
+                    .shadow(color: .black.opacity(0.28), radius: 40, y: 18)
+            }
+            .transition(.opacity)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 9)
+    }
+
+    private func dismissSettings() {
+        withAnimation(.easeOut(duration: 0.12)) { showSettings = false }
+    }
+
+    private var gearButton: some View {
+        Button { withAnimation(.easeOut(duration: 0.12)) { showSettings.toggle() } } label: {
+            Image(systemName: "gearshape")
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(showSettings ? Color.accentColor : .secondary)
+                .frame(width: 34, height: 34)
+                .background(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(showSettings ? Color.accentSoft : Color.clear)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .modifier(PointingHandCursor())
+        .help("Settings (⌘,)")
+    }
+
+    // Quiet "Hold fn to dictate" line with a live status dot — appended with the
+    // active state (recording / transcribing) only while something is happening.
+    private var statusHint: some View {
+        HStack(spacing: 7) {
+            Circle()
+                .fill(coordinator.statusColor)
+                .frame(width: 7, height: 7)
+            Text(statusLine)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.trailing, 6)
     }
 
     // Hotkey hint at rest; appends the live state only while something is
@@ -180,38 +221,9 @@ struct MainWindowView: View {
         return status == "Idle" ? hint : "\(hint) · \(status)"
     }
 
-    // Icon + label pill tab. The active tab is tinted; tapping crossfades the
-    // content and the highlight together.
-    @ViewBuilder
-    private func tabButton(_ value: MainTab, title: String, icon: String) -> some View {
-        let selected = (tab == value)
-        Button {
-            withAnimation(.easeInOut(duration: 0.18)) { tab = value }
-        } label: {
-            HStack(spacing: 7) {
-                Image(systemName: icon)
-                    .font(.system(size: 13, weight: .medium))
-                Text(title)
-                    .font(.system(size: 13, weight: .medium))
-            }
-            .foregroundStyle(selected ? Color.accentColor : Color.secondary)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 7)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(selected ? Color.accentColor.opacity(0.14) : Color.clear)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .help(title)
-    }
-
-    // Invisible affordance so ⌘, still jumps to Settings — the macOS-standard
-    // shortcut, preserved even though Settings is now a tab rather than a
-    // separate window.
+    // Invisible affordance so ⌘, opens Settings — the macOS-standard shortcut.
     private var settingsShortcut: some View {
-        Button("") { withAnimation(.easeInOut(duration: 0.18)) { tab = .settings } }
+        Button("") { showSettings = true }
             .keyboardShortcut(",", modifiers: .command)
             .opacity(0)
             .frame(width: 0, height: 0)
@@ -231,54 +243,276 @@ struct MainWindowView: View {
         }
     }
 
-    private var transcriptList: some View {
-        VStack(spacing: 0) {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 16) {
-                    ForEach(groupedEntries) { group in
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(group.title)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                                .textCase(.uppercase)
-                                .padding(.horizontal, 2)
+    // Below this content width the stats rail is dropped entirely and the
+    // history list takes the full window — small windows stay focused on the
+    // transcripts rather than cramming a sidebar alongside them.
+    private static let railBreakpoint: CGFloat = 780
 
-                            LazyVStack(spacing: 8) {
-                                ForEach(group.entries) { entry in
-                                    transcriptRow(entry)
-                                }
-                            }
-                        }
+    // Two columns on the warm canvas, each with a section header above a soft
+    // rounded panel — history on the left, stats (+ Polish nudge) on the right.
+    // No vertical divider; the gap separates them. Below the breakpoint the rail
+    // drops and history takes the full width.
+    private var transcriptList: some View {
+        GeometryReader { geo in
+            let showRail = geo.size.width >= Self.railBreakpoint
+            HStack(alignment: .top, spacing: 16) {
+                VStack(alignment: .leading, spacing: 0) {
+                    historyHeader
+                    mainPanel
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+                if showRail {
+                    VStack(alignment: .leading, spacing: 0) {
+                        columnHeader("Your stats", subtitle: nil)
+                        railPanel
+                        Spacer(minLength: 0)
                     }
+                    .frame(width: 300)
+                    .frame(maxHeight: .infinity, alignment: .top)
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 16)
-            }
-            Divider()
-            HStack(spacing: 10) {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(coordinator.statusColor)
-                        .frame(width: 7, height: 7)
-                    Text(statusLine)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Text("\(history.entries.count) transcript\(history.entries.count == 1 ? "" : "s")")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Button(role: .destructive) {
-                    history.clear()
-                } label: {
-                    Label("Clear", systemImage: "trash")
-                }
-                .buttonStyle(.borderless)
-                .modifier(PointingHandCursor())
             }
             .padding(.horizontal, 18)
-            .padding(.vertical, 10)
+            .padding(.top, 20)
+            .padding(.bottom, 16)
         }
+    }
+
+    // History header: title on the left, the "Hold fn to dictate" cue + live
+    // status dot right-aligned to the History box's right edge.
+    private var historyHeader: some View {
+        HStack(spacing: 14) {
+            Text("History")
+                .font(.system(size: 19, weight: .bold))
+                .foregroundStyle(.primary)
+            Spacer(minLength: 0)
+            statusHint
+        }
+        .padding(.horizontal, 4)
+        .padding(.bottom, 12)
+    }
+
+    private func columnHeader(_ title: String, subtitle: String?) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 9) {
+            Text(title)
+                .font(.system(size: 19, weight: .bold))
+                .foregroundStyle(.primary)
+            if let subtitle {
+                Text(subtitle)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.horizontal, 4)
+        .padding(.bottom, 12)
+    }
+
+    // The history log — a soft near-white page. Day headers, then rows divided by
+    // faint full-width hairlines (no per-row boxes).
+    private var mainPanel: some View {
+        ScrollView {
+            // Pinned section headers keep the current day (Today / Yesterday / …)
+            // stuck to the top of the panel as you scroll its rows.
+            LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                ForEach(groupedEntries) { group in
+                    Section {
+                        ForEach(Array(group.entries.enumerated()), id: \.element.id) { index, entry in
+                            if index > 0 {
+                                Rectangle()
+                                    .fill(Color.primary.opacity(0.06))
+                                    .frame(height: 1)
+                                    .padding(.horizontal, 8)
+                            }
+                            transcriptRow(entry)
+                        }
+                    } header: {
+                        dayHeader(group.title)
+                    }
+                }
+            }
+            // Soft cap so transcripts don't run edge-to-edge on a maximized window.
+            .frame(maxWidth: 820, alignment: .leading)
+            .padding(.horizontal, 24)
+            .padding(.bottom, 18)
+        }
+        .scrollIndicators(.hidden)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color("HomeLift"))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.04), radius: 6, y: 1)
+    }
+
+    // Pinned day header. Carries the panel fill so scrolling rows pass cleanly
+    // beneath it; full-width so nothing peeks through at the edges.
+    private func dayHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 11, weight: .semibold))
+            .tracking(0.6)
+            .textCase(.uppercase)
+            .foregroundStyle(.tertiary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 8)
+            .padding(.top, 14)
+            .padding(.bottom, 8)
+            .background(Color("HomeLift"))
+    }
+
+    // Stats (warm amber icon tiles) and, when Polish is off, the nudge — all in
+    // one panel that sizes to its content, so there's never an empty void.
+    private var railPanel: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            wordsStatRow
+            timeSavedStatRow
+            avgLatencyStatRow
+
+            if showPolishNudge {
+                Rectangle()
+                    .fill(Color.primary.opacity(0.06))
+                    .frame(height: 1)
+                    .padding(.vertical, 14)
+                nudgeContent
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color("HomeSurface"))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+        )
+    }
+
+    private var showPolishNudge: Bool {
+        !settings.correctionEnabled && !settings.polishNudgeDismissed
+    }
+
+    private var wordsStatRow: some View {
+        statRow(icon: "text.alignleft",
+                value: Self.compactNumber(history.lifetimeWords),
+                unit: "words", label: "dictated")
+    }
+
+    @ViewBuilder private var timeSavedStatRow: some View {
+        let saved = Self.timeSaved(words: history.lifetimeWords)
+        statRow(icon: "clock", value: saved.value, unit: saved.unit, label: "saved vs typing")
+    }
+
+    @ViewBuilder private var avgLatencyStatRow: some View {
+        if let avg = averageLatencyMs {
+            let f = Self.latencyValue(avg)
+            statRow(icon: "bolt.fill", value: f.value, unit: f.unit, label: "avg time to text")
+        } else {
+            statRow(icon: "bolt.fill", value: "—", unit: "", label: "avg time to text")
+        }
+    }
+
+    // A friendly stat: amber icon tile + big number/unit + quiet label beneath.
+    private func statRow(icon: String, value: String, unit: String, label: String) -> some View {
+        HStack(spacing: 13) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.accentSoft)
+                Image(systemName: icon)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(Color.accentColor)
+            }
+            .frame(width: 34, height: 34)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(value)
+                        .font(.system(size: 21, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .monospacedDigit()
+                    if !unit.isEmpty {
+                        Text(unit)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Text(label)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.tertiary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 9)
+    }
+
+    // Inline nudge content (no card chrome — it lives inside the stats panel).
+    private var nudgeContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(Color.accentSoft)
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                }
+                .frame(width: 30, height: 30)
+
+                Spacer(minLength: 0)
+
+                Button { settings.polishNudgeDismissed = true } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                        .padding(5)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .modifier(PointingHandCursor())
+                .accessibilityLabel("Dismiss")
+            }
+            .padding(.bottom, 12)
+
+            Text("Polish your dictation")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(.primary)
+                .padding(.bottom, 6)
+
+            Text("Turn on AI Polish to auto-fix filler words, names, and formatting as you speak.")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.bottom, 14)
+
+            Button {
+                settingsPane = .polish
+                showSettings = true
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("Set up Polish")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.accentColor)
+                )
+            }
+            .buttonStyle(.plain)
+            .modifier(PointingHandCursor())
+        }
+    }
+
+    /// Mean total time-to-text over the stored history (entries that recorded a
+    /// latency). A rolling recent average — more relevant than a lifetime mean.
+    private var averageLatencyMs: Int? {
+        let totals = history.entries.compactMap { $0.latency?.totalMs }
+        guard !totals.isEmpty else { return nil }
+        return totals.reduce(0, +) / totals.count
     }
 
     private func transcriptRow(_ entry: TranscriptHistoryStore.Entry) -> some View {
@@ -293,6 +527,37 @@ struct MainWindowView: View {
         ) {
             copy(entry)
         }
+    }
+
+    // MARK: Stat formatting
+
+    /// 412 · 8.4K · 1.2M — compact so a big lifetime total stays one glance.
+    static func compactNumber(_ n: Int) -> String {
+        switch n {
+        case ..<1_000:
+            return "\(n)"
+        case ..<1_000_000:
+            let k = Double(n) / 1_000
+            return k < 10 ? String(format: "%.1fK", k) : "\(Int(k.rounded()))K"
+        default:
+            let m = Double(n) / 1_000_000
+            return String(format: "%.1fM", m)
+        }
+    }
+
+    /// Estimated time saved vs typing: the gap between typing the words (~40 wpm)
+    /// and speaking them (~150 wpm). An estimate — the "saved vs typing" label
+    /// signals as much.
+    static func timeSaved(words: Int) -> (value: String, unit: String) {
+        let minutes = Double(words) * (1.0 / 40.0 - 1.0 / 150.0)
+        if minutes < 1 { return ("0", "min") }
+        if minutes < 60 { return ("\(Int(minutes.rounded()))", "min") }
+        let hours = minutes / 60
+        return (hours < 10 ? String(format: "%.1f", hours) : "\(Int(hours.rounded()))", "h")
+    }
+
+    static func latencyValue(_ ms: Int) -> (value: String, unit: String) {
+        ms < 1000 ? ("\(ms)", "ms") : (String(format: "%.1f", Double(ms) / 1000), "s")
     }
 
     private func copy(_ entry: TranscriptHistoryStore.Entry) {
@@ -509,38 +774,41 @@ private struct TranscriptHistoryRow: View {
         return original != nil ? .polished : .off
     }
 
-    // Each row is a soft card. At rest it shows the cleaned-up transcript plus a
-    // dimmed timestamp anchor; the rest of the detail line (latency, polish
-    // sparkle) fades in on hover. A failure warning is the one signal that stays
-    // visible at rest. The detail line's height is always reserved so hovering
-    // never reflows the list.
+    // A compact transcript-log entry: timestamp in a fixed left gutter, the
+    // cleaned-up text in the middle, affordances on the trailing edge. Polish /
+    // time / copy are hover-only so resting rows are just time + words and stay
+    // tight — except a *failed* polish, which shows at rest (silently hiding a
+    // failure is worse than a touch of clutter). The trailing column is a fixed
+    // width so text wraps consistently and nothing shifts on hover.
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top, spacing: 10) {
-                Text(text)
-                    .font(.body)
-                    .foregroundStyle(.primary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+        HStack(alignment: .top, spacing: 14) {
+            Text(timestamp)
+                .font(.system(size: 15))
+                .foregroundStyle(.tertiary)
+                .monospacedDigit()
+                .frame(width: 74, alignment: .leading)
+                .padding(.top, 1)
 
-                CopyTranscriptGlyph(copied: copied, highlighted: hovering)
-                    .opacity(hovering || copied ? 1 : 0)
-            }
+            Text(text)
+                .font(.system(size: 16))
+                .foregroundStyle(.primary)
+                .lineSpacing(3)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-            detailLine
+            trailingControls
+                .frame(width: 68, alignment: .trailing)
+                .padding(.top, 2)
         }
-        .padding(12)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(Rectangle())
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(rowFill)
+                .fill(hovering ? Color.accentColor.opacity(0.055) : Color.clear)
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(rowStroke, lineWidth: hovering || copied ? 1 : 0)
-        )
-        // Whole row is click-to-copy. The sparkle below swallows its own taps
-        // so inspecting the diff never triggers a copy.
+        // Whole row is click-to-copy. The chips swallow their own taps so
+        // inspecting the diff/latency never triggers a copy.
         .onTapGesture { copy() }
         .onHover { isHovering in
             withAnimation(.easeOut(duration: 0.12)) {
@@ -553,39 +821,29 @@ private struct TranscriptHistoryRow: View {
         .accessibilityLabel(copied ? "Copied transcript" : "Copy transcript")
     }
 
-    // The detail line carries two always-visible, tappable pills — polish and
-    // time-to-text — anchored by a dim timestamp. Earlier these were hidden until
-    // hover and opened on a second hover, which testers found undiscoverable and
-    // "wonky." Now the affordances read at rest and open on a single click.
-    private var detailLine: some View {
+    // Trailing affordances, right-aligned in a fixed-width column. A failed
+    // polish stays visible at rest; everything else fades in on hover.
+    private var trailingControls: some View {
         HStack(spacing: 8) {
-            // Always-on anchor: a dim timestamp keeps the row from reading blank.
-            // Brightens slightly on hover alongside the pills.
-            Text(timestamp)
-                .font(.caption)
-                .foregroundStyle(hovering ? .secondary : .tertiary)
-
-            // Pills group on the left, next to the timestamp: polish first (when
-            // it ran), then time-to-text. With polish off, the time pill sits
-            // directly beside the timestamp.
-            switch outcome {
-            case .polished: polishPill
-            case .failed:   failurePill
-            case .off:      EmptyView()
-            }
-
-            if let latency {
-                timePill(latency)
-            }
-
             Spacer(minLength: 0)
+            CopyTranscriptGlyph(copied: copied)
+                .opacity(hovering || copied ? 1 : 0)
+            if outcome == .polished {
+                polishPill.opacity(hovering ? 1 : 0)
+            }
+            if outcome == .failed {
+                failurePill
+            }
+            if let latency {
+                timePill(latency).opacity(hovering ? 1 : 0)
+            }
         }
     }
 
     /// Sparkle glyph — a single click reveals the before/after diff. The label
     /// and exact stats live in the popover so the row stays uncluttered.
     private var polishPill: some View {
-        iconChip("sparkles", fg: Color.accentColor)
+        IconChip(systemName: "sparkles", fg: Color.accentColor, help: "See what changed")
             .onTapGesture { showingDiff.toggle() }
             .popover(isPresented: $showingDiff, arrowEdge: .bottom) {
                 DiffPopover(before: original ?? text, after: text)
@@ -597,7 +855,7 @@ private struct TranscriptHistoryRow: View {
     /// Struck-through sparkle in soft amber — polish failed and raw text was
     /// pasted. Click for the actionable reason.
     private var failurePill: some View {
-        iconChip("sparkles.slash", fg: .orange)
+        IconChip(systemName: "sparkles.slash", fg: .orange, help: Self.failureMessage(failure))
             .onTapGesture { showingFailure.toggle() }
             .popover(isPresented: $showingFailure, arrowEdge: .bottom) {
                 Text(Self.failureMessage(failure))
@@ -614,25 +872,13 @@ private struct TranscriptHistoryRow: View {
     /// Clock glyph — the exact total and per-stage split stay hidden until the
     /// click opens the breakdown, keeping the row quiet.
     private func timePill(_ latency: TranscriptHistoryStore.Latency) -> some View {
-        iconChip("clock", fg: .secondary)
+        IconChip(systemName: "clock", fg: .secondary, help: "Speed")
             .onTapGesture { showingLatency.toggle() }
             .popover(isPresented: $showingLatency, arrowEdge: .bottom) {
                 LatencyPopover(latency: latency, polishFailed: outcome == .failed)
             }
             .modifier(PointingHandCursor())
             .accessibilityLabel("Time to text \(Self.fmt(latency.totalMs)) — show breakdown")
-    }
-
-    /// A bare SF Symbol affordance: no label, no fill — just a tinted glyph with
-    /// a comfortable tap target. The caller's tap gesture swallows the click so
-    /// the row's click-to-copy never fires when inspecting a chip.
-    private func iconChip(_ systemName: String, fg: Color) -> some View {
-        Image(systemName: systemName)
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(fg)
-            .padding(.horizontal, 2)
-            .padding(.vertical, 3)
-            .contentShape(Rectangle())
     }
 
     /// Terse, provider-aware reason for why polish failed, with the action the
@@ -669,19 +915,6 @@ private struct TranscriptHistoryRow: View {
 
     private static func fmt(_ ms: Int) -> String {
         ms < 1000 ? "\(ms)ms" : String(format: "%.1fs", Double(ms) / 1000)
-    }
-
-    private var rowFill: Color {
-        if hovering {
-            return Color.accentColor.opacity(0.08)
-        }
-        // Soft card: a faint, borderless fill that lifts the row off the window
-        // background just enough to read as a distinct item. Adapts to light/dark.
-        return Color.primary.opacity(0.04)
-    }
-
-    private var rowStroke: Color {
-        Color.accentColor.opacity(copied ? 0.32 : 0.28)
     }
 }
 
@@ -973,37 +1206,71 @@ private struct DiffLegendLabelStyle: LabelStyle {
 /// Hides the window's title text while keeping the unified toolbar and traffic
 /// lights, so the toolbar shows just the status item and the Home/Settings
 /// tabs. The leading status item already identifies the app.
-private struct WindowTitleHider: NSViewRepresentable {
+private struct WindowChrome: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
-        DispatchQueue.main.async { [weak view] in hide(view?.window) }
+        DispatchQueue.main.async { [weak view] in configure(view?.window) }
         return view
     }
     func updateNSView(_ nsView: NSView, context: Context) {
-        DispatchQueue.main.async { [weak nsView] in hide(nsView?.window) }
+        DispatchQueue.main.async { [weak nsView] in configure(nsView?.window) }
     }
-    private func hide(_ window: NSWindow?) {
+    private func configure(_ window: NSWindow?) {
         guard let window else { return }
-        window.titleVisibility = .hidden
-        window.title = ""
+        // Show the native, system-drawn title "InkIt" — centered on the traffic-
+        // lights row with no toolbar (so no macOS 26 glass capsule). Keep the
+        // titlebar transparent + full-size content so the warm canvas extends all
+        // the way to the top behind the title; our own content (the hint/gear
+        // strip and lists) lays out below the titlebar safe area, unobscured.
+        window.title = "InkIt"
+        window.titleVisibility = .visible
+        window.titlebarAppearsTransparent = true
+        window.styleMask.insert(.fullSizeContentView)
+    }
+}
+
+/// A bare SF Symbol affordance with its own hover backdrop and tooltip. No
+/// label or fill at rest — just a tinted glyph in a comfortable tap target that
+/// lifts a soft rounded backdrop while hovered, and surfaces a one-word tooltip
+/// so the action reads before the click. The caller's tap gesture swallows the
+/// click so the row's click-to-copy never fires when inspecting a chip.
+private struct IconChip: View {
+    let systemName: String
+    let fg: Color
+    let help: String
+    @State private var hovering = false
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(fg)
+            .frame(width: 24, height: 24)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.primary.opacity(hovering ? 0.08 : 0))
+            )
+            .contentShape(Rectangle())
+            .onHover { hovering = $0 }
+            .help(help)
     }
 }
 
 private struct CopyTranscriptGlyph: View {
     let copied: Bool
-    let highlighted: Bool
+    @State private var hovering = false
 
     var body: some View {
-        ZStack {
-            Circle()
-                .fill(copied ? Color.green.opacity(0.15) : Color.primary.opacity(highlighted ? 0.06 : 0))
-                .frame(width: 24, height: 24)
-
-            Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(copied ? .green : .secondary)
-        }
-        .frame(width: 24, height: 24)
-        .animation(.easeOut(duration: 0.15), value: copied)
+        Image(systemName: copied ? "checkmark" : "doc.on.doc")
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(copied ? .green : .secondary)
+            .frame(width: 24, height: 24)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(copied ? Color.green.opacity(0.15) : Color.primary.opacity(hovering ? 0.08 : 0))
+            )
+            .contentShape(Rectangle())
+            .onHover { hovering = $0 }
+            .help("Copy")
+            .animation(.easeOut(duration: 0.15), value: copied)
     }
 }

@@ -358,14 +358,151 @@ private final class RevealingTextField: NSTextField {
 
 struct SettingsView: View {
     @EnvironmentObject var settings: SettingsStore
-    @StateObject private var permissions = PermissionsService.shared
 
-    private var llmKeyBinding: Binding<String> {
-        Binding(
-            get: { settings.apiKey(for: settings.rewriteProvider) },
-            set: { settings.setAPIKey($0, for: settings.rewriteProvider) }
-        )
+    /// Settings is organized into a small sidebar. Polish earns its own pane
+    /// (rich, multi-state); everything else collapses into General, with
+    /// Permissions kept separate for its OS grant flows.
+    enum Pane: String, CaseIterable, Identifiable {
+        case general, polish, permissions
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .general:     return "General"
+            case .polish:      return "Polish"
+            case .permissions: return "Permissions"
+            }
+        }
+        var icon: String {
+            switch self {
+            case .general:     return "gearshape"
+            case .polish:      return "wand.and.stars"
+            case .permissions: return "lock.shield"
+            }
+        }
     }
+
+    @State private var pane: Pane? = .general
+
+    var body: some View {
+        NavigationSplitView {
+            List(Pane.allCases, selection: $pane) { p in
+                Label(p.title, systemImage: p.icon).tag(p)
+            }
+            .navigationSplitViewColumnWidth(min: 168, ideal: 184, max: 220)
+        } detail: {
+            Group {
+                switch pane ?? .general {
+                case .general:     GeneralSettingsPane()
+                case .polish:      PolishSettingsView()
+                case .permissions: PermissionsPane()
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
+        .navigationSplitViewStyle(.balanced)
+    }
+}
+
+/// Settings as a popover: the same sidebar → detail layout as `SettingsView`,
+/// but in a fixed-size panel anchored to the Home gear button. Dismisses on the
+/// ✕, on Esc, or by clicking outside (the popover handles click-out). Reuses the
+/// existing panes so there's one source of truth for each.
+struct SettingsPopover: View {
+    @EnvironmentObject var settings: SettingsStore
+    @Binding var pane: SettingsView.Pane
+    let onClose: () -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            sidebar
+            Divider()
+            detail
+        }
+        .frame(width: 840, height: 600)
+    }
+
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Settings")
+                .font(.system(size: 11, weight: .semibold))
+                .tracking(0.5)
+                .textCase(.uppercase)
+                .foregroundStyle(.tertiary)
+                .padding(.horizontal, 10)
+                .padding(.top, 8)
+                .padding(.bottom, 8)
+
+            ForEach(SettingsView.Pane.allCases) { p in
+                sidebarItem(p)
+            }
+            Spacer()
+        }
+        .padding(10)
+        .frame(width: 188)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private func sidebarItem(_ p: SettingsView.Pane) -> some View {
+        let selected = pane == p
+        return Button { pane = p } label: {
+            HStack(spacing: 9) {
+                Image(systemName: p.icon)
+                    .font(.system(size: 13, weight: .medium))
+                    .frame(width: 18)
+                Text(p.title)
+                    .font(.system(size: 13, weight: .medium))
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(selected ? Color.accentColor : .primary)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(selected ? Color.accentSoft : Color.clear)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .modifier(PointingHandCursor())
+    }
+
+    private var detail: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(pane.title)
+                    .font(.system(size: 15, weight: .semibold))
+                Spacer()
+                // No visible close control (dismiss via click-out or Esc); this
+                // hidden button keeps the Esc shortcut wired up.
+                Button("", action: onClose)
+                    .keyboardShortcut(.cancelAction)
+                    .opacity(0)
+                    .frame(width: 0, height: 0)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 11)
+
+            Divider()
+
+            Group {
+                switch pane {
+                case .general:     GeneralSettingsPane()
+                case .polish:      PolishSettingsView()
+                case .permissions: PermissionsPane()
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// General pane — appearance, the dictation shortcut, the Cartesia key, and the
+/// lone Advanced (debug) toggle. Everything that isn't Polish or Permissions.
+private struct GeneralSettingsPane: View {
+    @EnvironmentObject var settings: SettingsStore
 
     var body: some View {
         Form {
@@ -375,6 +512,17 @@ struct SettingsView: View {
                 SectionHeader(
                     "Appearance",
                     help: "Choose how InkIt looks. System follows your Mac’s appearance automatically."
+                )
+            }
+
+            Section {
+                HotkeyRecorder()
+                    .environmentObject(settings)
+                SettingsToggle("Play sound on press and release", isOn: $settings.playFeedbackSounds)
+            } header: {
+                SectionHeader(
+                    "Shortcut",
+                    help: "Hold this shortcut to dictate; release to transcribe and paste. Pick any key with a modifier, or use Fn."
                 )
             }
 
@@ -394,85 +542,6 @@ struct SettingsView: View {
             }
 
             Section {
-                HotkeyRecorder()
-                    .environmentObject(settings)
-                SettingsToggle("Play sound on press and release", isOn: $settings.playFeedbackSounds)
-            } header: {
-                SectionHeader(
-                    "Hotkey",
-                    help: "Hold this shortcut to dictate; release to transcribe and paste. Pick any key with a modifier, or use Fn."
-                )
-            }
-
-            Section {
-                SettingsToggle(
-                    "Polish transcripts",
-                    caption: "Cleans up dictation with an LLM before pasting.",
-                    isOn: $settings.correctionEnabled
-                )
-
-                if settings.correctionEnabled {
-                    SettingsToggle(
-                        "Use screen context",
-                        caption: "Reads the focused app to fix names and identifiers.",
-                        isOn: $settings.screenContextEnabled
-                    )
-
-                    Picker("Provider", selection: $settings.rewriteProvider) {
-                        ForEach(LLMProvider.allCases) { provider in
-                            Text(provider.displayName).tag(provider)
-                        }
-                    }
-                    .onChange(of: settings.rewriteProvider) { _, newProvider in
-                        if !newProvider.models.contains(settings.rewriteModel) {
-                            settings.rewriteModel = newProvider.defaultModel
-                        }
-                    }
-
-                    // With a single curated model per provider the picker is
-                    // just a one-item dropdown, so show the model as a label.
-                    // The picker reappears automatically if a provider regains
-                    // multiple models.
-                    if settings.rewriteProvider.models.count > 1 {
-                        Picker("Model", selection: $settings.rewriteModel) {
-                            ForEach(settings.rewriteProvider.models, id: \.self) { model in
-                                Text(model).tag(model)
-                            }
-                        }
-                    } else {
-                        LabeledContent("Model", value: settings.rewriteModel)
-                    }
-
-                    APIKeyField(
-                        title: "\(settings.rewriteProvider.displayName) API key",
-                        text: llmKeyBinding,
-                        placeholder: settings.rewriteProvider.keyPlaceholder,
-                        linkTitle: "Get your \(settings.rewriteProvider.displayName) API key",
-                        linkURL: settings.rewriteProvider.keyURL
-                    )
-                }
-            } header: {
-                SectionHeader(
-                    "AI correction",
-                    help: "Optionally run your transcript through an LLM to fix punctuation, filler words, and names before it’s pasted. Uses your own provider key."
-                )
-            }
-
-            Section {
-                PermissionRow(label: "Microphone", granted: permissions.hasMicrophone) {
-                    permissions.requestMicrophone { _ in }
-                }
-                PermissionRow(label: "Accessibility", granted: permissions.hasAccessibility) {
-                    permissions.requestAccessibility()
-                }
-            } header: {
-                SectionHeader(
-                    "Permissions",
-                    help: "InkIt needs the microphone to record dictation, and Accessibility to read on-screen context and paste into the focused app."
-                )
-            }
-
-            Section {
                 SettingsToggle(
                     "Debug logging",
                     caption: "Writes a developer trace to ~/Library/Logs/InkIt-debug.log. Off by default — traces include your transcripts and on-screen context.",
@@ -486,9 +555,270 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .padding()
+        .navigationTitle("General")
+    }
+}
+
+/// Permissions pane — mic + Accessibility, kept separate because each has its
+/// own OS grant flow and "needs manual fix" state.
+private struct PermissionsPane: View {
+    @StateObject private var permissions = PermissionsService.shared
+
+    var body: some View {
+        Form {
+            Section {
+                PermissionRow(label: "Microphone", granted: permissions.hasMicrophone) {
+                    permissions.requestMicrophone { _ in }
+                }
+                PermissionRow(label: "Accessibility", granted: permissions.hasAccessibility) {
+                    permissions.requestAccessibility()
+                }
+            } header: {
+                SectionHeader(
+                    "Permissions",
+                    help: "InkIt needs the microphone to record dictation, and Accessibility to read on-screen context and paste into the focused app."
+                )
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle("Permissions")
         .onAppear { permissions.startPolling() }
         .onDisappear { permissions.stopPolling() }
+    }
+}
+
+// MARK: - Polish pane
+
+/// The "Polish" settings pane. The key is the switch: with no key it's a setup
+/// screen (no toggle); a valid key turns polish on. Four honest states —
+/// setup / on / paused / key-broken — so it never silently pastes raw while
+/// claiming to be on. Provider defaults to Groq (recommended) but any of the
+/// supported providers works. See prototypes/polish-settings-sidebar.html.
+struct PolishSettingsView: View {
+    @EnvironmentObject var settings: SettingsStore
+    @StateObject private var validator = LLMKeyValidator(provider: SettingsStore.shared.rewriteProvider)
+    /// In the configured states, "Change" reveals the provider picker + key
+    /// field in place rather than jumping back to the setup screen.
+    @State private var editingProvider = false
+
+    private var provider: LLMProvider { settings.rewriteProvider }
+
+    private var keyBinding: Binding<String> {
+        Binding(
+            get: { settings.apiKey(for: settings.rewriteProvider) },
+            set: { settings.setAPIKey($0, for: settings.rewriteProvider) }
+        )
+    }
+
+    /// Master on/off as the user sees it: only truly "on" when running. Turning
+    /// it off pauses (keeps the key); turning it on resumes if the key is good.
+    private var masterBinding: Binding<Bool> {
+        Binding(
+            get: { settings.polishUIState == .on },
+            set: { on in on ? (settings.correctionEnabled = true) : settings.pausePolish() }
+        )
+    }
+
+    var body: some View {
+        Form {
+            switch settings.polishUIState {
+            case .setup:     setupSections
+            case .on:        configuredSections(paused: false, broken: false)
+            case .paused:    configuredSections(paused: true, broken: false)
+            case .keyBroken: configuredSections(paused: false, broken: true)
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle("Polish")
+        .onAppear {
+            validator.setProvider(settings.rewriteProvider)
+            validator.keyChanged(settings.apiKey(for: settings.rewriteProvider))
+        }
+        .onChange(of: settings.rewriteProvider) { _, p in
+            if !p.models.contains(settings.rewriteModel) { settings.rewriteModel = p.defaultModel }
+            validator.setProvider(p)
+            validator.keyChanged(settings.apiKey(for: p))
+        }
+        .onChange(of: settings.llmAPIKeys) { _, _ in
+            validator.keyChanged(settings.apiKey(for: settings.rewriteProvider))
+        }
+        .onChange(of: validator.state) { _, state in
+            // A verified key is the commit: turn on from setup, or resume from a
+            // broken key. Never auto-resume a deliberate pause.
+            guard state == .verified else { return }
+            switch settings.polishUIState {
+            case .setup, .keyBroken:
+                settings.enablePolish(provider: settings.rewriteProvider)
+                editingProvider = false
+            default: break
+            }
+        }
+    }
+
+    // MARK: Setup (no key)
+
+    @ViewBuilder private var setupSections: some View {
+        Section { PolishDemoCard() } header: {
+            Text("Cleans up filler, punctuation, and misheard words.")
+                .font(.subheadline).foregroundStyle(.secondary).textCase(nil)
+                .padding(.bottom, 2)
+        }
+
+        Section {
+            providerPicker
+            keyField
+            validationStatus
+        } header: {
+            SectionHeader("Connect a provider",
+                          help: "Polish uses your own AI key, so it runs on your account and InkIt stays free. Groq is recommended (free tier, fastest), but OpenAI, Anthropic, and Gemini all work.")
+        } footer: {
+            Text("Polish uses your own AI key. It stays on this Mac.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: Configured (on / paused / key-broken)
+
+    @ViewBuilder private func configuredSections(paused: Bool, broken: Bool) -> some View {
+        if broken {
+            Section {
+                Label {
+                    Text("Polish is paused. Your key stopped working. Transcripts are pasting unchanged. Re-enter a key to resume.")
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                }
+                .font(.callout)
+            }
+        }
+
+        Section {
+            SettingsToggle(
+                "Polish transcripts",
+                caption: broken ? "Paused — your key stopped working."
+                       : paused ? "Paused. Your key is saved."
+                       : "Cleaning up every dictation before it’s pasted.",
+                isOn: masterBinding
+            )
+            .disabled(broken)   // in the broken state the fix is re-entering the key below
+
+            // The screen-context option is dependent on polish actually running.
+            if !paused && !broken {
+                SettingsToggle(
+                    "Use screen context",
+                    caption: "Reads the focused app to get names right.",
+                    isOn: $settings.screenContextEnabled
+                )
+            }
+        } header: {
+            SectionHeader("Polish",
+                          help: "Run each dictation through an AI model to fix filler, punctuation, and misheard words before it’s pasted.")
+        }
+
+        Section {
+            if broken || editingProvider {
+                providerPicker
+                keyField
+                validationStatus
+                if editingProvider && !broken {
+                    Button("Done") { editingProvider = false }
+                        .modifier(PointingHandCursor())
+                }
+            } else {
+                LabeledContent("Provider", value: "\(provider.displayName) · \(settings.rewriteModel)")
+                Button("Change") { editingProvider = true }
+                    .modifier(PointingHandCursor())
+            }
+        } header: {
+            SectionHeader("Connection",
+                          help: "The AI provider and key that power polish. Switch providers any time — your key stays on this Mac.")
+        }
+    }
+
+    // MARK: Shared rows
+
+    private var providerPicker: some View {
+        Picker("Provider", selection: $settings.rewriteProvider) {
+            ForEach(LLMProvider.allCases) { p in
+                Text(p.isRecommended ? "\(p.displayName) (Recommended)" : p.displayName).tag(p)
+            }
+        }
+    }
+
+    private var keyField: some View {
+        APIKeyField(
+            title: "API key",
+            text: keyBinding,
+            placeholder: provider.keyPlaceholder,
+            linkTitle: "Get a \(provider.displayName) key",
+            linkURL: provider.keyURL
+        )
+    }
+
+    @ViewBuilder private var validationStatus: some View {
+        switch validator.state {
+        case .idle:
+            LabeledContent("") { Text(provider.keyHint).font(.caption).foregroundStyle(.secondary) }
+        case .checking:
+            LabeledContent("") {
+                HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Checking…") }
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        case .verified:
+            LabeledContent("") {
+                Label("Verified", systemImage: "checkmark.circle.fill")
+                    .font(.caption).foregroundStyle(.green)
+            }
+        case .invalidKey:
+            LabeledContent("") {
+                Label("Invalid key — double-check you copied the whole thing.", systemImage: "xmark.circle.fill")
+                    .font(.caption).foregroundStyle(.red)
+            }
+        case .couldNotVerify:
+            LabeledContent("") {
+                Label("Couldn’t verify — check your connection.", systemImage: "exclamationmark.circle")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+/// A compact before→after card showing what polish does, using the app's diff
+/// vocabulary (struck-through filler, accent-green fixes). Teaching only; shown
+/// in the setup state.
+private struct PolishDemoCard: View {
+    private var before: Text {
+        Text("um so like ").strikethrough().foregroundColor(.secondary)
+        + Text("can you ")
+        + Text("uh ").strikethrough().foregroundColor(.secondary)
+        + Text("send me the ")
+        + Text("the ").strikethrough().foregroundColor(.secondary)
+        + Text("report by friday")
+    }
+    private var after: Text {
+        Text("Can").foregroundColor(.green)
+        + Text(" you send me the report by ")
+        + Text("Friday?").foregroundColor(.green)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            row("YOU SAID", before, accent: false)
+            row("POLISHED", after, accent: true)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func row(_ label: String, _ content: Text, accent: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.system(size: 10, weight: .bold))
+                .tracking(0.5)
+                .foregroundStyle(accent ? Color.accentColor : Color(nsColor: .tertiaryLabelColor))
+            content
+                .font(.system(size: 14))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
