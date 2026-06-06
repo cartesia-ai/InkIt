@@ -100,6 +100,12 @@ struct ExternalLink: View {
     }
 }
 
+extension Notification.Name {
+    /// Posted by the "Settings…" menu command (⌘,); the main window opens the
+    /// settings modal in response. Lets the menu reach in-window @State.
+    static let openSettings = Notification.Name("InkIt.openSettings")
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     // Apply the saved appearance (default Light) as early as possible so the
     // first window doesn't flash the system appearance before settling.
@@ -154,6 +160,28 @@ struct InkItApp: App {
                 }
                 .disabled(!UpdateManager.shared.canCheckForUpdates)
             }
+            // Real "Settings…" item in the app menu. This replaces the invisible
+            // in-window ⌘, button so the macOS-standard shortcut is discoverable
+            // and fires whenever InkIt is active, not only when the window is key.
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") {
+                    NotificationCenter.default.post(name: .openSettings, object: nil)
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
+            // A small Help menu — the OSS on-ramp. Source + issues, nothing else.
+            CommandGroup(replacing: .help) {
+                Button("InkIt on GitHub") {
+                    NSWorkspace.shared.open(URL(string: "https://github.com/cartesia-ai/InkIt")!)
+                }
+                Button("Report an Issue…") {
+                    NSWorkspace.shared.open(URL(string: "https://forms.gle/jXNtDsTaLt2rKQ8N9")!)
+                }
+            }
+        }
+        // CommandsBuilder caps at 10 groups per block, so the strip-down empties
+        // live in a second .commands modifier (SwiftUI merges them).
+        .commands {
             CommandGroup(replacing: .newItem) {}
             CommandGroup(replacing: .saveItem) {}
             CommandGroup(replacing: .printItem) {}
@@ -162,7 +190,6 @@ struct InkItApp: App {
             CommandGroup(replacing: .sidebar) {}
             CommandGroup(replacing: .windowSize) {}
             CommandGroup(replacing: .windowList) {}
-            CommandGroup(replacing: .help) {}
         }
     }
 }
@@ -239,9 +266,12 @@ struct MainWindowView: View {
                     .padding(.trailing, 14)
             }
             .background(Color.canvas)
-            .background(settingsShortcut)
             .background(WindowChrome())
             .overlay { settingsModal }
+            // The "Settings…" menu item (⌘,) posts this; open the modal in response.
+            .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
+                withAnimation(.easeOut(duration: 0.12)) { showSettings = true }
+            }
     }
 
     // Settings as a centered modal over a dimmed backdrop (Flow-style), not a
@@ -310,14 +340,6 @@ struct MainWindowView: View {
         return status == "Idle" ? hint : "\(hint) · \(status)"
     }
 
-    // Invisible affordance so ⌘, opens Settings — the macOS-standard shortcut.
-    private var settingsShortcut: some View {
-        Button("") { showSettings = true }
-            .keyboardShortcut(",", modifiers: .command)
-            .opacity(0)
-            .frame(width: 0, height: 0)
-            .accessibilityHidden(true)
-    }
 
     @ViewBuilder private var homeView: some View {
         if history.entries.isEmpty {
@@ -1263,6 +1285,11 @@ private struct WindowChrome: NSViewRepresentable {
         window.titleVisibility = .visible
         window.titlebarAppearsTransparent = true
         window.styleMask.insert(.fullSizeContentView)
+        // InkIt is a fixed utility window — full screen is meaningless and only
+        // litters the menu bar with a "View ▸ Enter Full Screen" item. Opting the
+        // window out removes both the green-button behavior and that menu entry.
+        window.collectionBehavior.remove(.fullScreenPrimary)
+        window.collectionBehavior.insert(.fullScreenNone)
     }
 }
 
