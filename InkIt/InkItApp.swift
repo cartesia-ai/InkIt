@@ -105,6 +105,7 @@ struct MainWindowView: View {
     @EnvironmentObject var history: TranscriptHistoryStore
     @State private var copiedID: UUID?
     @State private var showSettings = false
+    @State private var gearHovering = false
     @State private var settingsPane: SettingsView.Pane = .general
 
     private struct TranscriptGroup: Identifiable {
@@ -477,11 +478,14 @@ struct MainWindowView: View {
                 .foregroundStyle(.primary)
                 .padding(.bottom, 6)
 
-            Text("Turn on AI Polish to auto-fix filler words, names, and formatting as you speak.")
+            Text("Auto-fix filler, punctuation, and misheard words after each dictation.")
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
                 .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
+                .padding(.bottom, 12)
+
+            PolishMiniDemo()
                 .padding(.bottom, 14)
 
             Button {
@@ -845,7 +849,7 @@ private struct TranscriptHistoryRow: View {
     private var polishPill: some View {
         IconChip(systemName: "sparkles", fg: Color.accentColor, help: "See what changed")
             .onTapGesture { showingDiff.toggle() }
-            .popover(isPresented: $showingDiff, arrowEdge: .bottom) {
+            .inkDetailPopover(isPresented: $showingDiff) {
                 DiffPopover(before: original ?? text, after: text)
             }
             .modifier(PointingHandCursor())
@@ -855,9 +859,9 @@ private struct TranscriptHistoryRow: View {
     /// Struck-through sparkle in soft amber — polish failed and raw text was
     /// pasted. Click for the actionable reason.
     private var failurePill: some View {
-        IconChip(systemName: "sparkles.slash", fg: .orange, help: Self.failureMessage(failure))
+        IconChip(systemName: "sparkles.slash", fg: .orange, help: "Polish failed")
             .onTapGesture { showingFailure.toggle() }
-            .popover(isPresented: $showingFailure, arrowEdge: .bottom) {
+            .inkDetailPopover(isPresented: $showingFailure) {
                 Text(Self.failureMessage(failure))
                     .font(.callout)
                     .foregroundStyle(.primary)
@@ -874,7 +878,7 @@ private struct TranscriptHistoryRow: View {
     private func timePill(_ latency: TranscriptHistoryStore.Latency) -> some View {
         IconChip(systemName: "clock", fg: .secondary, help: "Speed")
             .onTapGesture { showingLatency.toggle() }
-            .popover(isPresented: $showingLatency, arrowEdge: .bottom) {
+            .inkDetailPopover(isPresented: $showingLatency) {
                 LatencyPopover(latency: latency, polishFailed: outcome == .failed)
             }
             .modifier(PointingHandCursor())
@@ -976,6 +980,58 @@ private struct LatencyPopover: View {
 
     private static func fmt(_ ms: Int) -> String {
         ms < 1000 ? "\(ms)ms" : String(format: "%.1fs", Double(ms) / 1000)
+    }
+}
+
+/// The Home nudge's teaching moment: a compact before→after that animates once
+/// on appear (the polished line reveals after a beat), using the app's diff
+/// vocabulary — struck-through filler, accent-green fixes. "Show, don't tell."
+private struct PolishMiniDemo: View {
+    @State private var revealed = false
+
+    private var before: Text {
+        Text("um so like ").strikethrough().foregroundColor(.secondary)
+        + Text("can you send me ")
+        + Text("the ").strikethrough().foregroundColor(.secondary)
+        + Text("the report by friday")
+    }
+    private var after: Text {
+        Text("Can").foregroundColor(.green)
+        + Text(" you send me the report by ")
+        + Text("Friday?").foregroundColor(.green)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            row("YOU SAID", before, accent: false)
+            if revealed {
+                row("POLISHED", after, accent: true)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .padding(11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color.primary.opacity(0.04)))
+        .onAppear {
+            // Animate once: hold on the raw line, then reveal the polished one.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) { revealed = true }
+            }
+        }
+    }
+
+    private func row(_ label: String, _ content: Text, accent: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label)
+                .font(.system(size: 9.5, weight: .bold))
+                .tracking(0.5)
+                .foregroundStyle(accent ? Color.accentColor : Color(nsColor: .tertiaryLabelColor))
+            content
+                .font(.system(size: 12.5))
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -1229,11 +1285,165 @@ private struct WindowChrome: NSViewRepresentable {
     }
 }
 
+// MARK: - Tooltips (design system)
+//
+// Two deliberately distinct "floating panel" styles. Keep them apart:
+//
+//   • Hover hint  — a small dark pill that *names* a control. Appears fast on
+//     hover (short grace delay so a quick pass-through doesn't flash),
+//     dismisses on exit, never reacts to clicks. For icon buttons whose
+//     purpose isn't obvious. `.inkHoverHint("Copy")`. Replaces `.help()`,
+//     which lagged ~1.5s behind the system tooltip delay.
+//   • Detail popover — the light system card opened by a *click*, holding the
+//     richer payload (a diff, a latency breakdown, an error reason).
+//     `.inkDetailPopover(isPresented:) { … }`.
+//
+// A control can carry both: the hint says what it is on hover; the popover
+// shows the detail on click. They never share a look, so the two gestures
+// always read as two different things.
+
+/// The dark pill itself — single line, white on near-black, soft shadow.
+private struct HoverHintLabel: View {
+    let text: String
+    var body: some View {
+        Text(text)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(Color.white)
+            .lineLimit(1)
+            .fixedSize()
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color(white: 0.13))
+            )
+            .shadow(color: .black.opacity(0.22), radius: 5, y: 1)
+    }
+}
+
+/// Padded host content for the floating panel — the transparent inset gives the
+/// pill's drop shadow room so the panel doesn't clip it.
+private struct HoverHintPanelContent: View {
+    let text: String
+    var body: some View { HoverHintLabel(text: text).padding(6) }
+}
+
+/// A borderless floating panel that renders the hover hint OUTSIDE the SwiftUI
+/// view tree. The transcript list clips its content to a rounded card and pins
+/// section headers on top, so an in-tree overlay gets cut off near the edges —
+/// a window sits above all of that, unclipped. One shared instance: you can
+/// only hover one control at a time. Any click dismisses it, so a detail
+/// popover opening on the same glyph never fights the hint for space.
+@MainActor
+final class HoverHintWindow {
+    static let shared = HoverHintWindow()
+    private let panel: NSPanel
+    private let hosting: NSHostingView<HoverHintPanelContent>
+    private var clickMonitor: Any?
+
+    private init() {
+        hosting = NSHostingView(rootView: HoverHintPanelContent(text: ""))
+        panel = NSPanel(contentRect: .zero,
+                        styleMask: [.borderless, .nonactivatingPanel],
+                        backing: .buffered, defer: true)
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false               // the pill draws its own shadow
+        panel.level = .popUpMenu
+        panel.ignoresMouseEvents = true
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
+        panel.contentView = hosting
+    }
+
+    /// Show `text` centered above `anchor` (a rect in screen coordinates).
+    func show(text: String, above anchor: CGRect) {
+        hosting.rootView = HoverHintPanelContent(text: text)
+        hosting.layoutSubtreeIfNeeded()
+        let size = hosting.fittingSize
+        let origin = NSPoint(x: anchor.midX - size.width / 2, y: anchor.maxY)
+        panel.setContentSize(size)
+        panel.setFrameOrigin(origin)
+        panel.orderFront(nil)
+        if clickMonitor == nil {
+            clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+                self?.hide()
+                return event
+            }
+        }
+    }
+
+    func hide() {
+        panel.orderOut(nil)
+        if let clickMonitor {
+            NSEvent.removeMonitor(clickMonitor)
+            self.clickMonitor = nil
+        }
+    }
+}
+
+/// Captures the host's backing `NSView` so the hint can be positioned in screen
+/// coordinates at show time (recomputed each time, so scrolling stays correct).
+private struct HostViewReader: NSViewRepresentable {
+    let onView: (NSView) -> Void
+    func makeNSView(context: Context) -> NSView {
+        let v = NSView()
+        DispatchQueue.main.async { onView(v) }
+        return v
+    }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+private final class AnchorBox: ObservableObject { weak var view: NSView? }
+
+/// Shows a `HoverHintLabel` floating above the host after a short grace delay,
+/// via `HoverHintWindow` so it's never clipped. Dismisses on exit.
+private struct HoverHint: ViewModifier {
+    let text: String
+    @State private var hovering = false
+    @StateObject private var anchor = AnchorBox()
+
+    func body(content: Content) -> some View {
+        content
+            .background(HostViewReader { anchor.view = $0 })
+            .onHover { inside in
+                hovering = inside
+                if inside {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        guard hovering,
+                              let view = anchor.view,
+                              let frame = Self.screenFrame(of: view) else { return }
+                        HoverHintWindow.shared.show(text: text, above: frame)
+                    }
+                } else {
+                    HoverHintWindow.shared.hide()
+                }
+            }
+            .onDisappear { HoverHintWindow.shared.hide() }
+    }
+
+    private static func screenFrame(of view: NSView) -> CGRect? {
+        guard let window = view.window else { return nil }
+        return window.convertToScreen(view.convert(view.bounds, to: nil))
+    }
+}
+
+extension View {
+    /// Style A — a fast dark hover hint naming this control. No click behavior.
+    func inkHoverHint(_ text: String) -> some View { modifier(HoverHint(text: text)) }
+
+    /// Style B — the light detail card opened by a click. Distinct from the
+    /// hover hint on purpose: richer content, an arrow, opens on tap.
+    func inkDetailPopover<C: View>(isPresented: Binding<Bool>,
+                                   @ViewBuilder content: @escaping () -> C) -> some View {
+        popover(isPresented: isPresented, arrowEdge: .bottom, content: content)
+    }
+}
+
 /// A bare SF Symbol affordance with its own hover backdrop and tooltip. No
 /// label or fill at rest — just a tinted glyph in a comfortable tap target that
-/// lifts a soft rounded backdrop while hovered, and surfaces a one-word tooltip
-/// so the action reads before the click. The caller's tap gesture swallows the
-/// click so the row's click-to-copy never fires when inspecting a chip.
+/// lifts a soft rounded backdrop while hovered, and surfaces a hover hint
+/// naming the action. The caller's tap gesture swallows the click so the row's
+/// click-to-copy never fires when inspecting a chip.
 private struct IconChip: View {
     let systemName: String
     let fg: Color
@@ -1251,7 +1461,7 @@ private struct IconChip: View {
             )
             .contentShape(Rectangle())
             .onHover { hovering = $0 }
-            .help(help)
+            .inkHoverHint(help)
     }
 }
 
@@ -1270,7 +1480,7 @@ private struct CopyTranscriptGlyph: View {
             )
             .contentShape(Rectangle())
             .onHover { hovering = $0 }
-            .help("Copy")
+            .inkHoverHint("Copy")
             .animation(.easeOut(duration: 0.15), value: copied)
     }
 }

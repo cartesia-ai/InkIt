@@ -9,7 +9,6 @@ enum OnboardingStep: Int, CaseIterable {
     case permissions
     case apiKey
     case tryIt
-    case polish
     case done
 }
 
@@ -48,7 +47,6 @@ struct OnboardingRootView: View {
                     case .permissions: PermissionsStep(next: next)
                     case .apiKey:      APIKeyStep(next: next)
                     case .tryIt:       TryItStep(next: next)
-                    case .polish:      PolishStep(next: next)
                     case .done:        DoneStep(finish: finish)
                     }
                 }
@@ -766,143 +764,6 @@ private struct TryItStep: View {
                     invite = true
                 }
             }
-    }
-}
-
-// MARK: - Polish (optional)
-
-/// Optional final-mile step: offer the LLM "Polish transcripts" rewrite by
-/// collecting a Groq key. Skippable — polish stays off unless a key is given.
-/// Placed after Try-it so the accuracy demo there stays verbatim. Groq is
-/// pinned as the recommended provider and the picker is hidden; switching
-/// providers lives in Settings.
-private struct PolishStep: View {
-    let next: () -> Void
-    @EnvironmentObject var settings: SettingsStore
-    @State private var key: String = ""
-    @FocusState private var fieldFocused: Bool
-    @StateObject private var validator = GroqKeyValidator()
-
-    private var trimmedKey: String { key.trimmingCharacters(in: .whitespaces) }
-
-    var body: some View {
-        VStack(spacing: 24) {
-            HeaderBlock(
-                icon: "wand.and.stars",
-                title: "Polish as you speak",
-                subtitle: "Your words in, polished text out — powered by Groq."
-            )
-
-            chips
-
-            VStack(alignment: .leading, spacing: 12) {
-                keyField
-
-                HStack(alignment: .firstTextBaseline) {
-                    Link(destination: LLMProvider.groq.keyURL) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.up.right.square")
-                            Text("Get your free Groq API key")
-                        }
-                        .font(.subheadline.weight(.medium))
-                    }
-                    .modifier(PointingHandCursor())
-                    Spacer(minLength: 0)
-                }
-                .frame(minHeight: 18)
-                .padding(.horizontal, 2)
-            }
-            .frame(maxWidth: 460)
-
-            VStack(spacing: 14) {
-                PrimaryButton(
-                    title: "Continue",
-                    enabled: !trimmedKey.isEmpty,
-                    action: commit
-                )
-                Button("Skip for now") { next() }
-                    .buttonStyle(.plain)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .modifier(PointingHandCursor())
-            }
-        }
-        .onAppear {
-            key = settings.apiKey(for: .groq)
-            validator.keyChanged(key)
-        }
-        .onChange(of: key) { _, newValue in validator.keyChanged(newValue) }
-    }
-
-    /// Save the key and turn polish on. Never half-configured: we only flip
-    /// `correctionEnabled` here, where a non-empty key is guaranteed.
-    private func commit() {
-        let k = trimmedKey
-        guard !k.isEmpty else { next(); return }
-        settings.setAPIKey(k, for: .groq)
-        settings.enablePolish(provider: .groq)
-        next()
-    }
-
-    /// Three at-a-glance value props, matching the accent-soft glyph treatment.
-    private var chips: some View {
-        HStack(spacing: 8) {
-            PolishChip(icon: "scissors", text: "Removes filler")
-            PolishChip(icon: "textformat", text: "Fixes punctuation")
-            PolishChip(icon: "checkmark", text: "Repairs names")
-        }
-    }
-
-    /// Same custom credential field as the Cartesia step, bound to the Groq key.
-    /// Always masked — the key is never rendered in plain text.
-    private var keyField: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "key.fill")
-                .font(.system(size: 15))
-                .foregroundStyle(.secondary)
-
-            SecureField("gsk_…", text: $key)
-                .textFieldStyle(.plain)
-                .font(.system(size: 15, design: .monospaced))
-                .focused($fieldFocused)
-
-            KeyValidationLabel(state: validator.state)
-                .transition(.opacity.combined(with: .scale))
-                .animation(.easeInOut(duration: 0.2), value: validator.state)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 15)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color("CardBG"))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(
-                    fieldFocused ? Color.accentColor : Color(nsColor: .separatorColor),
-                    lineWidth: fieldFocused ? 2 : 1
-                )
-        )
-        .animation(.easeInOut(duration: 0.15), value: fieldFocused)
-        .contentShape(Rectangle())
-        .onTapGesture { fieldFocused = true }
-    }
-}
-
-/// Accent-soft capsule with an SF Symbol + label — the Polish-step value props.
-private struct PolishChip: View {
-    let icon: String
-    let text: String
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: icon).font(.caption2.weight(.semibold))
-            Text(text).font(.subheadline.weight(.medium))
-        }
-        .foregroundStyle(Color.accentColor)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(Capsule().fill(Color.accentSoft))
     }
 }
 

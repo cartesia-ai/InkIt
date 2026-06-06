@@ -68,9 +68,15 @@ final class TranscriptHistoryStore: ObservableObject {
     static let shared = TranscriptHistoryStore()
 
     @Published private(set) var entries: [Entry] = []
+    /// Running total of every word ever dictated — survives the 100-entry history
+    /// cap so the Home stats ("words dictated", "time saved") reflect lifetime
+    /// usage rather than just the last 100 takes. Seeded from existing history on
+    /// first run after this shipped, then incremented per dictation.
+    @Published private(set) var lifetimeWords: Int = 0
     private let limit = 100
     private let defaults = UserDefaults.standard
     private let storageKey = "transcriptHistory.v1"
+    private let lifetimeWordsKey = "transcriptHistory.lifetimeWords.v1"
 
     private init() {
         load()
@@ -83,7 +89,14 @@ final class TranscriptHistoryStore: ObservableObject {
         if entries.count > limit {
             entries.removeLast(entries.count - limit)
         }
+        lifetimeWords += Self.wordCount(trimmed)
         persist()
+    }
+
+    /// Whitespace-delimited word count. Good enough for a usage stat — not a
+    /// linguistic tokenizer.
+    static func wordCount(_ text: String) -> Int {
+        text.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
     }
 
     func clear() {
@@ -92,13 +105,25 @@ final class TranscriptHistoryStore: ObservableObject {
     }
 
     private func load() {
-        guard let data = defaults.data(forKey: storageKey) else { return }
-        guard let decoded = try? JSONDecoder().decode([Entry].self, from: data) else { return }
-        entries = decoded
+        if let data = defaults.data(forKey: storageKey),
+           let decoded = try? JSONDecoder().decode([Entry].self, from: data) {
+            entries = decoded
+        }
+        // Seed the lifetime counter once: if it has never been written, estimate
+        // it from whatever history we still have on disk. After that the stored
+        // value is authoritative and only grows via `add`.
+        if defaults.object(forKey: lifetimeWordsKey) == nil {
+            lifetimeWords = entries.reduce(0) { $0 + Self.wordCount($1.text) }
+            defaults.set(lifetimeWords, forKey: lifetimeWordsKey)
+        } else {
+            lifetimeWords = defaults.integer(forKey: lifetimeWordsKey)
+        }
     }
 
     private func persist() {
-        guard let data = try? JSONEncoder().encode(entries) else { return }
-        defaults.set(data, forKey: storageKey)
+        if let data = try? JSONEncoder().encode(entries) {
+            defaults.set(data, forKey: storageKey)
+        }
+        defaults.set(lifetimeWords, forKey: lifetimeWordsKey)
     }
 }

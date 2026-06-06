@@ -119,7 +119,9 @@ final class SettingsStore: ObservableObject {
         static let notchHorizontalPosition = "notchHorizontalPosition"
         static let playFeedbackSounds = "playFeedbackSounds"
         static let correctionEnabled = "correctionEnabled"
+        static let polishNudgeDismissed = "polishNudgeDismissed"
         static let screenContextEnabled = "screenContextEnabled"
+        static let polishKeyInvalid = "polishKeyInvalid"
         static let anthropicAPIKey = "anthropicAPIKey"   // legacy; migrated into llmKeys
         static let rewriteProvider = "rewriteProvider"
         static let rewriteModel = "rewriteModel"
@@ -157,6 +159,13 @@ final class SettingsStore: ObservableObject {
         didSet { defaults.set(correctionEnabled, forKey: Keys.correctionEnabled) }
     }
 
+    /// Whether the user has dismissed the Home "Polish your dictation" nudge.
+    /// Sticky so a dismissed nudge stays gone across launches. The nudge only
+    /// shows when polish is off anyway, so enabling polish also hides it.
+    @Published var polishNudgeDismissed: Bool {
+        didSet { defaults.set(polishNudgeDismissed, forKey: Keys.polishNudgeDismissed) }
+    }
+
     /// Whether AI correction may read on-screen context (the focused app's
     /// visible text via Accessibility) to repair proper nouns and identifiers.
     /// When off, correction still runs but only cleans up the transcript
@@ -165,9 +174,23 @@ final class SettingsStore: ObservableObject {
         didSet { defaults.set(screenContextEnabled, forKey: Keys.screenContextEnabled) }
     }
 
+    /// True when a polish rewrite last failed because the provider rejected the
+    /// key (401/403) — the key "stopped working." Persisted so Settings can show
+    /// the honest "paused — re-enter a key" state even after a relaunch, instead
+    /// of silently pasting raw. Cleared when a key validates, the provider
+    /// changes, or polish is (re)enabled. See AppCoordinator.correctedTranscript.
+    @Published var polishKeyInvalid: Bool {
+        didSet { defaults.set(polishKeyInvalid, forKey: Keys.polishKeyInvalid) }
+    }
+
     /// Selected LLM provider + model for the rewrite ("Polish transcripts").
     @Published var rewriteProvider: LLMProvider {
-        didSet { defaults.set(rewriteProvider.rawValue, forKey: Keys.rewriteProvider) }
+        didSet {
+            defaults.set(rewriteProvider.rawValue, forKey: Keys.rewriteProvider)
+            // A broken-key verdict belongs to the old provider; clear it so the
+            // newly selected provider starts from a clean slate.
+            polishKeyInvalid = false
+        }
     }
 
     @Published var rewriteModel: String {
@@ -185,18 +208,39 @@ final class SettingsStore: ObservableObject {
     }
 
     func apiKey(for provider: LLMProvider) -> String { llmAPIKeys[provider.rawValue] ?? "" }
-    func setAPIKey(_ key: String, for provider: LLMProvider) { llmAPIKeys[provider.rawValue] = key }
+    func setAPIKey(_ key: String, for provider: LLMProvider) {
+        llmAPIKeys[provider.rawValue] = key
+    }
+
+    /// Whether the currently selected rewrite provider has a key on file.
+    var hasRewriteKey: Bool {
+        !apiKey(for: rewriteProvider).trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    /// The Polish settings pane's state, derived from whether a key exists,
+    /// whether polish is enabled, and whether the key last failed auth. The key
+    /// is the switch: no key → setup. See PolishSettingsView.
+    enum PolishUIState { case setup, on, paused, keyBroken }
+    var polishUIState: PolishUIState {
+        guard hasRewriteKey else { return .setup }
+        guard correctionEnabled else { return .paused }
+        return polishKeyInvalid ? .keyBroken : .on
+    }
 
     /// Turn on the LLM "Polish transcripts" rewrite for `provider`, keeping the
     /// selected model valid. Centralizes the provider/model/enabled trio so the
-    /// onboarding Polish step and Settings stay in lockstep.
+    /// Polish settings pane stays consistent.
     func enablePolish(provider: LLMProvider) {
         rewriteProvider = provider
         if !provider.models.contains(rewriteModel) {
             rewriteModel = provider.defaultModel
         }
+        polishKeyInvalid = false
         correctionEnabled = true
     }
+
+    /// Pause polish without forgetting the key (the master toggle's off state).
+    func pausePolish() { correctionEnabled = false }
 
     @Published var hotkey: HotkeyBinding {
         didSet { saveHotkey() }
@@ -256,6 +300,8 @@ final class SettingsStore: ObservableObject {
         self.appearance = defaults.string(forKey: Keys.appearance)
             .flatMap(AppearancePreference.init(rawValue:)) ?? .light
         self.correctionEnabled = defaults.bool(forKey: Keys.correctionEnabled)
+        self.polishNudgeDismissed = defaults.bool(forKey: Keys.polishNudgeDismissed)
+        self.polishKeyInvalid = defaults.bool(forKey: Keys.polishKeyInvalid)
         // Default on so existing users keep the context-aware behavior they
         // already had before this toggle existed.
         if defaults.object(forKey: Keys.screenContextEnabled) == nil {

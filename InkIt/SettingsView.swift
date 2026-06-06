@@ -509,10 +509,7 @@ private struct GeneralSettingsPane: View {
             Section {
                 AppearanceCardPicker(selection: $settings.appearance)
             } header: {
-                SectionHeader(
-                    "Appearance",
-                    help: "Choose how InkIt looks. System follows your Mac’s appearance automatically."
-                )
+                Text("Appearance")
             }
 
             Section {
@@ -520,10 +517,7 @@ private struct GeneralSettingsPane: View {
                     .environmentObject(settings)
                 SettingsToggle("Play sound on press and release", isOn: $settings.playFeedbackSounds)
             } header: {
-                SectionHeader(
-                    "Shortcut",
-                    help: "Hold this shortcut to dictate; release to transcribe and paste. Pick any key with a modifier, or use Fn."
-                )
+                Text("Shortcut")
             }
 
             Section {
@@ -535,10 +529,7 @@ private struct GeneralSettingsPane: View {
                     linkURL: URL(string: "https://play.cartesia.ai/keys")!
                 )
             } header: {
-                SectionHeader(
-                    "API key",
-                    help: "Your Cartesia key powers ink-2 speech-to-text. It’s stored locally on this Mac and only sent to Cartesia."
-                )
+                Text("API key")
             }
 
             Section {
@@ -548,10 +539,7 @@ private struct GeneralSettingsPane: View {
                     isOn: $settings.debugLoggingEnabled
                 )
             } header: {
-                SectionHeader(
-                    "Advanced",
-                    help: "Enable only when reproducing a bug. The log stays on disk until you delete it."
-                )
+                Text("Advanced")
             }
         }
         .formStyle(.grouped)
@@ -567,17 +555,18 @@ private struct PermissionsPane: View {
     var body: some View {
         Form {
             Section {
-                PermissionRow(label: "Microphone", granted: permissions.hasMicrophone) {
+                PermissionRow(label: "Microphone",
+                              subtitle: "Lets InkIt hear you while you hold the key.",
+                              granted: permissions.hasMicrophone) {
                     permissions.requestMicrophone { _ in }
                 }
-                PermissionRow(label: "Accessibility", granted: permissions.hasAccessibility) {
+                PermissionRow(label: "Accessibility",
+                              subtitle: "Lets InkIt paste at your cursor and read on-screen context.",
+                              granted: permissions.hasAccessibility) {
                     permissions.requestAccessibility()
                 }
             } header: {
-                SectionHeader(
-                    "Permissions",
-                    help: "InkIt needs the microphone to record dictation, and Accessibility to read on-screen context and paste into the focused app."
-                )
+                Text("Permissions")
             }
         }
         .formStyle(.grouped)
@@ -666,14 +655,12 @@ struct PolishSettingsView: View {
 
         Section {
             providerPicker
+            modelRow
             keyField
             validationStatus
         } header: {
             SectionHeader("Connect a provider",
                           help: "Polish uses your own AI key, so it runs on your account and InkIt stays free. Groq is recommended (free tier, fastest), but OpenAI, Anthropic, and Gemini all work.")
-        } footer: {
-            Text("Polish uses your own AI key. It stays on this Mac.")
-                .font(.caption).foregroundStyle(.secondary)
         }
     }
 
@@ -717,6 +704,7 @@ struct PolishSettingsView: View {
         Section {
             if broken || editingProvider {
                 providerPicker
+                modelRow
                 keyField
                 validationStatus
                 if editingProvider && !broken {
@@ -754,10 +742,16 @@ struct PolishSettingsView: View {
         )
     }
 
+    /// The curated model for the selected provider — shown read-only (one model
+    /// per provider today; the picker returns automatically if that changes).
+    private var modelRow: some View {
+        LabeledContent("Model", value: settings.rewriteModel)
+    }
+
     @ViewBuilder private var validationStatus: some View {
         switch validator.state {
         case .idle:
-            LabeledContent("") { Text(provider.keyHint).font(.caption).foregroundStyle(.secondary) }
+            EmptyView()
         case .checking:
             LabeledContent("") {
                 HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Checking…") }
@@ -971,6 +965,7 @@ private struct DiagonalSplit: Shape {
 
 struct PermissionRow: View {
     let label: String
+    var subtitle: String? = nil
     let granted: Bool
     let action: () -> Void
     var body: some View {
@@ -985,7 +980,14 @@ struct PermissionRow: View {
             }
         } label: {
             Label {
-                Text(label)
+                VStack(alignment: .leading, spacing: SettingsMetrics.captionSpacing) {
+                    Text(label)
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             } icon: {
                 Image(systemName: granted ? "checkmark.circle.fill" : "exclamationmark.circle")
                     .foregroundStyle(granted ? .green : .orange)

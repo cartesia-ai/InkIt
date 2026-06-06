@@ -327,6 +327,15 @@ final class AppCoordinator: ObservableObject {
                     raw: raw,
                     targetSnapshot: capturedSnapshot
                 )
+                // Keep the persisted "key stopped working" state honest: a clean
+                // rewrite clears it; an auth rejection (401/403) sets it so the
+                // Polish settings pane shows the paused/re-enter state instead of
+                // silently pasting raw.
+                if correction.outcome == .polished {
+                    self.settings.polishKeyInvalid = false
+                } else if correction.outcome == .failed, correction.failure?.reason == .invalidKey {
+                    self.settings.polishKeyInvalid = true
+                }
                 let polishFinished = DispatchTime.now()
 
                 self.state = .pasting

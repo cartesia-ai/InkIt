@@ -71,6 +71,47 @@ enum LLMProvider: String, CaseIterable, Identifiable, Hashable {
         case .anthropic: return URL(string: "https://console.anthropic.com/settings/keys")!
         }
     }
+
+    /// Whether this provider is the recommended default — Groq, for its free
+    /// tier and lowest latency. Surfaced as a "Recommended" badge in the picker.
+    var isRecommended: Bool { self == .groq }
+
+    /// A short, plain-English note for the key field (why a key, what it costs).
+    var keyHint: String {
+        switch self {
+        case .groq:      return "Free tier, no card needed."
+        case .gemini:    return "Free tier from Google AI Studio."
+        case .openai:    return "Uses your existing OpenAI account."
+        case .anthropic: return "Uses your existing Anthropic account."
+        }
+    }
+
+    /// Credit-free endpoint that requires auth — listing models — used to
+    /// validate a key without spending tokens.
+    private var validationURL: URL {
+        switch self {
+        case .groq:      return URL(string: "https://api.groq.com/openai/v1/models")!
+        case .gemini:    return URL(string: "https://generativelanguage.googleapis.com/v1beta/openai/models")!
+        case .openai:    return URL(string: "https://api.openai.com/v1/models")!
+        case .anthropic: return URL(string: "https://api.anthropic.com/v1/models")!
+        }
+    }
+
+    /// Builds the credit-free probe request used to validate `key` for this
+    /// provider. OpenAI-compatible providers carry a bearer token; Anthropic
+    /// uses its `x-api-key` + version headers.
+    func validationRequest(key: String) -> URLRequest {
+        var req = URLRequest(url: validationURL)
+        req.httpMethod = "GET"
+        req.timeoutInterval = 8
+        if self == .anthropic {
+            req.setValue(key, forHTTPHeaderField: "x-api-key")
+            req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        } else {
+            req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        }
+        return req
+    }
 }
 
 /// Validates a Groq key via a credit-free `GET /openai/v1/models`, used by the
