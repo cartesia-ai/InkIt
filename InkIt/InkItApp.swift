@@ -575,7 +575,7 @@ struct MainWindowView: View {
                 .foregroundStyle(.primary)
                 .padding(.bottom, 6)
 
-            Text("Auto-fix filler, punctuation, and misheard words after each dictation.")
+            Text("Talk like yourself. Polish cleans up fillers, fumbles, and punctuation automagically.")
                 .font(.inkCallout)
                 .foregroundStyle(.secondary)
                 .lineSpacing(2)
@@ -690,21 +690,12 @@ struct MainWindowView: View {
 }
 
 /// Shown on Home only when there's no history at all — i.e. the user skipped the
-/// onboarding Try-it step. Rather than dead-ending, it offers a live dictation
-/// box: read the line, hold the key, watch the words land. Reuses the onboarding
-/// trial routing (`beginOnboardingTrial`) and opts that path into history logging
-/// so the first take immediately becomes a real row and the empty state is gone.
+/// onboarding Try-it step. Rather than dead-ending, it offers the same practice
+/// card as onboarding: read the line, hold the key, fix anything, send. The card
+/// logs each sent take to history; that first row flips Home off this empty state
+/// and the transcript list takes over, so `onSend` here stays a no-op.
 private struct HomeTryItPanel: View {
-    @EnvironmentObject var coordinator: AppCoordinator
     @EnvironmentObject var settings: SettingsStore
-
-    private let sampleLine = "Help me plan a slow Sunday full of pancakes, sunshine, and a long nap."
-
-    @State private var invite = false
-    @State private var hasPressed = false
-
-    private var isRecording: Bool { coordinator.state == .recording }
-    private var transcript: String { coordinator.liveTranscript }
 
     var body: some View {
         VStack(spacing: 18) {
@@ -716,7 +707,7 @@ private struct HomeTryItPanel: View {
                     .foregroundStyle(.secondary)
             }
 
-            panel
+            TryItPracticeCard()
 
             Text("Or hold \(settings.hotkeyDisplayString) in any app and start talking.")
                 .font(.caption)
@@ -724,128 +715,6 @@ private struct HomeTryItPanel: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(32)
-        .onAppear {
-            // Route takes into the box below and persist them, so trying it here
-            // populates Home. Cleared on disappear (which fires the moment the
-            // first take lands and the list replaces this panel).
-            coordinator.logTrialTakesToHistory = true
-            coordinator.beginOnboardingTrial()
-        }
-        .onDisappear {
-            coordinator.logTrialTakesToHistory = false
-            coordinator.endOnboardingTrial()
-        }
-        .onChange(of: isRecording) { _, recording in
-            if recording { hasPressed = true }
-        }
-    }
-
-    private var panel: some View {
-        VStack(spacing: 20) {
-            promptBar
-            keyCap
-            resultBox
-        }
-        .padding(22)
-        .frame(maxWidth: 440)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color.card)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.05), radius: 12, y: 5)
-    }
-
-    private var promptBar: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text("READ THIS ALOUD")
-                .font(.inkEyebrow)
-                .tracking(0.8)
-                .foregroundStyle(Color.accentColor)
-            Text(sampleLine)
-                .font(.inkBodyEmphasized)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(.leading, 13)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 2, style: .continuous)
-                .fill(Color.accentColor)
-                .frame(width: 3)
-        }
-    }
-
-    private var keyCap: some View {
-        HStack(spacing: 10) {
-            if isRecording {
-                Circle()
-                    .fill(Color.recordingAmber)
-                    .frame(width: 11, height: 11)
-                    .shadow(color: Color.recordingAmber.opacity(0.7), radius: 5)
-            } else {
-                Image(systemName: "mic.fill")
-                    .font(.system(size: 15))
-            }
-            Text(isRecording ? "Listening…" : "Hold \(settings.hotkeyDisplayString) to talk")
-                .font(.inkBodyEmphasized)
-        }
-        .padding(.horizontal, 20).padding(.vertical, 11)
-        .background(
-            RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .fill(isRecording ? Color.accentSoft : Color.paper)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .stroke(isRecording ? Color.recordingAmber : Color(nsColor: .separatorColor),
-                        lineWidth: 1.5)
-        )
-        .scaleEffect(isRecording ? 0.97 : 1)
-        .overlay(inviteRing.opacity(showInvite ? 1 : 0))
-        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isRecording)
-        .animation(.easeOut(duration: 0.4), value: showInvite)
-    }
-
-    private var resultBox: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("WHAT INKIT HEARD")
-                .font(.inkEyebrow)
-                .tracking(0.6)
-                .foregroundStyle(.tertiary)
-            Text(transcript.isEmpty ? "Your words appear here after you let go." : transcript)
-                .font(.inkBody)
-                .foregroundStyle(transcript.isEmpty ? .tertiary : .primary)
-                .frame(maxWidth: .infinity, minHeight: 44, alignment: .topLeading)
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.paper)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
-        )
-    }
-
-    /// Glow that invites only the first press, then retires (matches onboarding).
-    private var showInvite: Bool { !hasPressed && !isRecording }
-
-    private var inviteRing: some View {
-        RoundedRectangle(cornerRadius: 17, style: .continuous)
-            .stroke(Color.accentColor, lineWidth: 2)
-            .padding(-5)
-            .scaleEffect(invite ? 1.09 : 0.97)
-            .opacity(invite ? 0 : 0.5)
-            .allowsHitTesting(false)
-            .onAppear {
-                withAnimation(.easeOut(duration: 2.1).repeatForever(autoreverses: false)) {
-                    invite = true
-                }
-            }
     }
 }
 

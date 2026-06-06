@@ -42,12 +42,11 @@ final class AppCoordinator: ObservableObject {
     private var pasteTargetApp: NSRunningApplication?
     private var contextTargetSnapshot: TargetAppSnapshot?
     private var routesFinalTranscriptToOnboarding = false
-    /// When a take is routed to an in-app box (see `routeToOnboardingBox`), should
-    /// it also be saved to history? The onboarding Try-it step keeps this off and
-    /// logs once on send; the Home empty-state try box turns it on so the very
-    /// first take both lands in the box and persists — instantly replacing the
-    /// empty state with a real transcript row.
-    var logTrialTakesToHistory = false
+    /// Transcribe latency of the most recent trial take (the trial neither
+    /// polishes nor pastes, so transcribe is the whole story). Captured so the
+    /// onboarding Try-it step can persist it alongside the saved transcript,
+    /// letting Home's "avg time to text" show a real number on first landing.
+    private(set) var lastTrialLatency: TranscriptHistoryStore.Latency?
     /// Monotonic timestamp of the most recent hotkey release, used as the
     /// anchor for per-dictation latency measurements.
     private var releaseTime: DispatchTime?
@@ -231,6 +230,7 @@ final class AppCoordinator: ObservableObject {
 
     func beginOnboardingTrial() {
         routesFinalTranscriptToOnboarding = true
+        lastTrialLatency = nil
         liveTranscript = ""
         ensureHotkeyRegistration()
         // Surface the real Notch HUD during the trial so the "Try it" step
@@ -380,11 +380,17 @@ final class AppCoordinator: ObservableObject {
                     self.pasteTargetApp = nil
                     self.contextTargetSnapshot = nil
                     self.liveTranscript = raw
-                    // The trial is verbatim — no polish ran — so log it as an
-                    // `.off` entry with no latency/diff. Only the Home try box
-                    // opts into this; onboarding logs on send instead.
-                    if self.logTrialTakesToHistory {
-                        self.history.add(raw, polish: .off)
+                    // The trial is verbatim — no polish, no paste — so the only
+                    // latency that applies is transcribe (release → final text).
+                    // Capture it so the practice card can persist it alongside the
+                    // saved transcript; the card logs the take to history itself on
+                    // send (as `.off`, no diff).
+                    self.lastTrialLatency = release.map { start in
+                        TranscriptHistoryStore.Latency(
+                            transcribeMs: Self.elapsedMs(start, transcriptArrived),
+                            polishMs: 0,
+                            pasteMs: 0
+                        )
                     }
                     self.state = .idle
                     return
