@@ -7,11 +7,16 @@ final class TranscriptHistoryStore: ObservableObject {
     /// moment the user releases the hotkey. `transcribe` is release → final
     /// transcript, `polish` is the AI rewrite (≈0 when correction is off), and
     /// `paste` is insertion into the target app.
+    ///
+    /// `paste` is still recorded (for diagnostics) but deliberately left out of
+    /// `totalMs` and the user-facing breakdown: it's a near-constant fixed floor
+    /// the user can't influence, so surfacing it only added noise. The total the
+    /// user sees reflects the two stages that actually vary — transcribe + polish.
     struct Latency: Equatable, Codable {
         let transcribeMs: Int
         let polishMs: Int
         let pasteMs: Int
-        var totalMs: Int { transcribeMs + polishMs + pasteMs }
+        var totalMs: Int { transcribeMs + polishMs }
     }
 
     /// Whether AI correction ran for a transcript, and how it turned out.

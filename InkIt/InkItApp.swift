@@ -905,9 +905,10 @@ private struct TranscriptHistoryRow: View {
 
 /// Per-stage breakdown shown when hovering the "Time to text" stat on a row.
 /// The row keeps the clean total; this reveals where the time went —
-/// transcribe (release → final transcript), polish (the AI rewrite), and
-/// paste (insertion into the target app). The polish row is omitted when
-/// correction didn't run (polishMs == 0), so it never reads as a stalled 0ms.
+/// transcribe (release → final transcript) and polish (the AI rewrite). Paste
+/// is omitted on purpose: it's a fixed floor the user can't influence, so it's
+/// recorded but not shown (see `Latency.totalMs`). The polish row is omitted
+/// when correction didn't run (polishMs == 0), so it never reads as a stalled 0ms.
 /// When polish ran but failed, the same time exists but produced no rewrite, so
 /// the row reads "Polish attempt" — honest about the cost without implying the
 /// text was actually polished.
@@ -936,7 +937,6 @@ private struct LatencyPopover: View {
                 if latency.polishMs > 0 {
                     stageRow(polishFailed ? "Polish attempt" : "Polish", latency.polishMs)
                 }
-                stageRow("Paste", latency.pasteMs)
             }
 
             Divider()
