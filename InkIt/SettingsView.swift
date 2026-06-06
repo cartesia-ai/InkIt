@@ -51,52 +51,6 @@ private extension View {
     }
 }
 
-/// A grouped-Form section header with an inline info glyph that reveals an
-/// explanatory tooltip on hover. Keeps every category self-documenting.
-private struct SectionHeader: View {
-    let title: String
-    let help: String
-
-    init(_ title: String, help: String) {
-        self.title = title
-        self.help = help
-    }
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Text(title)
-            InfoTooltip(text: help)
-        }
-    }
-}
-
-/// An info glyph that reveals an explanatory popover. Shows on hover (with a
-/// small grace delay so it doesn't flicker) and on click, so it's discoverable
-/// either way — `.help()` tooltips proved unreliable inside Form headers.
-private struct InfoTooltip: View {
-    let text: String
-    @State private var isShown = false
-
-    var body: some View {
-        Image(systemName: "info.circle")
-            .imageScale(.small)
-            .foregroundStyle(isShown ? Color.accentColor : .secondary)
-            .contentShape(Rectangle())
-            .onHover { hovering in isShown = hovering }
-            .onTapGesture { isShown.toggle() }
-            .modifier(PointingHandCursor())
-            .popover(isPresented: $isShown, arrowEdge: .bottom) {
-                Text(text)
-                    .font(.callout)
-                    .foregroundStyle(.primary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(width: 240, alignment: .leading)
-                    .padding(12)
-            }
-            .accessibilityLabel(Text(text))
-    }
-}
-
 /// A switch styled the one way switches are styled across Settings.
 private struct SettingsToggle: View {
     let title: String
@@ -268,7 +222,7 @@ private struct APIKeyField: View {
                 .font(.caption).foregroundStyle(.red)
                 .fixedSize(horizontal: false, vertical: true)
         case .couldNotVerify:
-            Text("Couldn’t verify — check your connection.")
+            Text("Couldn’t verify — check your connection")
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         default:
@@ -579,13 +533,13 @@ private struct GeneralSettingsPane: View {
                     validationState: keyValidator.state
                 )
             } header: {
-                Text("API key")
+                Text("Transcription")
             }
 
             Section {
                 SettingsToggle(
                     "Debug logging",
-                    caption: "Writes a developer trace to ~/Library/Logs/InkIt-debug.log. Off by default — traces include your transcripts and on-screen context.",
+                    caption: "Writes a developer trace to ~/Library/Logs/InkIt-debug.log. Off by default — traces include your transcripts and on-screen context",
                     isOn: $settings.debugLoggingEnabled
                 )
             } header: {
@@ -641,8 +595,7 @@ private struct MicrophoneSection: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         } header: {
-            SectionHeader("Microphone",
-                          help: "Pick which microphone InkIt records from. “System default” follows macOS — which can switch to AirPods or another device on its own. Pin a specific mic to keep dictation on your best input regardless of what you’re listening through.")
+            Text("Microphone")
         }
         .onAppear { devices.start() }
         .onDisappear { devices.stop() }
@@ -654,10 +607,10 @@ private struct MicrophoneSection: View {
 
     private var caption: String? {
         if pinnedButMissing {
-            return "Pinned mic isn’t connected — using the system default until it’s back."
+            return "Pinned mic isn’t connected — using the system default until it’s back"
         }
         if selectedDevice?.isBluetooth ?? false {
-            return "Bluetooth mics use a narrowband profile that can lower transcription accuracy. A wired or built-in mic usually works better."
+            return "Bluetooth mics use a narrowband profile that can lower transcription accuracy. A wired or built-in mic usually works better"
         }
         return nil
     }
@@ -672,12 +625,12 @@ private struct PermissionsPane: View {
         Form {
             Section {
                 PermissionRow(label: "Microphone",
-                              subtitle: "Lets InkIt hear you while you hold the key.",
+                              subtitle: "So InkIt can hear you",
                               granted: permissions.hasMicrophone) {
                     permissions.requestMicrophone { _ in }
                 }
                 PermissionRow(label: "Accessibility",
-                              subtitle: "Lets InkIt paste at your cursor and read on-screen context.",
+                              subtitle: "So InkIt can type for you",
                               granted: permissions.hasAccessibility) {
                     permissions.requestAccessibility()
                 }
@@ -761,19 +714,17 @@ struct PolishSettingsView: View {
     // MARK: Setup (no key)
 
     @ViewBuilder private var setupSections: some View {
-        Section { PolishDemoCard() } header: {
-            Text("Cleans up filler, punctuation, and misheard words.")
-                .font(.subheadline).foregroundStyle(.secondary).textCase(nil)
-                .padding(.bottom, 2)
-        }
-
         Section {
             providerPicker
             modelRow
             keyField
         } header: {
-            SectionHeader("Connect a provider",
-                          help: "Polish uses your own AI key, so it runs on your account and InkIt stays free. Groq is recommended (free tier, fastest), but OpenAI, Anthropic, and Gemini all work.")
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Turn on Polish").textCase(nil)
+                Text("Cleans up fillers, punctuation, and misheard words")
+                    .font(.subheadline).foregroundStyle(.secondary).textCase(nil)
+            }
+            .padding(.bottom, 2)
         }
     }
 
@@ -794,9 +745,7 @@ struct PolishSettingsView: View {
         Section {
             SettingsToggle(
                 "Polish transcripts",
-                caption: broken ? "Paused — your key stopped working."
-                       : paused ? "Paused. Your key is saved."
-                       : "Cleaning up every dictation before it’s pasted.",
+                caption: "Cleans up fillers, punctuation, and misheard words",
                 isOn: masterBinding
             )
             .disabled(broken)   // in the broken state the fix is re-entering the key below
@@ -804,14 +753,13 @@ struct PolishSettingsView: View {
             // The screen-context option is dependent on polish actually running.
             if !paused && !broken {
                 SettingsToggle(
-                    "Use screen context",
-                    caption: "Reads the focused app to get names right.",
+                    "Use app context",
+                    caption: "Picks up names and jargon from the app you’re typing in",
                     isOn: $settings.screenContextEnabled
                 )
             }
         } header: {
-            SectionHeader("Polish",
-                          help: "Run each dictation through an AI model to fix filler, punctuation, and misheard words before it’s pasted.")
+            Text("Polish")
         }
 
         // Always expanded: the provider dropdown and key field are live at all
@@ -822,8 +770,7 @@ struct PolishSettingsView: View {
             modelRow
             keyField
         } header: {
-            SectionHeader("Connection",
-                          help: "The AI provider and key that power polish. Switch providers any time — your key stays on this Mac.")
+            Text("Choose your AI")
         }
     }
 
@@ -852,46 +799,6 @@ struct PolishSettingsView: View {
     /// per provider today; the picker returns automatically if that changes).
     private var modelRow: some View {
         LabeledContent("Model", value: settings.rewriteModel)
-    }
-}
-
-/// A compact before→after card showing what polish does, using the app's diff
-/// vocabulary (struck-through filler, accent-green fixes). Teaching only; shown
-/// in the setup state.
-private struct PolishDemoCard: View {
-    private var before: Text {
-        Text("um so like ").strikethrough().foregroundColor(.secondary)
-        + Text("can you ")
-        + Text("uh ").strikethrough().foregroundColor(.secondary)
-        + Text("send me the ")
-        + Text("the ").strikethrough().foregroundColor(.secondary)
-        + Text("report by friday")
-    }
-    private var after: Text {
-        Text("Can").foregroundColor(Color.diffAdd)
-        + Text(" you send me the report by ")
-        + Text("Friday?").foregroundColor(Color.diffAdd)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            row("YOU SAID", before, accent: false)
-            row("POLISHED", after, accent: true)
-        }
-        .padding(.vertical, 4)
-    }
-
-    private func row(_ label: String, _ content: Text, accent: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(label)
-                .font(.inkEyebrow)
-                .tracking(0.5)
-                .foregroundStyle(accent ? Color.accentColor : Color(nsColor: .tertiaryLabelColor))
-            content
-                .font(.inkBody)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -1055,10 +962,10 @@ struct PermissionRow: View {
     var body: some View {
         LabeledContent {
             if granted {
-                Text("Granted")
+                Text("Enabled")
                     .foregroundStyle(.secondary)
             } else {
-                Button("Request") { action() }
+                Button("Enable") { action() }
                     .buttonStyle(.bordered)
                     .modifier(PointingHandCursor())
             }
@@ -1164,8 +1071,8 @@ struct HotkeyRecorder: View {
     }
 
     private var shortcutDescription: String {
-        if isEditing { return "Press a new shortcut." }
-        return "Hold to dictate."
+        if isEditing { return "Press a new shortcut" }
+        return "Hold to dictate, release to paste"
     }
 
     private var shortcutTokens: [String] {
