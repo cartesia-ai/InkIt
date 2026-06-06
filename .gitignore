@@ -14,3 +14,6 @@ PLAN.md
 __pycache__/
 bench_*.py
 injection_probe.py
+
+# Local design prototypes (never committed — OSS repo)
+prototypes/

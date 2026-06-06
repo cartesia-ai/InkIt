@@ -497,6 +497,12 @@ private struct TryItStep: View {
     /// it exists only to prompt the very first press, and pulsing forever reads
     /// as distracting after that.
     @State private var hasPressed = false
+    /// Staged reveal: the screen lands showing only the line to read; the key cap
+    /// and result box fade in ~1s later. In testing, people grabbed the key before
+    /// noticing the prompt — holding the loud controls back until the eye has had
+    /// a beat on the line fixes the order without adding steps. Faded in place
+    /// (space reserved) so the panel never changes height.
+    @State private var revealed = false
     /// The editable contents of the result box. Seeded from the live transcript
     /// while dictating, then fully the user's to edit by keyboard afterward —
     /// the whole point being that a mistranscription is fixable in place.
@@ -523,10 +529,13 @@ private struct TryItStep: View {
                 Text("Try it")
                     .font(.system(size: 28, weight: .bold))
                     .foregroundStyle(.primary)
-                Text("Hold the key, read the line aloud, then let go.")
+                Text(revealed
+                     ? "Hold the key, read the line aloud, then let go."
+                     : "Read this line aloud…")
                     .font(.title3)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
+                    .contentTransition(.opacity)
             }
 
             panel
@@ -540,8 +549,12 @@ private struct TryItStep: View {
         }
         .onAppear {
             coordinator.beginOnboardingTrial()
-            // Land with the cursor already in the box, ready to dictate or type.
-            DispatchQueue.main.async { boxFocused = true }
+            // Hold the key cap + result box back for a beat so the eye lands on the
+            // line first, then fade them in and drop the cursor into the box.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                withAnimation(.easeOut(duration: 0.45)) { revealed = true }
+                boxFocused = true
+            }
         }
         .onDisappear {
             coordinator.endOnboardingTrial()
@@ -555,7 +568,12 @@ private struct TryItStep: View {
             }
         }
         .onChange(of: isRecording) { _, recording in
-            if recording { hasPressed = true }
+            if recording {
+                hasPressed = true
+                // Safety: if they press before the timed reveal, snap everything in
+                // so their words have somewhere to land — never a blank panel.
+                if !revealed { withAnimation(.easeOut(duration: 0.3)) { revealed = true } }
+            }
         }
         // Mirror the transcript into the editable field as it streams in and when
         // it finalizes. liveTranscript only changes during a take, so the user's
@@ -574,7 +592,11 @@ private struct TryItStep: View {
         VStack(spacing: 28) {
             promptBar
             keyCap
+                .opacity(revealed ? 1 : 0)
+                .offset(y: revealed ? 0 : 8)
             resultBox
+                .opacity(revealed ? 1 : 0)
+                .offset(y: revealed ? 0 : 8)
         }
         .padding(.horizontal, 30)
         .padding(.vertical, 30)
@@ -593,17 +615,21 @@ private struct TryItStep: View {
     // MARK: Prompt — the line to read aloud, marked by a quiet left accent bar
 
     private var promptBar: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 10) {
             Text("READ THIS ALOUD")
                 .font(.system(size: 11, weight: .bold))
                 .tracking(0.8)
                 .foregroundStyle(Color.accentColor)
-            Text(sampleLine)
+            // Wrapped in curly quotes so it reads as a spoken line, with a larger
+            // size and looser leading to give the prompt room to breathe.
+            Text("\u{201C}\(sampleLine)\u{201D}")
                 .font(.system(size: 17, weight: .medium))
+                .lineSpacing(5)
                 .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.leading, 14)
+        .padding(.leading, 18)
+        .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
         .overlay(alignment: .leading) {
             RoundedRectangle(cornerRadius: 2, style: .continuous)
@@ -726,7 +752,7 @@ private struct TryItStep: View {
 
     /// The glow only invites the *first* press — once `hasPressed` flips it never
     /// returns, and it's always hidden while actively recording.
-    private var showInvite: Bool { !hasPressed && !isRecording }
+    private var showInvite: Bool { revealed && !hasPressed && !isRecording }
 
     private var inviteRing: some View {
         RoundedRectangle(cornerRadius: 19, style: .continuous)
