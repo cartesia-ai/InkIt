@@ -121,6 +121,7 @@ final class SettingsStore: ObservableObject {
         static let correctionEnabled = "correctionEnabled"
         static let polishNudgeDismissed = "polishNudgeDismissed"
         static let screenContextEnabled = "screenContextEnabled"
+        static let preferredInputDeviceUID = "preferredInputDeviceUID"
         static let polishKeyInvalid = "polishKeyInvalid"
         static let anthropicAPIKey = "anthropicAPIKey"   // legacy; migrated into llmKeys
         static let rewriteProvider = "rewriteProvider"
@@ -172,6 +173,16 @@ final class SettingsStore: ObservableObject {
     /// itself — no screen is read.
     @Published var screenContextEnabled: Bool {
         didSet { defaults.set(screenContextEnabled, forKey: Keys.screenContextEnabled) }
+    }
+
+    /// UID of the input device the user pinned for dictation, or "" to follow
+    /// the macOS default. Pinning decouples "what I dictate into" from whatever
+    /// macOS routes to (e.g. AirPods hijacking the mic). The capture service
+    /// falls back to the system default when the pinned device is unplugged, so
+    /// a stale UID is always safe. Persisted by UID (stable across replug), not
+    /// by the transient AudioDeviceID.
+    @Published var preferredInputDeviceUID: String {
+        didSet { defaults.set(preferredInputDeviceUID, forKey: Keys.preferredInputDeviceUID) }
     }
 
     /// True when a polish rewrite last failed because the provider rejected the
@@ -309,6 +320,7 @@ final class SettingsStore: ObservableObject {
         } else {
             self.screenContextEnabled = defaults.bool(forKey: Keys.screenContextEnabled)
         }
+        self.preferredInputDeviceUID = defaults.string(forKey: Keys.preferredInputDeviceUID) ?? ""
         self.rewriteProvider = defaults.string(forKey: Keys.rewriteProvider)
             .flatMap(LLMProvider.init(rawValue:)) ?? .groq
         self.rewriteModel = defaults.string(forKey: Keys.rewriteModel) ?? LLMProvider.groq.defaultModel

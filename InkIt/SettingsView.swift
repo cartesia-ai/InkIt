@@ -567,6 +567,8 @@ private struct GeneralSettingsPane: View {
                 Text("Shortcut")
             }
 
+            MicrophoneSection()
+
             Section {
                 APIKeyField(
                     title: "Cartesia API key",
@@ -595,6 +597,69 @@ private struct GeneralSettingsPane: View {
         .navigationTitle("General")
         .onAppear { keyValidator.keyChanged(settings.cartesiaAPIKey) }
         .onChange(of: settings.cartesiaAPIKey) { _, key in keyValidator.keyChanged(key) }
+    }
+}
+
+/// Microphone picker for the General pane. Lets the user *pin* a specific input
+/// device for dictation instead of inheriting whatever macOS routes to — the fix
+/// for AirPods/Bluetooth silently hijacking the mic and degrading transcription.
+/// "System default" follows macOS; any other choice is honored at record time,
+/// with a graceful fallback to the default if the pinned device is unplugged
+/// (surfaced here as the "unavailable" caption). See AudioCaptureService.
+private struct MicrophoneSection: View {
+    @EnvironmentObject var settings: SettingsStore
+    @StateObject private var devices = AudioDeviceManager()
+
+    /// The pinned UID is set but no attached device matches it — we're falling
+    /// back to the system default until it's reconnected.
+    private var pinnedButMissing: Bool {
+        !settings.preferredInputDeviceUID.isEmpty
+            && !devices.devices.contains { $0.uid == settings.preferredInputDeviceUID }
+    }
+
+    /// The currently selected device, when present and pinned.
+    private var selectedDevice: AudioInputDevice? {
+        devices.devices.first { $0.uid == settings.preferredInputDeviceUID }
+    }
+
+    var body: some View {
+        Section {
+            Picker("Input device", selection: $settings.preferredInputDeviceUID) {
+                Text("System default").tag("")
+                Divider()
+                ForEach(devices.devices) { device in
+                    Text(device.isBluetooth ? "\(device.name) (Bluetooth)" : device.name)
+                        .tag(device.uid)
+                }
+            }
+
+            if let caption {
+                Text(caption)
+                    .font(.caption)
+                    .foregroundStyle(captionIsWarning ? Color.orange : .secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } header: {
+            SectionHeader("Microphone",
+                          help: "Pick which microphone InkIt records from. “System default” follows macOS — which can switch to AirPods or another device on its own. Pin a specific mic to keep dictation on your best input regardless of what you’re listening through.")
+        }
+        .onAppear { devices.start() }
+        .onDisappear { devices.stop() }
+    }
+
+    private var captionIsWarning: Bool {
+        pinnedButMissing || (selectedDevice?.isBluetooth ?? false)
+    }
+
+    private var caption: String? {
+        if pinnedButMissing {
+            return "Pinned mic isn’t connected — using the system default until it’s back."
+        }
+        if selectedDevice?.isBluetooth ?? false {
+            return "Bluetooth mics use a narrowband profile that can lower transcription accuracy. A wired or built-in mic usually works better."
+        }
+        return nil
     }
 }
 

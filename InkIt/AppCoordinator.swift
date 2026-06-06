@@ -438,6 +438,7 @@ final class AppCoordinator: ObservableObject {
         client.connect()
 
         do {
+            audio.preferredDeviceUID = settings.preferredInputDeviceUID
             try audio.start { [weak self] data in
                 self?.client?.sendAudio(data)
             }
