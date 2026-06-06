@@ -657,10 +657,14 @@ struct MainWindowView: View {
     /// signals as much.
     static func timeSaved(words: Int) -> (value: String, unit: String) {
         let minutes = Double(words) * (1.0 / 40.0 - 1.0 / 150.0)
-        if minutes < 1 { return ("0", "min") }
+        // Below a minute, show seconds so the very first dictation registers
+        // something rather than a discouraging "0 min".
+        if minutes < 1 { return ("\(Int((minutes * 60).rounded()))", "sec") }
         if minutes < 60 { return ("\(Int(minutes.rounded()))", "min") }
         let hours = minutes / 60
-        return (hours < 10 ? String(format: "%.1f", hours) : "\(Int(hours.rounded()))", "h")
+        if hours < 24 { return (hours < 10 ? String(format: "%.1f", hours) : "\(Int(hours.rounded()))", "h") }
+        let days = hours / 24
+        return (days < 10 ? String(format: "%.1f", days) : "\(Int(days.rounded()))", "days")
     }
 
     static func latencyValue(_ ms: Int) -> (value: String, unit: String) {
