@@ -413,7 +413,7 @@ private struct APIKeyStep: View {
                 keyField
 
                 ExternalLink(
-                    title: "Get your free Cartesia key",
+                    title: "Get your free Cartesia API key",
                     url: URL(string: "https://play.cartesia.ai/keys")!,
                     font: .subheadline.weight(.medium)
                 )

@@ -76,6 +76,11 @@ struct PointingHandCursor: ViewModifier {
 /// (GitHub Primer, Material, Apple HIG). Used for every "Get your … key" link
 /// across Onboarding and Settings so they read identically. Pass a `font` to
 /// match the surrounding text; the layout stays left-aligned.
+///
+/// The color is set with `.foregroundStyle` on the label, not `.tint`: on macOS
+/// `Link` renders its text in the system link color (blue) and ignores `.tint`,
+/// so tinting alone left every link blue. `.buttonStyle(.plain)` keeps the label
+/// from re-applying the default link styling on top.
 struct ExternalLink: View {
     let title: String
     let url: URL
@@ -88,8 +93,9 @@ struct ExternalLink: View {
                 Image(systemName: "arrow.up.right")
             }
             .font(font)
+            .foregroundStyle(Color.accentColor)
         }
-        .tint(.accentColor)
+        .buttonStyle(.plain)
         .modifier(PointingHandCursor())
     }
 }

@@ -574,7 +574,7 @@ private struct GeneralSettingsPane: View {
                     title: "Cartesia API key",
                     text: $settings.cartesiaAPIKey,
                     placeholder: "sk_car_…",
-                    linkTitle: "Get your free Cartesia key",
+                    linkTitle: "Get your free Cartesia API key",
                     linkURL: URL(string: "https://play.cartesia.ai/keys")!,
                     validationState: keyValidator.state
                 )
@@ -842,7 +842,7 @@ struct PolishSettingsView: View {
             title: "API key",
             text: keyBinding,
             placeholder: provider.keyPlaceholder,
-            linkTitle: "Get your \(provider.displayName) key",
+            linkTitle: "Get your \(provider.displayName) API key",
             linkURL: provider.keyURL,
             validationState: validator.state
         )
