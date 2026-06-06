@@ -15,6 +15,9 @@ enum OnboardingStep: Int, CaseIterable {
 struct OnboardingRootView: View {
     @EnvironmentObject var settings: SettingsStore
     @EnvironmentObject var coordinator: AppCoordinator
+    // Observed at the root so the progress dots can live-gate forward jumps on
+    // the current permission grants, not just on what's been reached.
+    @StateObject private var permissions = PermissionsService.shared
     @State private var step: OnboardingStep = {
         // If we just silently relaunched mid-onboarding to pick up a fresh
         // Accessibility grant, resume at the permissions step.
@@ -36,7 +39,7 @@ struct OnboardingRootView: View {
                 .ignoresSafeArea()
 
             VStack(spacing: 0) {
-                StepIndicator(step: step)
+                StepIndicator(step: step, isReachable: isReachable, go: go)
                     .padding(.top, 40)
 
                 Spacer(minLength: 56)
@@ -78,22 +81,78 @@ struct OnboardingRootView: View {
         // MainWindowView in the same WindowGroup window — no need to close.
         settings.hasCompletedOnboarding = true
     }
+
+    /// Tap-to-navigate from the progress dots. Animates in the right direction
+    /// and is a no-op for the current step or any step that isn't reachable.
+    private func go(to target: OnboardingStep) {
+        guard target != step, isReachable(target) else { return }
+        direction = target.rawValue > step.rawValue ? 1 : -1
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
+            step = target
+        }
+    }
+
+    /// Whether a step's own gate is currently satisfied. Backward steps are
+    /// always re-enterable; forward jumps are only allowed when every earlier
+    /// step is still complete (live gating, so emptying the key re-locks ahead).
+    private func isComplete(_ s: OnboardingStep) -> Bool {
+        switch s {
+        case .welcome, .tryIt, .done:
+            return true
+        case .permissions:
+            return permissions.hasMicrophone && permissions.hasAccessibility
+        case .apiKey:
+            return !settings.cartesiaAPIKey.trimmingCharacters(in: .whitespaces).isEmpty
+        }
+    }
+
+    private func isReachable(_ s: OnboardingStep) -> Bool {
+        OnboardingStep.allCases
+            .filter { $0.rawValue < s.rawValue }
+            .allSatisfy(isComplete)
+    }
 }
 
 // MARK: - Step indicator
 
 private struct StepIndicator: View {
     let step: OnboardingStep
+    let isReachable: (OnboardingStep) -> Bool
+    let go: (OnboardingStep) -> Void
+
     var body: some View {
-        HStack(spacing: 8) {
+        // spacing 0 here; each dot carries its own horizontal padding so the
+        // tappable area is larger than the 8pt dot without widening the gaps.
+        HStack(spacing: 0) {
             ForEach(OnboardingStep.allCases, id: \.self) { s in
+                let tappable = s != step && isReachable(s)
                 Capsule()
                     .fill(s.rawValue <= step.rawValue
                           ? Color.accentColor
                           : Color.secondary.opacity(0.3))
                     .frame(width: s == step ? 28 : 8, height: 8)
                     .animation(.spring(response: 0.4, dampingFraction: 0.8), value: step)
+                    // Generous invisible hit target so the tiny dots are easy to
+                    // click; visual size is unchanged.
+                    .padding(.vertical, 10)
+                    .padding(.horizontal, 4)
+                    .contentShape(Rectangle())
+                    .onTapGesture { go(s) }
+                    .modifier(ConditionalPointer(active: tappable))
             }
+        }
+    }
+}
+
+/// Applies the pointing-hand cursor only when a control is actually clickable —
+/// used by the progress dots so unreachable steps don't signal as tappable.
+private struct ConditionalPointer: ViewModifier {
+    let active: Bool
+    func body(content: Content) -> some View {
+        if active {
+            content.modifier(PointingHandCursor())
+        } else {
+            content
         }
     }
 }
@@ -202,7 +261,7 @@ private struct PermissionsStep: View {
                     title: "Microphone",
                     subtitle: "So InkIt can hear you.",
                     state: permissions.microphoneState,
-                    manualWhy: "This is how InkIt hears you. Without microphone access, there’s nothing for InkIt to transcribe. Turn it on in System Settings to get going.",
+                    manualWhy: "This is how InkIt hears you. Without it, there’s nothing to transcribe.",
                     settingsPath: "Privacy & Security ▸ Microphone",
                     enable: { permissions.requestMicrophone { _ in } },
                     openSettings: { permissions.openMicrophoneSettings() }
@@ -213,7 +272,7 @@ private struct PermissionsStep: View {
                     title: "Accessibility",
                     subtitle: "So InkIt can type for you.",
                     state: permissions.accessibilityState,
-                    manualWhy: "This is how InkIt types your words straight into whatever app you’re in. Without it, your dictation has nowhere to land. Turn it on in System Settings to get going.",
+                    manualWhy: "This is how InkIt types into whatever app you’re in. Without it, dictation has nowhere to land.",
                     settingsPath: "Privacy & Security ▸ Accessibility",
                     enable: { permissions.requestAccessibility() },
                     // Already prompted (and pre-added to the list) by this point —
