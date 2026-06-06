@@ -32,19 +32,30 @@ calm, native-feeling Mac app with one confident point of personality.
 
 ## Color
 
-### How it's built (the native rule)
+### How it's built (the token rule)
+
+Every color and type value comes from a **named token** — defined once in the
+`extension Color` / `extension Font` block at the top of `InkItApp.swift`, backed
+by the asset catalog. Views reference `Color.canvas`, `Font.inkTitle`, etc.; they
+**never** re-enter a raw hex/RGB or a bare `.system(size:)` for display text. The
+one sanctioned exception is the `AppearanceThumbnail` preview, which must render
+both light and dark at once and so can't resolve an appearance-aware token.
 
 - **Brand color → asset catalog.** Define an `AccentColor` color set with Any
   (light) and Dark appearances. Setting it as the project's accent makes every
   `Button`, `Toggle`, `Picker`, focus ring, and `.tint(.accent)` adopt amber
   automatically — no per-view wiring.
-- **Chrome → system semantic colors.** Use `.primary`, `.secondary`,
-  `Color(nsColor: .windowBackgroundColor)`, `Color(nsColor: .controlBackgroundColor)`,
-  `.regularMaterial`, and `.formStyle(.grouped)`. These already adapt to
-  appearance + accessibility. Do **not** hardcode grays.
-- **Custom brand tokens → a small `Brand` enum / extra color sets.** Only:
-  recording amber, and (optionally) success/warning if you don't want the system
-  green/orange. Everything else is semantic.
+- **Warm-paper neutrals → asset catalog.** The chrome reads warmer than raw
+  system gray. `canvas` / `surface` / `lift` / `card` / `paper` (each with a
+  light + dark variant) back **every** surface — Home, Onboarding, *and*
+  Settings — so the whole app is one paper. Settings still uses
+  `.formStyle(.grouped)` for native layout, but hides the Form's system scroll
+  background (`.scrollContentBackground(.hidden)`) and sits on `Color.canvas`.
+- **Text foreground → system semantics.** `.primary`, `.secondary`, `.tertiary`,
+  `Color(nsColor: .separatorColor)` for hairlines. These adapt to appearance +
+  accessibility for free.
+- **Custom brand tokens → color sets.** `recordingAmber` (live signal) and
+  `diffAdd` (Polish "added" text). Everything else is semantic.
 
 ### Amber accent (the one brand color)
 
@@ -62,7 +73,9 @@ calm, native-feeling Mac app with one confident point of personality.
 
 | Token | Value | Use |
 |---|---|---|
-| `recordingAmber` | `#FF9F0A` | recording dot + waveform glow (works on the always-dark HUD) |
+| `recordingAmber` | `#FF9F0A` (colorset, flat) | recording dot + waveform glow (works on the always-dark HUD) |
+| `diffAdd` | system `.green` | "added / fixed" words in the Polish before→after diff |
+| `hudPill` | `Color.black` | always-dark tooltip / HUD-adjacent pill (un-themed by design) |
 
 > The accent and `recordingAmber` are both warm/amber and intentionally close —
 > the accent marks interactive chrome; `recordingAmber` is reserved for the live
@@ -108,8 +121,17 @@ not be themed.
 | HUD label | `.system(size: 10, weight: .medium)` | 10 / 500 | fixed (not Dynamic Type — HUD is fixed-size) |
 | Keycaps | `.system(size: 13, weight: .medium)` | 13 / 500 | drop `.rounded`; monospaced-digit optional |
 
-Rule of thumb: **prefer named text styles** (`.headline`, `.body`, `.caption`)
-over fixed point sizes everywhere except the fixed-geometry HUD.
+These roles are codified as `Font` tokens (`inkLargeTitle`, `inkTitle`,
+`inkHeadline`, `inkStat`, `inkEyebrow`, `inkBody`, `inkBodyEmphasized`,
+`inkCallout`, `inkCaption`) — all built on named system text styles so Dynamic
+Type works. **Display text uses a token, never a raw `.system(size:)`.**
+
+Exempt from the token rule (legitimately point-sized): SF Symbol glyph sizes
+(icons scale by point size), the fixed-geometry HUD, keycaps, text-field input,
+and the onboarding hero (a deliberately larger full-screen moment).
+
+Rule of thumb: **prefer the `inkX` tokens / named text styles** over fixed point
+sizes everywhere except the cases above.
 
 ---
 

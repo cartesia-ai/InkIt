@@ -1,6 +1,57 @@
 import SwiftUI
 import AppKit
 
+// MARK: - Design tokens
+//
+// Single source of truth for color and type, per DESIGN_SYSTEM.md. Views must
+// reference these — never re-enter a raw hex/RGB or a bare `.system(size:)` for
+// text. (Icon/glyph point sizes and the fixed-geometry notch HUD are exempt:
+// glyphs scale by point size, the HUD is intentionally un-themed.)
+
+extension Color {
+    // Brand
+    /// Amber tint fill behind glyphs/badges (14% light / 18% dark, via catalog).
+    static let accentSoft = Color("accentSoft")
+    /// Live recording signal — dot + waveform glow. One flat amber in all
+    /// appearances so it reads on the always-dark HUD and on light surfaces.
+    static let recordingAmber = Color("recordingAmber")
+    /// "Added / fixed" text in the Polish before→after diff.
+    static let diffAdd = Color.green
+
+    // Warm-paper neutrals (asset catalog, light + dark). The app's chrome reads
+    // warmer than raw system gray; these back every surface, Settings included.
+    static let canvas  = Color("HomeCanvas")  // window background
+    static let surface = Color("HomeSurface") // raised panel (stats rail)
+    static let lift    = Color("HomeLift")    // top panel (history log)
+    static let card    = Color("CardBG")      // cards, fields, controls
+    static let paper   = Color("PaperBG")     // inset wells (try-it box)
+
+    /// Always-dark tooltip / HUD-adjacent pill. Matches the notch HUD; ignores
+    /// appearance by design.
+    static let hudPill = Color.black
+}
+
+extension Font {
+    /// Onboarding hero title. Spec: largeTitle bold (~26/700).
+    static let inkLargeTitle = Font.largeTitle.weight(.bold)
+    /// Screen / pane / column title (History, Your stats, Settings pane).
+    static let inkTitle = Font.title3.weight(.semibold)
+    /// Card / sub-section heading (nudge title, field group). Spec: headline.
+    static let inkHeadline = Font.headline
+    /// Featured stat number — slightly larger, monospaced digits applied at use.
+    static let inkStat = Font.title2.weight(.semibold)
+    /// Uppercase eyebrow: group headers, day dividers, diff row labels.
+    static let inkEyebrow = Font.caption.weight(.semibold)
+    /// Primary body / row text. Spec: body (13/400).
+    static let inkBody = Font.body
+    /// Emphasized body — button labels, selectable item titles.
+    static let inkBodyEmphasized = Font.body.weight(.medium)
+    /// Secondary body. Spec: callout (~12).
+    static let inkCallout = Font.callout
+    /// Helper / metadata: timestamps, units, captions. Spec: caption (~11).
+    static let inkCaption = Font.caption
+}
+
 /// Swaps the cursor to the pointing-hand while hovering, signalling that a
 /// control is clickable. Shared across Home / Settings / Onboarding.
 struct PointingHandCursor: ViewModifier {
@@ -145,14 +196,15 @@ struct MainWindowView: View {
         homeView
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             // "InkIt" rides in the native titlebar (no glass). No dedicated top
-            // strip — the gear pins to the top-right corner and the dictation
-            // hint tucks inline next to the History header (see transcriptList).
-            .overlay(alignment: .topTrailing) {
+            // strip — the gear floats in the bottom-right corner and the
+            // dictation hint tucks inline next to the History header (see
+            // transcriptList).
+            .overlay(alignment: .bottomTrailing) {
                 gearButton
-                    .padding(.top, 6)
+                    .padding(.bottom, 14)
                     .padding(.trailing, 14)
             }
-            .background(Color("HomeCanvas"))
+            .background(Color.canvas)
             .background(settingsShortcut)
             .background(WindowChrome())
             .overlay { settingsModal }
@@ -167,7 +219,7 @@ struct MainWindowView: View {
                     .contentShape(Rectangle())
                     .onTapGesture { dismissSettings() }
                 SettingsPopover(pane: $settingsPane, onClose: dismissSettings)
-                    .background(Color(nsColor: .windowBackgroundColor))
+                    .background(Color.canvas)
                     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -191,13 +243,15 @@ struct MainWindowView: View {
                 .frame(width: 34, height: 34)
                 .background(
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(showSettings ? Color.accentSoft : Color.clear)
+                        .fill(showSettings ? Color.accentSoft
+                              : Color.primary.opacity(gearHovering ? 0.08 : 0))
                 )
                 .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
         .buttonStyle(.plain)
+        .onHover { gearHovering = $0 }
         .modifier(PointingHandCursor())
-        .help("Settings (⌘,)")
+        .inkHoverHint("Settings")
     }
 
     // Quiet "Hold fn to dictate" line with a live status dot — appended with the
@@ -208,7 +262,7 @@ struct MainWindowView: View {
                 .fill(coordinator.statusColor)
                 .frame(width: 7, height: 7)
             Text(statusLine)
-                .font(.system(size: 12))
+                .font(.inkCaption)
                 .foregroundStyle(.secondary)
         }
         .padding(.trailing, 6)
@@ -247,7 +301,7 @@ struct MainWindowView: View {
     // Below this content width the stats rail is dropped entirely and the
     // history list takes the full window — small windows stay focused on the
     // transcripts rather than cramming a sidebar alongside them.
-    private static let railBreakpoint: CGFloat = 780
+    private static let railBreakpoint: CGFloat = 960
 
     // Two columns on the warm canvas, each with a section header above a soft
     // rounded panel — history on the left, stats (+ Polish nudge) on the right.
@@ -284,7 +338,7 @@ struct MainWindowView: View {
     private var historyHeader: some View {
         HStack(spacing: 14) {
             Text("History")
-                .font(.system(size: 19, weight: .bold))
+                .font(.inkTitle)
                 .foregroundStyle(.primary)
             Spacer(minLength: 0)
             statusHint
@@ -296,11 +350,11 @@ struct MainWindowView: View {
     private func columnHeader(_ title: String, subtitle: String?) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 9) {
             Text(title)
-                .font(.system(size: 19, weight: .bold))
+                .font(.inkTitle)
                 .foregroundStyle(.primary)
             if let subtitle {
                 Text(subtitle)
-                    .font(.system(size: 13))
+                    .font(.inkCaption)
                     .foregroundStyle(.tertiary)
             }
         }
@@ -333,12 +387,27 @@ struct MainWindowView: View {
             }
             // Soft cap so transcripts don't run edge-to-edge on a maximized window.
             .frame(maxWidth: 820, alignment: .leading)
-            .padding(.horizontal, 24)
-            .padding(.bottom, 18)
+            .padding(.horizontal, 6)
+            // Breathing room so rows aren't flush against the card edges at the
+            // scroll extremes; the fade mask below softens everything in between.
+            .padding(.top, 6)
+            .padding(.bottom, 26)
         }
         .scrollIndicators(.hidden)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color("HomeLift"))
+        // Dissolve rows into the card at both edges instead of a hard clip
+        // against the rounded corners. Applied to the scrolling content only —
+        // the background fill (added next) stays solid edge to edge.
+        .mask(
+            VStack(spacing: 0) {
+                LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 20)
+                Color.black
+                LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 20)
+            }
+        )
+        .background(Color.lift)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -351,7 +420,7 @@ struct MainWindowView: View {
     // beneath it; full-width so nothing peeks through at the edges.
     private func dayHeader(_ title: String) -> some View {
         Text(title)
-            .font(.system(size: 11, weight: .semibold))
+            .font(.inkEyebrow)
             .tracking(0.6)
             .textCase(.uppercase)
             .foregroundStyle(.tertiary)
@@ -359,7 +428,7 @@ struct MainWindowView: View {
             .padding(.horizontal, 8)
             .padding(.top, 14)
             .padding(.bottom, 8)
-            .background(Color("HomeLift"))
+            .background(Color.lift)
     }
 
     // Stats (warm amber icon tiles) and, when Polish is off, the nudge — all in
@@ -380,7 +449,7 @@ struct MainWindowView: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color("HomeSurface"))
+        .background(Color.surface)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -427,17 +496,17 @@ struct MainWindowView: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Text(value)
-                        .font(.system(size: 21, weight: .semibold))
+                        .font(.inkStat)
                         .foregroundStyle(.primary)
                         .monospacedDigit()
                     if !unit.isEmpty {
                         Text(unit)
-                            .font(.system(size: 12, weight: .medium))
+                            .font(.inkCaption)
                             .foregroundStyle(.secondary)
                     }
                 }
                 Text(label)
-                    .font(.system(size: 12))
+                    .font(.inkCaption)
                     .foregroundStyle(.tertiary)
             }
             Spacer(minLength: 0)
@@ -474,12 +543,12 @@ struct MainWindowView: View {
             .padding(.bottom, 12)
 
             Text("Polish your dictation")
-                .font(.system(size: 16, weight: .semibold))
+                .font(.inkHeadline)
                 .foregroundStyle(.primary)
                 .padding(.bottom, 6)
 
             Text("Auto-fix filler, punctuation, and misheard words after each dictation.")
-                .font(.system(size: 13))
+                .font(.inkCallout)
                 .foregroundStyle(.secondary)
                 .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -496,7 +565,7 @@ struct MainWindowView: View {
                     Image(systemName: "sparkles")
                         .font(.system(size: 12, weight: .semibold))
                     Text("Set up Polish")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.inkBodyEmphasized)
                 }
                 .foregroundStyle(.white)
                 .padding(.horizontal, 16)
@@ -602,7 +671,6 @@ private struct HomeTryItPanel: View {
     @EnvironmentObject var settings: SettingsStore
 
     private let sampleLine = "Help me plan a slow Sunday full of pancakes, sunshine, and a long nap."
-    private static let recordingAmber = Color(red: 1.0, green: 0.62, blue: 0.04)
 
     @State private var invite = false
     @State private var hasPressed = false
@@ -654,7 +722,7 @@ private struct HomeTryItPanel: View {
         .frame(maxWidth: 440)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color("CardBG"))
+                .fill(Color.card)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -666,11 +734,11 @@ private struct HomeTryItPanel: View {
     private var promptBar: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text("READ THIS ALOUD")
-                .font(.system(size: 10, weight: .bold))
+                .font(.inkEyebrow)
                 .tracking(0.8)
                 .foregroundStyle(Color.accentColor)
             Text(sampleLine)
-                .font(.system(size: 15, weight: .medium))
+                .font(.inkBodyEmphasized)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.leading, 13)
@@ -686,24 +754,24 @@ private struct HomeTryItPanel: View {
         HStack(spacing: 10) {
             if isRecording {
                 Circle()
-                    .fill(Self.recordingAmber)
+                    .fill(Color.recordingAmber)
                     .frame(width: 11, height: 11)
-                    .shadow(color: Self.recordingAmber.opacity(0.7), radius: 5)
+                    .shadow(color: Color.recordingAmber.opacity(0.7), radius: 5)
             } else {
                 Image(systemName: "mic.fill")
                     .font(.system(size: 15))
             }
             Text(isRecording ? "Listening…" : "Hold \(settings.hotkeyDisplayString) to talk")
-                .font(.system(size: 15, weight: .bold))
+                .font(.inkBodyEmphasized)
         }
         .padding(.horizontal, 20).padding(.vertical, 11)
         .background(
             RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .fill(isRecording ? Color.accentSoft : Color("PaperBG"))
+                .fill(isRecording ? Color.accentSoft : Color.paper)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .stroke(isRecording ? Self.recordingAmber : Color(nsColor: .separatorColor),
+                .stroke(isRecording ? Color.recordingAmber : Color(nsColor: .separatorColor),
                         lineWidth: 1.5)
         )
         .scaleEffect(isRecording ? 0.97 : 1)
@@ -715,11 +783,11 @@ private struct HomeTryItPanel: View {
     private var resultBox: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("WHAT INKIT HEARD")
-                .font(.system(size: 10, weight: .bold))
+                .font(.inkEyebrow)
                 .tracking(0.6)
                 .foregroundStyle(.tertiary)
             Text(transcript.isEmpty ? "Your words appear here after you let go." : transcript)
-                .font(.system(size: 15))
+                .font(.inkBody)
                 .foregroundStyle(transcript.isEmpty ? .tertiary : .primary)
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .topLeading)
         }
@@ -727,7 +795,7 @@ private struct HomeTryItPanel: View {
         .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color("PaperBG"))
+                .fill(Color.paper)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -787,20 +855,25 @@ private struct TranscriptHistoryRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
             Text(timestamp)
-                .font(.system(size: 15))
+                .font(.inkCallout)
                 .foregroundStyle(.tertiary)
                 .monospacedDigit()
                 .frame(width: 74, alignment: .leading)
                 .padding(.top, 1)
 
             Text(text)
-                .font(.system(size: 16))
+                .font(.inkBody)
                 .foregroundStyle(.primary)
                 .lineSpacing(3)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                // Keep long text clear of the icon cluster, especially with all
+                // three chips visible.
+                .padding(.trailing, 16)
 
             trailingControls
-                .frame(width: 68, alignment: .trailing)
+                // Wide enough to hold all three chips (3×24 + 2×8) without
+                // spilling back into the text.
+                .frame(width: 88, alignment: .trailing)
                 .padding(.top, 2)
         }
         .padding(.horizontal, 8)
@@ -996,9 +1069,9 @@ private struct PolishMiniDemo: View {
         + Text("the report by friday")
     }
     private var after: Text {
-        Text("Can").foregroundColor(.green)
+        Text("Can").foregroundColor(Color.diffAdd)
         + Text(" you send me the report by ")
-        + Text("Friday?").foregroundColor(.green)
+        + Text("Friday?").foregroundColor(Color.diffAdd)
     }
 
     var body: some View {
@@ -1081,7 +1154,7 @@ private struct DiffPopover: View {
         .frame(maxWidth: 308, alignment: .leading)
     }
 
-    private static let addColor = Color.green
+    private static let addColor = Color.diffAdd
 
     private enum Kind { case same, added, removed }
     // A character-level run inside a single displayed word.
@@ -1315,7 +1388,7 @@ private struct HoverHintLabel: View {
             .padding(.vertical, 4)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Color(white: 0.13))
+                    .fill(Color.hudPill)
             )
             .shadow(color: .black.opacity(0.22), radius: 5, y: 1)
     }
@@ -1472,11 +1545,11 @@ private struct CopyTranscriptGlyph: View {
     var body: some View {
         Image(systemName: copied ? "checkmark" : "doc.on.doc")
             .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(copied ? .green : .secondary)
+            .foregroundStyle(copied ? Color.accentColor : .secondary)
             .frame(width: 24, height: 24)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(copied ? Color.green.opacity(0.15) : Color.primary.opacity(hovering ? 0.08 : 0))
+                    .fill(copied ? Color.accentSoft : Color.primary.opacity(hovering ? 0.08 : 0))
             )
             .contentShape(Rectangle())
             .onHover { hovering = $0 }

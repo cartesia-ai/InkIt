@@ -32,7 +32,7 @@ struct OnboardingRootView: View {
             // Calm, appearance-aware backdrop: a single solid warm-paper fill,
             // the same on every step (no gradient, no per-step rainbow).
             // See DESIGN_SYSTEM.md.
-            Color("PaperBG")
+            Color.paper
                 .ignoresSafeArea()
 
             VStack(spacing: 0) {
@@ -119,7 +119,7 @@ private struct WelcomeStep: View {
 
             VStack(spacing: 8) {
                 Text("Welcome to InkIt")
-                    .font(.system(size: 34, weight: .bold))
+                    .font(.inkLargeTitle)
                     .foregroundStyle(.primary)
                 Text("Think out loud. Ink it.")
                     .font(.title3)
@@ -171,7 +171,7 @@ private struct BenefitRow: View {
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color("CardBG"))
+                .fill(Color.card)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -264,7 +264,7 @@ private struct PermissionCard: View {
         .padding(14)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(manual ? Color.accentSoft : Color("CardBG"))
+                .fill(manual ? Color.accentSoft : Color.card)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -462,7 +462,7 @@ private struct APIKeyStep: View {
         .padding(.vertical, 15)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color("CardBG"))
+                .fill(Color.card)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -488,7 +488,6 @@ private struct TryItStep: View {
 
     /// Matches the HUD's recording dot/waveform color (see NotchHUD): amber is
     /// the app's "live recording" signal, distinct from the resting indigo.
-    private static let recordingAmber = Color(red: 1.0, green: 0.62, blue: 0.04)
 
     @State private var invite = false
     /// Once the user has held the key even once, the inviting glow ring retires —
@@ -525,7 +524,7 @@ private struct TryItStep: View {
         VStack(spacing: 30) {
             VStack(spacing: 8) {
                 Text("Try it")
-                    .font(.system(size: 28, weight: .bold))
+                    .font(.inkLargeTitle)
                     .foregroundStyle(.primary)
                 Text(revealed
                      ? "Hold the key, read the line aloud, then let go."
@@ -601,7 +600,7 @@ private struct TryItStep: View {
         .frame(maxWidth: 600)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color("CardBG"))
+                .fill(Color.card)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -615,7 +614,7 @@ private struct TryItStep: View {
     private var promptBar: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("READ THIS ALOUD")
-                .font(.system(size: 11, weight: .bold))
+                .font(.inkEyebrow)
                 .tracking(0.8)
                 .foregroundStyle(Color.accentColor)
             // Wrapped in curly quotes so it reads as a spoken line, with a larger
@@ -649,7 +648,7 @@ private struct TryItStep: View {
                         .foregroundStyle(.green)
                 }
                 Text("What InkIt heard")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.inkEyebrow)
                     .foregroundStyle(.tertiary)
             }
             ZStack(alignment: .topLeading) {
@@ -679,7 +678,7 @@ private struct TryItStep: View {
         .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color("PaperBG"))
+                .fill(Color.paper)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -711,9 +710,9 @@ private struct TryItStep: View {
         HStack(spacing: 12) {
             if isRecording {
                 Circle()
-                    .fill(Self.recordingAmber)
+                    .fill(Color.recordingAmber)
                     .frame(width: 13, height: 13)
-                    .shadow(color: Self.recordingAmber.opacity(0.7), radius: 5)
+                    .shadow(color: Color.recordingAmber.opacity(0.7), radius: 5)
             } else {
                 Image(systemName: "mic.fill")
                     .font(.system(size: 19))
@@ -734,11 +733,11 @@ private struct TryItStep: View {
         .padding(.horizontal, 26).padding(.vertical, 13)
         .background(
             RoundedRectangle(cornerRadius: 15, style: .continuous)
-                .fill(isRecording ? Color.accentSoft : Color("PaperBG"))
+                .fill(isRecording ? Color.accentSoft : Color.paper)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 15, style: .continuous)
-                .stroke(isRecording ? Self.recordingAmber : Color(nsColor: .separatorColor),
+                .stroke(isRecording ? Color.recordingAmber : Color(nsColor: .separatorColor),
                         lineWidth: 1.5)
         )
         .scaleEffect(isRecording ? 0.97 : 1)
@@ -790,7 +789,7 @@ private struct DoneStep: View {
 
             VStack(spacing: 10) {
                 Text("You're ready!")
-                    .font(.system(size: 34, weight: .bold))
+                    .font(.inkLargeTitle)
                     .foregroundStyle(.primary)
                 Text("InkIt lives in your menu bar. Hold Fn anytime to dictate.")
                     .font(.title3)
@@ -825,13 +824,6 @@ private struct GlyphTile: View {
     }
 }
 
-extension Color {
-    /// Tinted indigo fill behind glyphs/badges. Appearance-aware (14% light /
-    /// 18% dark) via the asset catalog so it matches DESIGN_SYSTEM.md exactly,
-    /// instead of a flat `accentColor.opacity` that stays too faint in dark.
-    static let accentSoft = Color("accentSoft")
-}
-
 private struct HeaderBlock: View {
     let icon: String
     let title: String
@@ -862,7 +854,7 @@ private struct HeaderBlock: View {
         VStack(spacing: 14) {
             GlyphTile(icon: icon)
             Text(title)
-                .font(.system(size: 30, weight: .bold))
+                .font(.inkLargeTitle)
                 .foregroundStyle(.primary)
             subtitle
         }

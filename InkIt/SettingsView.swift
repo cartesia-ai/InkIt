@@ -14,8 +14,9 @@ private enum SettingsMetrics {
     static let captionSpacing: CGFloat = 3
 
     /// Editable-field surface. The same token backs every text field and the
-    /// hotkey recorder so they match exactly.
-    static let fieldBackground = Color(nsColor: .textBackgroundColor)
+    /// hotkey recorder so they match exactly. Warm card, matching the onboarding
+    /// key field, so Settings reads as the same paper as the rest of the app.
+    static let fieldBackground = Color.card
     /// Resting field border.
     static let fieldBorder = Color(nsColor: .separatorColor)
     static let fieldBorderWidth: CGFloat = 1
@@ -424,7 +425,7 @@ struct SettingsPopover: View {
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text("Settings")
-                .font(.system(size: 11, weight: .semibold))
+                .font(.inkEyebrow)
                 .tracking(0.5)
                 .textCase(.uppercase)
                 .foregroundStyle(.tertiary)
@@ -440,7 +441,7 @@ struct SettingsPopover: View {
         .padding(10)
         .frame(width: 188)
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color.canvas)
     }
 
     private func sidebarItem(_ p: SettingsView.Pane) -> some View {
@@ -451,7 +452,7 @@ struct SettingsPopover: View {
                     .font(.system(size: 13, weight: .medium))
                     .frame(width: 18)
                 Text(p.title)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.inkBodyEmphasized)
                 Spacer(minLength: 0)
             }
             .foregroundStyle(selected ? Color.accentColor : .primary)
@@ -471,7 +472,7 @@ struct SettingsPopover: View {
         VStack(spacing: 0) {
             HStack {
                 Text(pane.title)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.inkTitle)
                 Spacer()
                 // No visible close control (dismiss via click-out or Esc); this
                 // hidden button keeps the Esc shortcut wired up.
@@ -494,6 +495,9 @@ struct SettingsPopover: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            // Warm canvas behind the grouped Forms (each hides its own system
+            // scroll background) so Settings reads as the same paper as Home.
+            .background(Color.canvas)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -543,6 +547,7 @@ private struct GeneralSettingsPane: View {
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
         .navigationTitle("General")
     }
 }
@@ -570,6 +575,7 @@ private struct PermissionsPane: View {
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
         .navigationTitle("Permissions")
         .onAppear { permissions.startPolling() }
         .onDisappear { permissions.stopPolling() }
@@ -618,6 +624,7 @@ struct PolishSettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
         .navigationTitle("Polish")
         .onAppear {
             validator.setProvider(settings.rewriteProvider)
@@ -789,9 +796,9 @@ private struct PolishDemoCard: View {
         + Text("report by friday")
     }
     private var after: Text {
-        Text("Can").foregroundColor(.green)
+        Text("Can").foregroundColor(Color.diffAdd)
         + Text(" you send me the report by ")
-        + Text("Friday?").foregroundColor(.green)
+        + Text("Friday?").foregroundColor(Color.diffAdd)
     }
 
     var body: some View {
@@ -805,11 +812,11 @@ private struct PolishDemoCard: View {
     private func row(_ label: String, _ content: Text, accent: Bool) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
-                .font(.system(size: 10, weight: .bold))
+                .font(.inkEyebrow)
                 .tracking(0.5)
                 .foregroundStyle(accent ? Color.accentColor : Color(nsColor: .tertiaryLabelColor))
             content
-                .font(.system(size: 14))
+                .font(.inkBody)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -895,16 +902,21 @@ private struct AppearanceCard: View {
 }
 
 /// A tiny window mock used inside an `AppearanceCard`: traffic-light dots and a
-/// few text lines, one of them the indigo accent. The `.system` style splits
-/// the canvas diagonally between the light and dark surfaces.
+/// few text lines, one of them the amber accent. The `.system` style splits the
+/// canvas diagonally between the light and dark surfaces.
+///
+/// These are the one place raw literals are correct, not a smell: each card must
+/// show *both* appearances at once regardless of the active mode, so they can't
+/// resolve a single appearance-aware token. The values mirror the warm-paper
+/// `HomeCanvas` token (light + dark) so the preview reads as the real app.
 private struct AppearanceThumbnail: View {
     enum Style { case light, dark, system }
     let style: Style
 
-    private let lightSurface = Color(red: 0.945, green: 0.945, blue: 0.957)
-    private let darkSurface  = Color(red: 0.12, green: 0.12, blue: 0.13)
-    private let lightLine    = Color(red: 0.79, green: 0.79, blue: 0.82)
-    private let darkLine      = Color(red: 0.29, green: 0.29, blue: 0.31)
+    private let lightSurface = Color(red: 0.910, green: 0.902, blue: 0.886)  // HomeCanvas light
+    private let darkSurface  = Color(red: 0.118, green: 0.110, blue: 0.102)  // HomeCanvas dark
+    private let lightLine    = Color(red: 0.80, green: 0.79, blue: 0.76)
+    private let darkLine     = Color(red: 0.29, green: 0.28, blue: 0.26)
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -1367,7 +1379,7 @@ private struct ShortcutKeycap: View {
             .frame(minWidth: 28, minHeight: 22)
             .background(
                 RoundedRectangle(cornerRadius: 5)
-                    .fill(Color(nsColor: .windowBackgroundColor))
+                    .fill(Color.canvas)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 5)
