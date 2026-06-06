@@ -216,9 +216,10 @@ private struct PermissionsStep: View {
                     manualWhy: "This is how InkIt types your words straight into whatever app you’re in. Without it, your dictation has nowhere to land. Turn it on in System Settings to get going.",
                     settingsPath: "Privacy & Security ▸ Accessibility",
                     enable: { permissions.requestAccessibility() },
-                    // Re-route through requestAccessibility so InkIt stays pre-added
-                    // to the Accessibility list (toggle present, just off).
-                    openSettings: { permissions.requestAccessibility() }
+                    // Already prompted (and pre-added to the list) by this point —
+                    // just open the pane. Re-firing the prompt would re-pop the
+                    // system bubble the user already dismissed.
+                    openSettings: { permissions.openAccessibilitySettings() }
                 )
             }
             .frame(maxWidth: 560)
