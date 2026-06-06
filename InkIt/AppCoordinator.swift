@@ -189,7 +189,7 @@ final class AppCoordinator: ObservableObject {
     var statusText: String {
         switch state {
         case .idle: return "Idle"
-        case .recording: return "Recording…"
+        case .recording: return "Live"
         case .finalizing: return "Finalizing…"
         case .rewriting: return "Polishing…"
         case .pasting: return "Pasting…"
@@ -200,7 +200,7 @@ final class AppCoordinator: ObservableObject {
     var statusColor: Color {
         switch state {
         case .idle: return .secondary
-        case .recording: return .red
+        case .recording: return Color(nsColor: .systemOrange)
         case .finalizing, .rewriting, .pasting: return .orange
         case .error: return .red
         }
