@@ -207,17 +207,28 @@ private struct APIKeyField: View {
     let placeholder: String
     let linkTitle: String
     let linkURL: URL
+    /// Drives the field's verdict, all rendered against the field itself: a glyph
+    /// inside the trailing edge (spinner / green check / red ✗) and, for the error
+    /// states, a one-line message directly beneath it — never a separate row.
+    var validationState: APIKeyValidator.State = .idle
 
     @State private var isFocused = false
 
     var body: some View {
         LabeledContent {
-            RevealableSecureField(text: $text, placeholder: placeholder) { focused in
-                isFocused = focused
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    RevealableSecureField(text: $text, placeholder: placeholder) { focused in
+                        isFocused = focused
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    inlineStatus
+                }
+                .padding(.horizontal, 10)
+                .fieldSurface(focused: isFocused)
+
+                statusMessage
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 10)
-            .fieldSurface(focused: isFocused)
             .frame(width: 230)
         } label: {
             VStack(alignment: .leading, spacing: SettingsMetrics.captionSpacing) {
@@ -231,6 +242,44 @@ private struct APIKeyField: View {
                 .font(.caption)
                 .modifier(PointingHandCursor())
             }
+        }
+    }
+
+    @ViewBuilder private var inlineStatus: some View {
+        switch validationState {
+        case .checking:
+            ProgressView().controlSize(.small)
+        case .verified:
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+                .help("Key verified")
+        case .invalidKey:
+            Image(systemName: "xmark.circle.fill")
+                .foregroundStyle(.red)
+                .help("Invalid key")
+        case .couldNotVerify:
+            Image(systemName: "exclamationmark.circle.fill")
+                .foregroundStyle(.orange)
+                .help("Couldn’t verify")
+        default:
+            EmptyView()
+        }
+    }
+
+    /// Spelled out directly under the field for the two error states; checking
+    /// and verified speak through the inline glyph alone.
+    @ViewBuilder private var statusMessage: some View {
+        switch validationState {
+        case .invalidKey:
+            Text("Invalid key")
+                .font(.caption).foregroundStyle(.red)
+                .fixedSize(horizontal: false, vertical: true)
+        case .couldNotVerify:
+            Text("Couldn’t verify — check your connection.")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        default:
+            EmptyView()
         }
     }
 }
@@ -507,6 +556,7 @@ struct SettingsPopover: View {
 /// lone Advanced (debug) toggle. Everything that isn't Polish or Permissions.
 private struct GeneralSettingsPane: View {
     @EnvironmentObject var settings: SettingsStore
+    @StateObject private var keyValidator = CartesiaKeyValidator()
 
     var body: some View {
         Form {
@@ -530,7 +580,8 @@ private struct GeneralSettingsPane: View {
                     text: $settings.cartesiaAPIKey,
                     placeholder: "sk_car_…",
                     linkTitle: "Get your Cartesia API key",
-                    linkURL: URL(string: "https://play.cartesia.ai/keys")!
+                    linkURL: URL(string: "https://play.cartesia.ai/keys")!,
+                    validationState: keyValidator.state
                 )
             } header: {
                 Text("API key")
@@ -549,6 +600,8 @@ private struct GeneralSettingsPane: View {
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
         .navigationTitle("General")
+        .onAppear { keyValidator.keyChanged(settings.cartesiaAPIKey) }
+        .onChange(of: settings.cartesiaAPIKey) { _, key in keyValidator.keyChanged(key) }
     }
 }
 
@@ -592,9 +645,6 @@ private struct PermissionsPane: View {
 struct PolishSettingsView: View {
     @EnvironmentObject var settings: SettingsStore
     @StateObject private var validator = LLMKeyValidator(provider: SettingsStore.shared.rewriteProvider)
-    /// In the configured states, "Change" reveals the provider picker + key
-    /// field in place rather than jumping back to the setup screen.
-    @State private var editingProvider = false
 
     private var provider: LLMProvider { settings.rewriteProvider }
 
@@ -645,7 +695,6 @@ struct PolishSettingsView: View {
             switch settings.polishUIState {
             case .setup, .keyBroken:
                 settings.enablePolish(provider: settings.rewriteProvider)
-                editingProvider = false
             default: break
             }
         }
@@ -664,7 +713,6 @@ struct PolishSettingsView: View {
             providerPicker
             modelRow
             keyField
-            validationStatus
         } header: {
             SectionHeader("Connect a provider",
                           help: "Polish uses your own AI key, so it runs on your account and InkIt stays free. Groq is recommended (free tier, fastest), but OpenAI, Anthropic, and Gemini all work.")
@@ -708,21 +756,13 @@ struct PolishSettingsView: View {
                           help: "Run each dictation through an AI model to fix filler, punctuation, and misheard words before it’s pasted.")
         }
 
+        // Always expanded: the provider dropdown and key field are live at all
+        // times, so switching providers or pasting a new key is one click away —
+        // no Change/Done round-trip, no collapsed summary to expand first.
         Section {
-            if broken || editingProvider {
-                providerPicker
-                modelRow
-                keyField
-                validationStatus
-                if editingProvider && !broken {
-                    Button("Done") { editingProvider = false }
-                        .modifier(PointingHandCursor())
-                }
-            } else {
-                LabeledContent("Provider", value: "\(provider.displayName) · \(settings.rewriteModel)")
-                Button("Change") { editingProvider = true }
-                    .modifier(PointingHandCursor())
-            }
+            providerPicker
+            modelRow
+            keyField
         } header: {
             SectionHeader("Connection",
                           help: "The AI provider and key that power polish. Switch providers any time — your key stays on this Mac.")
@@ -745,7 +785,8 @@ struct PolishSettingsView: View {
             text: keyBinding,
             placeholder: provider.keyPlaceholder,
             linkTitle: "Get a \(provider.displayName) key",
-            linkURL: provider.keyURL
+            linkURL: provider.keyURL,
+            validationState: validator.state
         )
     }
 
@@ -753,33 +794,6 @@ struct PolishSettingsView: View {
     /// per provider today; the picker returns automatically if that changes).
     private var modelRow: some View {
         LabeledContent("Model", value: settings.rewriteModel)
-    }
-
-    @ViewBuilder private var validationStatus: some View {
-        switch validator.state {
-        case .idle:
-            EmptyView()
-        case .checking:
-            LabeledContent("") {
-                HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Checking…") }
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-        case .verified:
-            LabeledContent("") {
-                Label("Verified", systemImage: "checkmark.circle.fill")
-                    .font(.caption).foregroundStyle(.green)
-            }
-        case .invalidKey:
-            LabeledContent("") {
-                Label("Invalid key — double-check you copied the whole thing.", systemImage: "xmark.circle.fill")
-                    .font(.caption).foregroundStyle(.red)
-            }
-        case .couldNotVerify:
-            LabeledContent("") {
-                Label("Couldn’t verify — check your connection.", systemImage: "exclamationmark.circle")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-        }
     }
 }
 
