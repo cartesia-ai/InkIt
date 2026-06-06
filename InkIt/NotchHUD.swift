@@ -160,6 +160,9 @@ private enum HUDPresentation: Equatable {
     case hidden
     case live
     case status(String)
+    /// A brief, self-clearing confirmation, e.g. "Saved to History" when a
+    /// transcript was held instead of pasted. Rendered as "InkIt • <label>".
+    case notice(String)
 }
 
 private struct NotchHUDView: View {
@@ -171,8 +174,9 @@ private struct NotchHUDView: View {
         // collapses the moment the hotkey is released. Polishing/pasting happen
         // silently in the background (the menu bar still reflects them).
         switch coordinator.state {
-        case .recording: return .live
-        default:         return .hidden
+        case .recording:     return .live
+        case .heldInHistory: return .notice("Saved to History")
+        default:             return .hidden
         }
     }
 
@@ -218,6 +222,9 @@ private struct NotchHUDView: View {
         case .status(let label):
             statusContent(label)
                 .id(label) // cross-fade only when the label actually changes
+        case .notice(let label):
+            noticeContent(label: label)
+                .id(label)
         case .hidden:
             EmptyView()
         }
@@ -286,6 +293,21 @@ private struct NotchHUDView: View {
                 .controlSize(.mini)
                 .tint(.white)
                 .scaleEffect(0.7)
+            Text(label)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.white.opacity(0.82))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    }
+
+    private func noticeContent(label: String) -> some View {
+        HStack(spacing: 5) {
+            Text("InkIt")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.85))
+            Text("•")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.4))
             Text(label)
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.white.opacity(0.82))

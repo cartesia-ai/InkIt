@@ -9,6 +9,9 @@ enum DictationState: Equatable {
     case finalizing
     case rewriting
     case pasting
+    /// No editable field was focused at release, so the transcript was kept in
+    /// History instead of pasted. A brief, self-clearing confirmation state.
+    case heldInHistory
     case error(String)
 }
 
@@ -193,6 +196,7 @@ final class AppCoordinator: ObservableObject {
         case .finalizing: return "Finalizing…"
         case .rewriting: return "Polishing…"
         case .pasting: return "Pasting…"
+        case .heldInHistory: return "Saved to History"
         case .error(let m): return "Error: \(m)"
         }
     }
@@ -202,6 +206,7 @@ final class AppCoordinator: ObservableObject {
         case .idle: return .secondary
         case .recording: return Color(nsColor: .systemOrange)
         case .finalizing, .rewriting, .pasting: return .orange
+        case .heldInHistory: return .secondary
         case .error: return .red
         }
     }
@@ -210,6 +215,7 @@ final class AppCoordinator: ObservableObject {
         switch state {
         case .recording: return "waveform.circle.fill"
         case .finalizing, .rewriting, .pasting: return "waveform.circle"
+        case .heldInHistory: return "tray.and.arrow.down"
         case .error: return "exclamationmark.circle"
         case .idle: return "mic"
         }
@@ -223,6 +229,7 @@ final class AppCoordinator: ObservableObject {
         case .finalizing: return "… Ink"
         case .rewriting: return "✎ Ink"
         case .pasting: return "↩ Ink"
+        case .heldInHistory: return "⬇ Ink"
         case .error: return "⚠ Ink"
         case .idle: return "Ink"
         }
@@ -411,8 +418,39 @@ final class AppCoordinator: ObservableObject {
                 }
                 let polishFinished = DispatchTime.now()
 
+                // Re-check at release whether an editable field is actually
+                // focused. The target app was resolved at hotkey press; if the
+                // user clicked a surface with no text field (or focus moved
+                // during dictation), pasting now would fire Cmd+V into the wrong
+                // app or nowhere. In that case hold the transcript in History —
+                // it's still saved and copyable — rather than guess.
+                let focus = FocusedEditable.current()
+                guard focus.isEditable else {
+                    self.pasteTargetApp = nil
+                    self.contextTargetSnapshot = nil
+                    let latency = release.map { start in
+                        TranscriptHistoryStore.Latency(
+                            transcribeMs: Self.elapsedMs(start, transcriptArrived),
+                            polishMs: Self.elapsedMs(transcriptArrived, polishFinished),
+                            pasteMs: 0
+                        )
+                    }
+                    self.history.add(
+                        correction.text,
+                        original: correction.original,
+                        latency: latency,
+                        polish: correction.outcome,
+                        failure: correction.failure
+                    )
+                    DebugLog.info("onClosed: no editable field focused at release — held in History instead of pasting")
+                    self.showHeldInHistoryNotice()
+                    return
+                }
+
                 self.state = .pasting
-                self.paste.paste(text: correction.text, targetApp: capturedTargetApp) { ok in
+                // Paste into the verified, currently-focused app rather than the
+                // (possibly stale) press-time target.
+                self.paste.paste(text: correction.text, targetApp: focus.app ?? capturedTargetApp) { ok in
                     Task { @MainActor in
                         self.pasteTargetApp = nil
                         self.contextTargetSnapshot = nil
@@ -594,6 +632,17 @@ final class AppCoordinator: ObservableObject {
                 runID: runID
             )
             return Self.polishResult(raw: raw, result: result, provider: provider)
+        }
+    }
+
+    /// Briefly surface "Saved to History" (notch + menu bar), then fall back to
+    /// idle. Mirrors `setError`'s self-clearing timer but isn't an error state.
+    private func showHeldInHistoryNotice() {
+        state = .heldInHistory
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+            Task { @MainActor in
+                if case .heldInHistory = self?.state { self?.state = .idle }
+            }
         }
     }
 

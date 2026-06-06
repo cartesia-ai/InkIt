@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import Carbon.HIToolbox
+import ApplicationServices
 
 /// Pastes a string into the frontmost application by swapping the pasteboard
 /// and synthesizing Cmd+V, then restoring the previous clipboard contents.
@@ -96,5 +97,67 @@ final class PasteService {
         up?.flags = .maskCommand
         down?.post(tap: .cghidEventTap)
         up?.post(tap: .cghidEventTap)
+    }
+}
+
+/// Answers one question at hotkey *release*: is an editable control focused
+/// right now? InkIt resolves a paste target app at hotkey press, but by the time
+/// the transcript is ready that app may have no focused text field — the user
+/// clicked a non-editable surface, or focus moved during dictation. Firing Cmd+V
+/// then lands the words in the wrong app (the one that *was* focused) or silently
+/// nowhere. We re-check the system-wide focused element at release and only paste
+/// when something can actually receive the text.
+enum FocusedEditable {
+    struct Result {
+        /// Whether an editable control is focused right now.
+        let isEditable: Bool
+        /// The app owning the focused element — the *verified* paste target,
+        /// resolved at release rather than the (possibly stale) press-time app.
+        let app: NSRunningApplication?
+    }
+
+    static func current() -> Result {
+        // No Accessibility → we can't tell where text would land, so treat it as
+        // "no editable focus" and hold the transcript in History rather than
+        // gamble a Cmd+V. (Dictation already requires AX to start, so this is the
+        // revoked-mid-session edge, not the common path.)
+        guard AXIsProcessTrusted() else { return Result(isEditable: false, app: nil) }
+
+        let system = AXUIElementCreateSystemWide()
+        var focusedRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focusedRef) == .success,
+              let focused = focusedRef, CFGetTypeID(focused) == AXUIElementGetTypeID() else {
+            return Result(isEditable: false, app: nil)
+        }
+        let element = focused as! AXUIElement
+
+        var pid: pid_t = 0
+        let app = AXUIElementGetPid(element, &pid) == .success && pid > 0
+            ? NSRunningApplication(processIdentifier: pid)
+            : nil
+
+        return Result(isEditable: isEditable(element), app: app)
+    }
+
+    private static func isEditable(_ element: AXUIElement) -> Bool {
+        // Primary signal: the element exposes a *settable* value. That's what an
+        // editable field looks like to the accessibility layer — native text
+        // fields/areas, search fields, and most web/Electron inputs all qualify,
+        // without us enumerating every role.
+        var settable: DarwinBoolean = false
+        if AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable) == .success,
+           settable.boolValue {
+            return true
+        }
+        // Fallback: some controls don't report AXValue settable until first
+        // edited, so trust a known editable role too.
+        var roleRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleRef) == .success,
+           let role = roleRef as? String {
+            return role == kAXTextFieldRole
+                || role == kAXTextAreaRole
+                || role == kAXComboBoxRole
+        }
+        return false
     }
 }
