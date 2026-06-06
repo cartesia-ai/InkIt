@@ -150,8 +150,14 @@ final class AppCoordinator: ObservableObject {
                 if hasAX && !self.hadAccessibility {
                     self.hadAccessibility = true
                     self.registerHotkey()
-                } else if !hasAX {
+                } else if !hasAX && self.hadAccessibility {
                     self.hadAccessibility = false
+                    // Accessibility was revoked mid-session, which kills the Fn
+                    // CGEventTap. Re-register so the binding downgrades to the
+                    // passive monitor instead of leaving a dead tap that silently
+                    // swallows key presses. When AX is restored the branch above
+                    // upgrades back to the suppressing tap.
+                    if self.isHotkeyRegistered { self.registerHotkey() }
                 }
             }
             .store(in: &cancellables)
@@ -252,10 +258,13 @@ final class AppCoordinator: ObservableObject {
             return
         }
         guard permissions.hasAccessibility else {
-            // Don't auto-open System Settings here — pressing the key repeatedly
-            // would keep yanking Settings to the front. The HUD error nudges the
-            // user; granting happens from onboarding or the Settings window.
-            setError("Accessibility permission required — enable it in Settings.")
+            // Mirror the microphone-denied experience: surface the HUD error and
+            // route the user to fix it. requestAccessibility fires the system
+            // "InkIt would like to control this computer" prompt (first press
+            // after a revoke) and opens the Accessibility pane; later presses
+            // just re-open Settings, the same way a denied mic re-opens its pane.
+            setError("Accessibility permission required.")
+            permissions.requestAccessibility()
             return
         }
 
@@ -272,11 +281,14 @@ final class AppCoordinator: ObservableObject {
         // text meant for whatever they were focused on.
         let routeToOnboardingBox = routesFinalTranscriptToOnboarding
             && frontmostApp?.bundleIdentifier == ownBundleID
-        // Interim transcript should likewise only stream into the onboarding box
-        // when InkIt is frontmost. If the user is dictating into another app, the
-        // box must stay empty — the final text pastes at their real cursor, and
-        // the live preview must not leak into a box they aren't looking at.
-        let suppressLivePreview = routesFinalTranscriptToOnboarding && !routeToOnboardingBox
+        // The trial box never shows interim transcript. While dictating into
+        // another app the box must stay empty (the final text pastes at the real
+        // cursor, and the preview must not leak into a box they aren't looking
+        // at). And even when routed to the box itself, we deliberately hold the
+        // words back until release — they land all at once when the final
+        // transcript arrives in onClosed, rather than flickering in word-by-word.
+        // That makes the reveal feel like a result, not a live caption.
+        let suppressLivePreview = routesFinalTranscriptToOnboarding
         pasteTargetApp = {
             if let frontmostApp, frontmostApp.bundleIdentifier != ownBundleID {
                 return frontmostApp

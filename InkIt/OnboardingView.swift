@@ -200,7 +200,7 @@ private struct PermissionsStep: View {
                 PermissionCard(
                     icon: "mic.fill",
                     title: "Microphone",
-                    subtitle: "So InkIt can hear you. Asleep until you hold the key.",
+                    subtitle: "So InkIt can hear you.",
                     state: permissions.microphoneState,
                     deniedWhy: "This is how InkIt hears you. Without microphone access, there’s nothing for InkIt to transcribe. Let’s turn it back on.",
                     settingsPath: "Privacy & Security ▸ Microphone",
@@ -211,7 +211,7 @@ private struct PermissionsStep: View {
                 PermissionCard(
                     icon: "accessibility",
                     title: "Accessibility",
-                    subtitle: "So your words paste instantly, right at your cursor.",
+                    subtitle: "So InkIt can type for you.",
                     state: permissions.accessibilityState,
                     deniedWhy: "This is how InkIt types your words straight into whatever app you’re in. Without it, your dictation has nowhere to land. Let’s turn it back on.",
                     settingsPath: "Privacy & Security ▸ Accessibility",
@@ -572,9 +572,10 @@ private struct TryItStep: View {
                 if !revealed { withAnimation(.easeOut(duration: 0.3)) { revealed = true } }
             }
         }
-        // Mirror the transcript into the editable field as it streams in and when
-        // it finalizes. liveTranscript only changes during a take, so the user's
-        // manual edits afterward are never clobbered.
+        // Drop the final transcript into the editable field once the take closes.
+        // Interim words are suppressed (see suppressLivePreview), so liveTranscript
+        // stays empty until release and then lands the whole line at once — the
+        // user's manual edits afterward are never clobbered mid-stream.
         .onChange(of: transcript) { _, newValue in
             editedText = newValue
         }
