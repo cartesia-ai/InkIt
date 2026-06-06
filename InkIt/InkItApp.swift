@@ -891,6 +891,7 @@ private struct TranscriptHistoryRow: View {
         // Whole row is click-to-copy. The chips swallow their own taps so
         // inspecting the diff/latency never triggers a copy.
         .onTapGesture { copy() }
+        .modifier(PointingHandCursor())
         .onHover { isHovering in
             withAnimation(.easeOut(duration: 0.12)) {
                 hovering = isHovering
