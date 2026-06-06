@@ -202,7 +202,7 @@ private struct PermissionsStep: View {
                     title: "Microphone",
                     subtitle: "So InkIt can hear you.",
                     state: permissions.microphoneState,
-                    deniedWhy: "This is how InkIt hears you. Without microphone access, there’s nothing for InkIt to transcribe. Let’s turn it back on.",
+                    manualWhy: "This is how InkIt hears you. Without microphone access, there’s nothing for InkIt to transcribe. Turn it on in System Settings to get going.",
                     settingsPath: "Privacy & Security ▸ Microphone",
                     enable: { permissions.requestMicrophone { _ in } },
                     openSettings: { permissions.openMicrophoneSettings() }
@@ -213,7 +213,7 @@ private struct PermissionsStep: View {
                     title: "Accessibility",
                     subtitle: "So InkIt can type for you.",
                     state: permissions.accessibilityState,
-                    deniedWhy: "This is how InkIt types your words straight into whatever app you’re in. Without it, your dictation has nowhere to land. Let’s turn it back on.",
+                    manualWhy: "This is how InkIt types your words straight into whatever app you’re in. Without it, your dictation has nowhere to land. Turn it on in System Settings to get going.",
                     settingsPath: "Privacy & Security ▸ Accessibility",
                     enable: { permissions.requestAccessibility() },
                     // Re-route through requestAccessibility so InkIt stays pre-added
@@ -239,9 +239,9 @@ private struct PermissionCard: View {
     let title: String
     let subtitle: String
     let state: PermissionState
-    /// Friendly one-liner explaining why the permission is required, shown only
-    /// in the `needsManual` state.
-    let deniedWhy: String
+    /// Friendly one-liner explaining why the permission is required and how to
+    /// finish granting it, shown only in the `needsManual` state.
+    let manualWhy: String
     /// The System Settings pane to send the user to, e.g.
     /// "Privacy & Security ▸ Accessibility".
     let settingsPath: String
@@ -307,15 +307,14 @@ private struct PermissionCard: View {
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title).font(.title3.weight(.semibold)).foregroundStyle(.primary)
-                    Label("Just one more step to start dictating",
-                          systemImage: "exclamationmark.triangle.fill")
-                        .font(.callout.weight(.semibold))
-                        .foregroundStyle(Color.accentColor)
+                    Text("Finish in System Settings")
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(.secondary)
                 }
                 Spacer()
             }
 
-            Text(deniedWhy)
+            Text(manualWhy)
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -332,8 +331,9 @@ private struct PermissionCard: View {
     }
 }
 
-/// A numbered instruction line — amber badge + "prefix **emphasis**" text — used
-/// in the permission card's manual-fix state.
+/// A numbered instruction line — amber badge + "prefix emphasis" text — used
+/// in the permission card's manual-fix state. The text reads in one uniform
+/// weight; no inline bolding.
 private struct ManualStep: View {
     let number: Int
     let prefix: String
@@ -346,7 +346,7 @@ private struct ManualStep: View {
                 .foregroundStyle(.black.opacity(0.85))
                 .frame(width: 18, height: 18)
                 .background(Circle().fill(Color.accentColor))
-            (Text(prefix) + Text(emphasis).fontWeight(.semibold))
+            Text(prefix + emphasis)
                 .font(.body)
                 .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
