@@ -32,24 +32,28 @@ extension Color {
 }
 
 extension Font {
-    /// Onboarding hero title. Spec: largeTitle bold (~26/700).
-    static let inkLargeTitle = Font.largeTitle.weight(.bold)
+    // One comfortable scale shared by Home, Settings, and Onboarding. Sizes are
+    // fixed (not Dynamic Type) so the dense dashboard/settings layouts stay
+    // stable; the point is that every surface draws from the *same* ladder, so
+    // nothing reads jarringly larger than anything else.
+    /// Onboarding hero title.
+    static let inkLargeTitle = Font.system(size: 28, weight: .bold)
     /// Screen / pane / column title (History, Your stats, Settings pane).
-    static let inkTitle = Font.title3.weight(.semibold)
-    /// Card / sub-section heading (nudge title, field group). Spec: headline.
-    static let inkHeadline = Font.headline
-    /// Featured stat number — slightly larger, monospaced digits applied at use.
-    static let inkStat = Font.title2.weight(.semibold)
+    static let inkTitle = Font.system(size: 18, weight: .semibold)
+    /// Card / sub-section heading (nudge title, field group).
+    static let inkHeadline = Font.system(size: 15, weight: .semibold)
+    /// Featured stat number — monospaced digits applied at use.
+    static let inkStat = Font.system(size: 22, weight: .semibold)
     /// Uppercase eyebrow: group headers, day dividers, diff row labels.
-    static let inkEyebrow = Font.caption.weight(.semibold)
-    /// Primary body / row text. Spec: body (13/400).
-    static let inkBody = Font.body
+    static let inkEyebrow = Font.system(size: 11, weight: .semibold)
+    /// Primary body / row text (transcripts, row labels).
+    static let inkBody = Font.system(size: 15)
     /// Emphasized body — button labels, selectable item titles.
-    static let inkBodyEmphasized = Font.body.weight(.medium)
-    /// Secondary body. Spec: callout (~12).
-    static let inkCallout = Font.callout
-    /// Helper / metadata: timestamps, units, captions. Spec: caption (~11).
-    static let inkCaption = Font.caption
+    static let inkBodyEmphasized = Font.system(size: 15, weight: .medium)
+    /// Secondary body / metadata that still needs to read easily.
+    static let inkCallout = Font.system(size: 13)
+    /// Helper / captions / units.
+    static let inkCaption = Font.system(size: 12)
 }
 
 /// Swaps the cursor to the pointing-hand while hovering, signalling that a

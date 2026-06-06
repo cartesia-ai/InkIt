@@ -135,6 +135,22 @@ final class TranscriptRewriter {
         self.session = URLSession(configuration: config)
     }
 
+    /// Opens the TLS/TCP connection to the provider host ahead of the real
+    /// polish POST so the hot-path request reuses a warm pooled connection —
+    /// saving DNS + TCP + TLS setup (roughly one extra round trip) on what is
+    /// otherwise a cold connection per dictation. Fire this at key-press; the
+    /// response is intentionally discarded (a 404/405 still warms the
+    /// connection). Reusing *this same instance's* `session` for the later
+    /// polish call is what makes the warm connection land in the pool.
+    func prewarm() {
+        guard !apiKey.isEmpty else { return }
+        var req = URLRequest(url: provider.endpoint)
+        req.httpMethod = "HEAD"
+        req.timeoutInterval = 2.5
+        DebugLog.info("Rewriter prewarm: opening connection to \(provider.endpoint.host ?? "?")")
+        session.dataTask(with: req) { _, _, _ in }.resume()
+    }
+
     /// Rewrites the transcript using the focused window's on-screen text
     /// (captured via Accessibility) as context.
     func rewriteWithRawContext(transcript: String,

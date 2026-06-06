@@ -44,6 +44,15 @@ final class AppCoordinator: ObservableObject {
     /// Monotonic timestamp of the most recent hotkey release, used as the
     /// anchor for per-dictation latency measurements.
     private var releaseTime: DispatchTime?
+    /// Polish pipeline warmed at key-press so its setup overlaps the time the
+    /// user spends speaking, instead of landing on the critical path after
+    /// release. `warmRewriter` holds an already-connected LLM session;
+    /// `pendingContextTask` is the in-flight screen-context capture (its log
+    /// runID is `pendingContextRunID`). All three are consumed once in
+    /// `correctedTranscript` and reset on every `startDictation`.
+    private var warmRewriter: TranscriptRewriter?
+    private var pendingContextTask: Task<ContextSnapshot, Never>?
+    private var pendingContextRunID: String?
 
     init() {
         detectDuplicateRunningCopies()
@@ -285,6 +294,37 @@ final class AppCoordinator: ObservableObject {
         let capturedTargetApp = pasteTargetApp
         let capturedSnapshot = contextTargetSnapshot
 
+        // Pre-warm the polish pipeline at key-press so its cost overlaps the
+        // time the user is still speaking rather than landing on the critical
+        // path after release. Two independent warmups, skipped for the
+        // onboarding/Home try box (which never polishes):
+        //   1. Open the LLM connection (DNS+TCP+TLS) so the polish POST reuses it.
+        //   2. Capture screen context now — it depends on the focused window,
+        //      not the transcript text, so there's no reason to wait for the
+        //      final turn. `correctedTranscript` awaits this task instead of
+        //      starting capture from scratch.
+        warmRewriter = nil
+        pendingContextTask = nil
+        pendingContextRunID = nil
+        if !routeToOnboardingBox,
+           settings.correctionEnabled,
+           !settings.apiKey(for: settings.rewriteProvider).isEmpty {
+            let provider = settings.rewriteProvider
+            let rewriter = TranscriptRewriter(provider: provider,
+                                              model: settings.rewriteModel,
+                                              apiKey: settings.apiKey(for: provider))
+            rewriter.prewarm()
+            warmRewriter = rewriter
+
+            if settings.screenContextEnabled, permissions.hasAccessibility, capturedSnapshot != nil {
+                let runID = Self.makeCorrectionRunID()
+                pendingContextRunID = runID
+                let resolver = contextResolver
+                DebugLog.info("[\(runID)] prewarm: capturing context at key-press target=\(capturedSnapshot?.logDescription ?? "nil")")
+                pendingContextTask = Task { await resolver.captureContext(target: capturedSnapshot, runID: runID) }
+            }
+        }
+
         let client = CartesiaStreamingClient(apiKey: settings.cartesiaAPIKey)
         self.client = client
 
@@ -437,7 +477,10 @@ final class AppCoordinator: ObservableObject {
         raw: String,
         targetSnapshot: TargetAppSnapshot?
     ) async -> Correction {
-        let runID = Self.makeCorrectionRunID()
+        // Reuse the runID minted when context capture was kicked off at
+        // key-press so its logs correlate; fall back to a fresh one when no
+        // capture was prelaunched (context disabled, or polish off at press).
+        let runID = pendingContextRunID ?? Self.makeCorrectionRunID()
         let enabled = settings.correctionEnabled
         let hasKey = !settings.apiKey(for: settings.rewriteProvider).isEmpty
         let hasAX = permissions.hasAccessibility
@@ -459,7 +502,10 @@ final class AppCoordinator: ObservableObject {
 
         let provider = settings.rewriteProvider
         let apiKey = settings.apiKey(for: provider)
-        let rewriter = TranscriptRewriter(provider: provider, model: settings.rewriteModel, apiKey: apiKey)
+        // Prefer the connection-warmed rewriter opened at key-press; build a
+        // fresh one only if prewarm was skipped (e.g. settings changed mid-hold).
+        let rewriter = warmRewriter ?? TranscriptRewriter(provider: provider, model: settings.rewriteModel, apiKey: apiKey)
+        warmRewriter = nil
 
         // The user opted out of screen context: polish the transcript on its
         // own (filler/homophone cleanup) without reading any on-screen text.
@@ -483,7 +529,15 @@ final class AppCoordinator: ObservableObject {
             return Correction(text: raw, outcome: .off, original: nil)
         }
 
-        let snapshot = await contextResolver.captureContext(target: targetSnapshot, runID: runID)
+        // Await the capture started at key-press; only start one here if that
+        // prewarm didn't run (its conditions are a subset of this path's).
+        let snapshot: ContextSnapshot
+        if let task = pendingContextTask {
+            pendingContextTask = nil
+            snapshot = await task.value
+        } else {
+            snapshot = await contextResolver.captureContext(target: targetSnapshot, runID: runID)
+        }
         DebugLog.info("[\(runID)] selected context: \(snapshot.logSummary)")
         DebugLog.infoBlock(title: "[\(runID)] selected context payload", text: snapshot.payload)
 
