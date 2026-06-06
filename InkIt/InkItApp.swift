@@ -220,25 +220,15 @@ struct MainWindowView: View {
 
     @ViewBuilder private var homeView: some View {
         if history.entries.isEmpty {
-            emptyState
+            // A completed onboarding trial seeds the very first transcript (see
+            // AppCoordinator's trial logging), so most users never see this.
+            // It's reached only when they skipped Try-it — so rather than a
+            // dead-end "nothing here," offer a live try box that turns the first
+            // take into a real history row, closing the activation loop in place.
+            HomeTryItPanel()
         } else {
             transcriptList
         }
-    }
-
-    private var emptyState: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "tray")
-                .font(.system(size: 36, weight: .light))
-                .foregroundStyle(.secondary)
-            Text("No transcripts yet")
-                .font(.headline)
-            Text("Hold \(settings.hotkeyDisplayString) and speak to dictate.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(40)
     }
 
     private var transcriptList: some View {
@@ -333,6 +323,167 @@ struct MainWindowView: View {
     }
 }
 
+/// Shown on Home only when there's no history at all — i.e. the user skipped the
+/// onboarding Try-it step. Rather than dead-ending, it offers a live dictation
+/// box: read the line, hold the key, watch the words land. Reuses the onboarding
+/// trial routing (`beginOnboardingTrial`) and opts that path into history logging
+/// so the first take immediately becomes a real row and the empty state is gone.
+private struct HomeTryItPanel: View {
+    @EnvironmentObject var coordinator: AppCoordinator
+    @EnvironmentObject var settings: SettingsStore
+
+    private let sampleLine = "Help me plan a slow Sunday full of pancakes, sunshine, and a long nap."
+    private static let recordingAmber = Color(red: 1.0, green: 0.62, blue: 0.04)
+
+    @State private var invite = false
+    @State private var hasPressed = false
+
+    private var isRecording: Bool { coordinator.state == .recording }
+    private var transcript: String { coordinator.liveTranscript }
+
+    var body: some View {
+        VStack(spacing: 18) {
+            VStack(spacing: 5) {
+                Text("No transcripts yet")
+                    .font(.headline)
+                Text("Give it a try right here.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            panel
+
+            Text("Or hold \(settings.hotkeyDisplayString) in any app and start talking.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(32)
+        .onAppear {
+            // Route takes into the box below and persist them, so trying it here
+            // populates Home. Cleared on disappear (which fires the moment the
+            // first take lands and the list replaces this panel).
+            coordinator.logTrialTakesToHistory = true
+            coordinator.beginOnboardingTrial()
+        }
+        .onDisappear {
+            coordinator.logTrialTakesToHistory = false
+            coordinator.endOnboardingTrial()
+        }
+        .onChange(of: isRecording) { _, recording in
+            if recording { hasPressed = true }
+        }
+    }
+
+    private var panel: some View {
+        VStack(spacing: 20) {
+            promptBar
+            keyCap
+            resultBox
+        }
+        .padding(22)
+        .frame(maxWidth: 440)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color("CardBG"))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.05), radius: 12, y: 5)
+    }
+
+    private var promptBar: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("READ THIS ALOUD")
+                .font(.system(size: 10, weight: .bold))
+                .tracking(0.8)
+                .foregroundStyle(Color.accentColor)
+            Text(sampleLine)
+                .font(.system(size: 15, weight: .medium))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.leading, 13)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(Color.accentColor)
+                .frame(width: 3)
+        }
+    }
+
+    private var keyCap: some View {
+        HStack(spacing: 10) {
+            if isRecording {
+                Circle()
+                    .fill(Self.recordingAmber)
+                    .frame(width: 11, height: 11)
+                    .shadow(color: Self.recordingAmber.opacity(0.7), radius: 5)
+            } else {
+                Image(systemName: "mic.fill")
+                    .font(.system(size: 15))
+            }
+            Text(isRecording ? "Listening…" : "Hold \(settings.hotkeyDisplayString) to talk")
+                .font(.system(size: 15, weight: .bold))
+        }
+        .padding(.horizontal, 20).padding(.vertical, 11)
+        .background(
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .fill(isRecording ? Color.accentSoft : Color("PaperBG"))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .stroke(isRecording ? Self.recordingAmber : Color(nsColor: .separatorColor),
+                        lineWidth: 1.5)
+        )
+        .scaleEffect(isRecording ? 0.97 : 1)
+        .overlay(inviteRing.opacity(showInvite ? 1 : 0))
+        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isRecording)
+        .animation(.easeOut(duration: 0.4), value: showInvite)
+    }
+
+    private var resultBox: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("WHAT INKIT HEARD")
+                .font(.system(size: 10, weight: .bold))
+                .tracking(0.6)
+                .foregroundStyle(.tertiary)
+            Text(transcript.isEmpty ? "Your words appear here after you let go." : transcript)
+                .font(.system(size: 15))
+                .foregroundStyle(transcript.isEmpty ? .tertiary : .primary)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .topLeading)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color("PaperBG"))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+        )
+    }
+
+    /// Glow that invites only the first press, then retires (matches onboarding).
+    private var showInvite: Bool { !hasPressed && !isRecording }
+
+    private var inviteRing: some View {
+        RoundedRectangle(cornerRadius: 17, style: .continuous)
+            .stroke(Color.accentColor, lineWidth: 2)
+            .padding(-5)
+            .scaleEffect(invite ? 1.09 : 0.97)
+            .opacity(invite ? 0 : 0.5)
+            .allowsHitTesting(false)
+            .onAppear {
+                withAnimation(.easeOut(duration: 2.1).repeatForever(autoreverses: false)) {
+                    invite = true
+                }
+            }
+    }
+}
+
 private struct TranscriptHistoryRow: View {
     let text: String
     let timestamp: String
@@ -402,69 +553,52 @@ private struct TranscriptHistoryRow: View {
         .accessibilityLabel(copied ? "Copied transcript" : "Copy transcript")
     }
 
+    // The detail line carries two always-visible, tappable pills — polish and
+    // time-to-text — anchored by a dim timestamp. Earlier these were hidden until
+    // hover and opened on a second hover, which testers found undiscoverable and
+    // "wonky." Now the affordances read at rest and open on a single click.
     private var detailLine: some View {
         HStack(spacing: 8) {
             // Always-on anchor: a dim timestamp keeps the row from reading blank.
-            // Brightens slightly on hover alongside the rest of the detail line.
+            // Brightens slightly on hover alongside the pills.
             Text(timestamp)
                 .font(.caption)
                 .foregroundStyle(hovering ? .secondary : .tertiary)
 
-            // The success sparkle is hover-only — a clean polish needs no
-            // attention at rest. The dropped-polish mark stays visible next to
-            // the timestamp so a failed polish (toggle on, but the rewrite
-            // didn't land) is noticeable without hovering.
+            // Pills group on the left, next to the timestamp: polish first (when
+            // it ran), then time-to-text. With polish off, the time pill sits
+            // directly beside the timestamp.
             switch outcome {
-            case .polished: sparkle.opacity(hovering ? 1 : 0)
-            case .failed: failureMark
-            case .off: EmptyView()
+            case .polished: polishPill
+            case .failed:   failurePill
+            case .off:      EmptyView()
             }
-
-            Spacer(minLength: 8)
 
             if let latency {
-                Text(Self.latencyString(latency))
-                    .font(.caption2)
-                    .monospacedDigit()
-                    .foregroundStyle(.tertiary)
-                    .contentShape(Rectangle())
-                    .onHover { showingLatency = $0 }
-                    .onTapGesture {}  // swallow taps so the row's copy doesn't fire
-                    .popover(isPresented: $showingLatency, arrowEdge: .bottom) {
-                        LatencyPopover(latency: latency, polishFailed: outcome == .failed)
-                    }
-                    .opacity(hovering ? 1 : 0)
+                timePill(latency)
             }
+
+            Spacer(minLength: 0)
         }
     }
 
-    private var sparkle: some View {
-        Image(systemName: "sparkles")
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(Color.accentColor)
-            .contentShape(Rectangle())
-            .onHover { showingDiff = $0 }
-            .onTapGesture {}  // swallow taps so the row's copy doesn't fire
-            // No `.help()` here: the native tooltip would double up with our
-            // own DiffPopover below. The popover is the single source of truth.
+    /// Sparkle glyph — a single click reveals the before/after diff. The label
+    /// and exact stats live in the popover so the row stays uncluttered.
+    private var polishPill: some View {
+        iconChip("sparkles", fg: Color.accentColor)
+            .onTapGesture { showingDiff.toggle() }
             .popover(isPresented: $showingDiff, arrowEdge: .bottom) {
                 DiffPopover(before: original ?? text, after: text)
             }
+            .modifier(PointingHandCursor())
+            .accessibilityLabel("Polished — show changes")
     }
 
-    /// Polish ran but the rewrite call failed (e.g. rate limit); the raw
-    /// transcript was pasted instead. A struck-through sparkle reads as
-    /// "polish skipped" — it pairs with the success sparkle instead of shouting
-    /// danger, while soft amber still flags it as needing attention. Hover
-    /// reveals a concise, actionable reason via our own popover — the macOS
-    /// `.help()` tooltip is too slow to appear/dismiss.
-    private var failureMark: some View {
-        Image(systemName: "sparkles.slash")
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(.orange)
-            .contentShape(Rectangle())
-            .onHover { showingFailure = $0 }
-            .onTapGesture {}  // swallow taps so the row's copy doesn't fire
+    /// Struck-through sparkle in soft amber — polish failed and raw text was
+    /// pasted. Click for the actionable reason.
+    private var failurePill: some View {
+        iconChip("sparkles.slash", fg: .orange)
+            .onTapGesture { showingFailure.toggle() }
             .popover(isPresented: $showingFailure, arrowEdge: .bottom) {
                 Text(Self.failureMessage(failure))
                     .font(.callout)
@@ -473,7 +607,32 @@ private struct TranscriptHistoryRow: View {
                     .frame(width: 240, alignment: .leading)
                     .padding(12)
             }
+            .modifier(PointingHandCursor())
             .accessibilityLabel(Text(Self.failureMessage(failure)))
+    }
+
+    /// Clock glyph — the exact total and per-stage split stay hidden until the
+    /// click opens the breakdown, keeping the row quiet.
+    private func timePill(_ latency: TranscriptHistoryStore.Latency) -> some View {
+        iconChip("clock", fg: .secondary)
+            .onTapGesture { showingLatency.toggle() }
+            .popover(isPresented: $showingLatency, arrowEdge: .bottom) {
+                LatencyPopover(latency: latency, polishFailed: outcome == .failed)
+            }
+            .modifier(PointingHandCursor())
+            .accessibilityLabel("Time to text \(Self.fmt(latency.totalMs)) — show breakdown")
+    }
+
+    /// A bare SF Symbol affordance: no label, no fill — just a tinted glyph with
+    /// a comfortable tap target. The caller's tap gesture swallows the click so
+    /// the row's click-to-copy never fires when inspecting a chip.
+    private func iconChip(_ systemName: String, fg: Color) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(fg)
+            .padding(.horizontal, 2)
+            .padding(.vertical, 3)
+            .contentShape(Rectangle())
     }
 
     /// Terse, provider-aware reason for why polish failed, with the action the
@@ -506,11 +665,6 @@ private struct TranscriptHistoryRow: View {
         let mins = Int(ceil(secs / 60))
         if mins <= 1 { return "Try again in ~1 min or switch provider." }
         return "Try again in ~\(mins) min or switch provider."
-    }
-
-    /// e.g. `Time to text: 1.1s`
-    private static func latencyString(_ l: TranscriptHistoryStore.Latency) -> String {
-        "Time to text: \(fmt(l.totalMs))"
     }
 
     private static func fmt(_ ms: Int) -> String {

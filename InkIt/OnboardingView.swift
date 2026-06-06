@@ -543,7 +543,17 @@ private struct TryItStep: View {
             // Land with the cursor already in the box, ready to dictate or type.
             DispatchQueue.main.async { boxFocused = true }
         }
-        .onDisappear { coordinator.endOnboardingTrial() }
+        .onDisappear {
+            coordinator.endOnboardingTrial()
+            // Persist what the user produced here so Home isn't empty the first
+            // time they open it. Logged once on the way out (send or skip-after-
+            // trying), using the box's final — possibly hand-edited — text. The
+            // trial is verbatim, so it's an `.off` entry with no latency/diff.
+            let final = editedText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !final.isEmpty {
+                TranscriptHistoryStore.shared.add(final, polish: .off)
+            }
+        }
         .onChange(of: isRecording) { _, recording in
             if recording { hasPressed = true }
         }

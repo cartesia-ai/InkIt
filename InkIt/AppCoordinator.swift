@@ -35,6 +35,12 @@ final class AppCoordinator: ObservableObject {
     private var pasteTargetApp: NSRunningApplication?
     private var contextTargetSnapshot: TargetAppSnapshot?
     private var routesFinalTranscriptToOnboarding = false
+    /// When a take is routed to an in-app box (see `routeToOnboardingBox`), should
+    /// it also be saved to history? The onboarding Try-it step keeps this off and
+    /// logs once on send; the Home empty-state try box turns it on so the very
+    /// first take both lands in the box and persists — instantly replacing the
+    /// empty state with a real transcript row.
+    var logTrialTakesToHistory = false
     /// Monotonic timestamp of the most recent hotkey release, used as the
     /// anchor for per-dictation latency measurements.
     private var releaseTime: DispatchTime?
@@ -307,6 +313,12 @@ final class AppCoordinator: ObservableObject {
                     self.pasteTargetApp = nil
                     self.contextTargetSnapshot = nil
                     self.liveTranscript = raw
+                    // The trial is verbatim — no polish ran — so log it as an
+                    // `.off` entry with no latency/diff. Only the Home try box
+                    // opts into this; onboarding logs on send instead.
+                    if self.logTrialTakesToHistory {
+                        self.history.add(raw, polish: .off)
+                    }
                     self.state = .idle
                     return
                 }
@@ -421,9 +433,18 @@ final class AppCoordinator: ObservableObject {
         let hasKey = !settings.apiKey(for: settings.rewriteProvider).isEmpty
         let hasAX = permissions.hasAccessibility
         let screenContext = settings.screenContextEnabled
+        // Single grep-able marker for per-app context diagnosis. One CTX line is
+        // emitted on every terminal branch below — `grep CTX ~/Library/Logs/InkIt-debug.log`
+        // gives one row per dictation: which app, confidence, content chars, and
+        // what we actually did with it.
+        let appTag: String = {
+            guard let s = targetSnapshot else { return "app=nil bundle=nil" }
+            return "app=\(s.localizedName) bundle=\(s.bundleIdentifier ?? "nil")"
+        }()
         DebugLog.info("[\(runID)] correctedTranscript: raw=\"\(raw)\" enabled=\(enabled) hasKey=\(hasKey) hasAX=\(hasAX) screenContext=\(screenContext)")
         guard enabled, hasKey else {
             DebugLog.info("[\(runID)] correctedTranscript: skipping (enabled=\(enabled) hasKey=\(hasKey))")
+            DebugLog.info("[\(runID)] CTX \(appTag) screenContext=\(screenContext) confidence=n/a contentChars=0 outcome=off reason=\(!enabled ? "correction-off" : "no-api-key")")
             return Correction(text: raw, outcome: .off, original: nil)
         }
 
@@ -435,6 +456,7 @@ final class AppCoordinator: ObservableObject {
         // own (filler/homophone cleanup) without reading any on-screen text.
         guard screenContext else {
             DebugLog.info("[\(runID)] correctedTranscript: screen context disabled — context-free polish")
+            DebugLog.info("[\(runID)] CTX \(appTag) screenContext=false confidence=n/a contentChars=0 outcome=context-free reason=screen-context-off")
             state = .rewriting
             let result = await rewriter.rewriteWithoutContext(transcript: raw, runID: runID)
             return Self.polishResult(raw: raw, result: result, provider: provider)
@@ -448,6 +470,7 @@ final class AppCoordinator: ObservableObject {
 
         guard hasAX, targetSnapshot != nil else {
             DebugLog.info("[\(runID)] correctedTranscript: raw fallback reason=\(!hasAX ? "missing accessibility" : "missing target snapshot")")
+            DebugLog.info("[\(runID)] CTX \(appTag) screenContext=true confidence=n/a contentChars=0 outcome=raw reason=\(!hasAX ? "missing-accessibility" : "missing-target-snapshot")")
             return Correction(text: raw, outcome: .off, original: nil)
         }
 
@@ -461,10 +484,12 @@ final class AppCoordinator: ObservableObject {
             // mid-capture). Don't feed junk to the model — degrade to a
             // context-free polish so filler/homophone cleanup still happens.
             DebugLog.info("[\(runID)] correctedTranscript: context unusable (\(reason)) — context-free polish")
+            DebugLog.info("[\(runID)] CTX \(appTag) screenContext=true confidence=\(snapshot.confidence) contentChars=\(snapshot.evidence["contentChars"] ?? "0") outcome=context-free reason=\(reason)")
             state = .rewriting
             let result = await rewriter.rewriteWithoutContext(transcript: raw, runID: runID)
             return Self.polishResult(raw: raw, result: result, provider: provider)
         case .rewrite(let snapshot):
+            DebugLog.info("[\(runID)] CTX \(appTag) screenContext=true confidence=\(snapshot.confidence) contentChars=\(snapshot.evidence["contentChars"] ?? "?") payloadChars=\(snapshot.payload.count) outcome=rewrite-with-context")
             state = .rewriting
             let result = await rewriter.rewriteWithRawContext(
                 transcript: raw,
