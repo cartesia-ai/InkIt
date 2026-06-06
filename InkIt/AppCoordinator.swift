@@ -31,6 +31,13 @@ final class AppCoordinator: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var hadAccessibility = false
     private var isHotkeyRegistered = false
+    /// When the dictation hot path last routed the user to Accessibility
+    /// Settings. Mashing the key — or pressing again after clicking Deny —
+    /// must not yank System Settings to the front on every press, so we
+    /// re-open it at most once per `accessibilityPromptThrottle`. The HUD
+    /// error still shows every time.
+    private var lastAccessibilityPrompt: Date?
+    private let accessibilityPromptThrottle: TimeInterval = 10
     private var lastExternalApp: NSRunningApplication?
     private var pasteTargetApp: NSRunningApplication?
     private var contextTargetSnapshot: TargetAppSnapshot?
@@ -149,6 +156,7 @@ final class AppCoordinator: ObservableObject {
                 guard let self else { return }
                 if hasAX && !self.hadAccessibility {
                     self.hadAccessibility = true
+                    self.lastAccessibilityPrompt = nil
                     self.registerHotkey()
                 } else if !hasAX && self.hadAccessibility {
                     self.hadAccessibility = false
@@ -260,11 +268,18 @@ final class AppCoordinator: ObservableObject {
         guard permissions.hasAccessibility else {
             // Mirror the microphone-denied experience: surface the HUD error and
             // route the user to fix it. requestAccessibility fires the system
-            // "InkIt would like to control this computer" prompt (first press
-            // after a revoke) and opens the Accessibility pane; later presses
-            // just re-open Settings, the same way a denied mic re-opens its pane.
+            // "InkIt would like to control this computer" prompt and opens the
+            // Accessibility pane. Throttle the Settings re-open so mashing the
+            // key (or pressing again after Deny) doesn't yank it to the front
+            // on every press — the HUD error below still nudges every time.
             setError("Accessibility permission required.")
-            permissions.requestAccessibility()
+            let now = Date()
+            let shouldPrompt = lastAccessibilityPrompt
+                .map { now.timeIntervalSince($0) > accessibilityPromptThrottle } ?? true
+            if shouldPrompt {
+                lastAccessibilityPrompt = now
+                permissions.requestAccessibility()
+            }
             return
         }
 
