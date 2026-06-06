@@ -611,7 +611,14 @@ private struct DiffPopover: View {
                 .font(.callout)
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: 280, alignment: .leading)
+                // Definite width, not a ceiling: `fixedSize(vertical:)` computes
+                // height for the proposed width, and the popover's ideal-size pass
+                // proposes an unspecified width. With only `maxWidth` the text
+                // collapsed to a near-zero width on some macOS builds → a runaway
+                // intrinsic height → an 800pt popover. A fixed width pins the
+                // height pass to the real wrap width on every OS version, matching
+                // the sibling Latency/failure popovers (which already use width:).
+                .frame(width: 280, alignment: .leading)
 
             if changed {
                 HStack(spacing: 12) {
