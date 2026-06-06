@@ -411,17 +411,12 @@ private struct APIKeyStep: View {
             VStack(alignment: .leading, spacing: 12) {
                 keyField
 
-                HStack(alignment: .firstTextBaseline) {
-                    Link(destination: URL(string: "https://play.cartesia.ai/keys")!) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.up.right.square")
-                            Text("Get your free Cartesia API key")
-                        }
-                        .font(.subheadline.weight(.medium))
-                    }
-                    .modifier(PointingHandCursor())
-                    Spacer(minLength: 0)
-                }
+                ExternalLink(
+                    title: "Get your free Cartesia key",
+                    url: URL(string: "https://play.cartesia.ai/keys")!,
+                    font: .subheadline.weight(.medium)
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .frame(minHeight: 18)
                 .padding(.horizontal, 2)
             }

@@ -70,6 +70,30 @@ struct PointingHandCursor: ViewModifier {
     }
 }
 
+/// The app's one hyperlink treatment: brand-orange (`accentColor`) text with a
+/// trailing `arrow.up.right` that signals "opens externally." Trailing — not
+/// leading — because the arrow modifies the label, matching web convention
+/// (GitHub Primer, Material, Apple HIG). Used for every "Get your … key" link
+/// across Onboarding and Settings so they read identically. Pass a `font` to
+/// match the surrounding text; the layout stays left-aligned.
+struct ExternalLink: View {
+    let title: String
+    let url: URL
+    var font: Font = .caption
+
+    var body: some View {
+        Link(destination: url) {
+            HStack(spacing: 3) {
+                Text(title)
+                Image(systemName: "arrow.up.right")
+            }
+            .font(font)
+        }
+        .tint(.accentColor)
+        .modifier(PointingHandCursor())
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     // Apply the saved appearance (default Light) as early as possible so the
     // first window doesn't flash the system appearance before settling.

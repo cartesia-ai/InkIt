@@ -233,14 +233,7 @@ private struct APIKeyField: View {
         } label: {
             VStack(alignment: .leading, spacing: SettingsMetrics.captionSpacing) {
                 Text(title)
-                Link(destination: linkURL) {
-                    HStack(spacing: 3) {
-                        Text(linkTitle)
-                        Image(systemName: "arrow.up.right")
-                    }
-                }
-                .font(.caption)
-                .modifier(PointingHandCursor())
+                ExternalLink(title: linkTitle, url: linkURL)
             }
         }
     }
@@ -579,7 +572,7 @@ private struct GeneralSettingsPane: View {
                     title: "Cartesia API key",
                     text: $settings.cartesiaAPIKey,
                     placeholder: "sk_car_…",
-                    linkTitle: "Get your Cartesia API key",
+                    linkTitle: "Get your free Cartesia key",
                     linkURL: URL(string: "https://play.cartesia.ai/keys")!,
                     validationState: keyValidator.state
                 )
@@ -784,7 +777,7 @@ struct PolishSettingsView: View {
             title: "API key",
             text: keyBinding,
             placeholder: provider.keyPlaceholder,
-            linkTitle: "Get a \(provider.displayName) key",
+            linkTitle: "Get your \(provider.displayName) key",
             linkURL: provider.keyURL,
             validationState: validator.state
         )
