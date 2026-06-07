@@ -68,10 +68,10 @@ final class AppCoordinator: ObservableObject {
         startTrackingActiveApps()
         seedLastExternalApp()
         hotkey.onPress = { [weak self] in
-            Task { @MainActor in self?.startDictation() }
+            Task { @MainActor in self?.handleHotkeyPress() }
         }
         hotkey.onRelease = { [weak self] in
-            Task { @MainActor in self?.stopDictation() }
+            Task { @MainActor in self?.handleHotkeyRelease() }
         }
         audio.onLevel = { [weak self] level in
             Task { @MainActor in self?.inputLevel = level }
@@ -259,16 +259,56 @@ final class AppCoordinator: ObservableObject {
         }
     }
 
+    /// Hotkey press. In hold mode this starts dictation (release stops it). In
+    /// hands-free mode a press flips recording on or off, so the next press is
+    /// what stops and pastes — just like releasing the key in hold mode.
+    private func handleHotkeyPress() {
+        switch settings.dictationMode {
+        case .hold:
+            isHotkeyHeld = true
+            startDictation()
+        case .toggle:
+            if case .recording = state {
+                stopDictation()
+            } else {
+                startDictation()
+            }
+        }
+    }
+
+    /// Hotkey release. Only hold mode acts on release; in hands-free mode the
+    /// next press is what stops recording, so a release is ignored.
+    private func handleHotkeyRelease() {
+        guard settings.dictationMode == .hold else { return }
+        isHotkeyHeld = false
+        // An error shown during the hold has been held on screen; now that the
+        // user has finished, give it a clean dwell from release, then it clears.
+        if case .error = state {
+            armErrorDismiss()
+            return
+        }
+        stopDictation()
+    }
+
     func startDictation() {
-        guard case .idle = state else { return }
+        // Start not just from idle but from the brief unhappy-path notices
+        // (held-in-history, error): pressing the hotkey during one of those
+        // clearly means "let me dictate again," so don't block it (which also
+        // stopped the dead key-press from triggering the system error beep). A
+        // dictation actually in flight still guards against a double-start.
+        switch state {
+        case .idle, .heldInHistory, .error: break
+        default: return
+        }
+        errorDismissWork?.cancel()
 
         guard !settings.cartesiaAPIKey.isEmpty else {
-            setError("Missing Cartesia API key. Open Settings.")
+            setError("Add your API key")
             return
         }
         permissions.refresh()
         guard permissions.hasMicrophone else {
-            setError("Microphone permission required.")
+            setError("Mic access needed")
             permissions.requestMicrophone { _ in }
             return
         }
@@ -279,7 +319,7 @@ final class AppCoordinator: ObservableObject {
             // Accessibility pane. Throttle the Settings re-open so mashing the
             // key (or pressing again after Deny) doesn't yank it to the front
             // on every press — the HUD error below still nudges every time.
-            setError("Accessibility permission required.")
+            setError("Accessibility needed")
             let now = Date()
             let shouldPrompt = lastAccessibilityPrompt
                 .map { now.timeIntervalSince($0) > accessibilityPromptThrottle } ?? true
@@ -368,8 +408,8 @@ final class AppCoordinator: ObservableObject {
                 self.liveTranscript = text
             }
         }
-        client.onError = { [weak self] message in
-            Task { @MainActor in self?.setError(message) }
+        client.onError = { [weak self] failure in
+            Task { @MainActor in self?.handleSTTFailure(failure) }
         }
         client.onClosed = { [weak self, capturedTargetApp, capturedSnapshot, routeToOnboardingBox] finalText in
             Task { @MainActor in
@@ -383,6 +423,11 @@ final class AppCoordinator: ObservableObject {
                     self.state = .idle
                     return
                 }
+                // A real transcript came back, so the Cartesia key works and
+                // credits are available: clear any persisted "transcription paused"
+                // state driving the Home card.
+                self.settings.cartesiaKeyInvalid = false
+                self.settings.cartesiaOutOfCredits = false
                 if routeToOnboardingBox {
                     self.pasteTargetApp = nil
                     self.contextTargetSnapshot = nil
@@ -413,8 +458,10 @@ final class AppCoordinator: ObservableObject {
                 // silently pasting raw.
                 if correction.outcome == .polished {
                     self.settings.polishKeyInvalid = false
-                } else if correction.outcome == .failed, correction.failure?.reason == .invalidKey {
-                    self.settings.polishKeyInvalid = true
+                    self.settings.polishOutOfCredits = false
+                } else if correction.outcome == .failed, let reason = correction.failure?.reason {
+                    if reason == .invalidKey { self.settings.polishKeyInvalid = true }
+                    else if reason == .outOfCredits { self.settings.polishOutOfCredits = true }
                 }
                 let polishFinished = DispatchTime.now()
 
@@ -455,7 +502,7 @@ final class AppCoordinator: ObservableObject {
                         self.pasteTargetApp = nil
                         self.contextTargetSnapshot = nil
                         if !ok {
-                            self.setError("Paste failed.")
+                            self.setError("Paste failed")
                         } else {
                             let pasteFinished = DispatchTime.now()
                             let latency = release.map { start in
@@ -528,6 +575,7 @@ final class AppCoordinator: ObservableObject {
             case .offline:             reason = .offline
             case .timedOut:            reason = .timedOut
             case .invalidKey:          reason = .invalidKey
+            case .outOfCredits:        reason = .outOfCredits
             case .serverError:         reason = .serverError
             case .unknown:             reason = .unknown
             }
@@ -646,6 +694,31 @@ final class AppCoordinator: ObservableObject {
         }
     }
 
+    /// Surface a classified STT failure. Every cause gets a brief notch flash
+    /// (via setError → the `.error` notice, self-clearing after 2.5s). The two
+    /// persistent, user-fixable causes also set a flag that drives the Home
+    /// "Transcription is paused" card until the next successful dictation.
+    /// True while the dictation hotkey is physically held (hold mode). Keeps an
+    /// error notice up for the whole press rather than letting it flash by.
+    private var isHotkeyHeld = false
+
+    /// The pending `.error` self-clear, cancelable so a release (or a new error)
+    /// can re-arm a fresh dwell. See `armErrorDismiss`.
+    private var errorDismissWork: DispatchWorkItem?
+
+    private func handleSTTFailure(_ failure: STTFailure) {
+        switch failure {
+        case .invalidKey:   settings.cartesiaKeyInvalid = true
+        case .outOfCredits: settings.cartesiaOutOfCredits = true
+        default: break
+        }
+        // Show the error right away — even mid-hold — so the user finds out
+        // promptly instead of talking into a dead session until they release.
+        // setError's dwell keeps it up while the key is held and clears after
+        // release, so it neither flashes past nor persists.
+        setError(failure.notchMessage)
+    }
+
     private func setError(_ message: String) {
         DebugLog.info("setError: \(message)")
         pasteTargetApp = nil
@@ -655,11 +728,30 @@ final class AppCoordinator: ObservableObject {
         audio.stop()
         client?.cancel()
         client = nil
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
-            Task { @MainActor in
-                if case .error = self?.state { self?.state = .idle }
+        armErrorDismiss()
+    }
+
+    /// Self-clear the `.error` notice after a brief dwell — but keep it up while
+    /// the hotkey is still held, so an error that fires mid-hold stays visible
+    /// for the whole press (the user keeps seeing it instead of it flashing by)
+    /// and only clears after they release. Re-armed on release for a clean
+    /// post-release dwell. A cancelable work item so re-arming supersedes.
+    ///
+    /// 1.5s: the message is 2–3 words and usually already seen during the hold,
+    /// so the post-release window is a confirmation tail — long enough to read
+    /// cold, short enough not to feel stuck.
+    private func armErrorDismiss() {
+        errorDismissWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, case .error = self.state else { return }
+            if self.isHotkeyHeld {
+                self.armErrorDismiss()   // still holding — keep showing, re-check
+            } else {
+                self.state = .idle
             }
         }
+        errorDismissWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
     }
 
     private static func makeCorrectionRunID() -> String {

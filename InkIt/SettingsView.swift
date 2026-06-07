@@ -477,7 +477,8 @@ struct SettingsPopover: View {
         VStack(spacing: 0) {
             HStack(alignment: .firstTextBaseline) {
                 Text(search.isSearching ? "Search Results" : pane.title)
-                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .font(.system(size: 16, weight: .medium))
                 Spacer()
                 closeButton
             }
@@ -709,7 +710,7 @@ private struct SettingsSearchResults: View {
         case "general.login":
             SettingsToggle("Launch InkIt at login", isOn: $settings.launchAtLogin)
         case "general.activation":
-            ActivationModeRows(mode: $settings.dictationMode)
+            ActivationModeCardPicker(mode: $settings.dictationMode)
         case "general.hotkey":
             HotkeyRecorder().environmentObject(settings)
         case "general.sound":
@@ -796,7 +797,12 @@ private struct GeneralSettingsPane: View {
             }
 
             Section {
-                ActivationModeRows(mode: $settings.dictationMode)
+                ActivationModeCardPicker(mode: $settings.dictationMode)
+            } header: {
+                Text("Activation mode").settingsSectionHeader()
+            }
+
+            Section {
                 HotkeyRecorder()
                     .environmentObject(settings)
                 SettingsToggle("Play sound on press and release", isOn: $settings.playFeedbackSounds)
@@ -830,46 +836,62 @@ private struct GeneralSettingsPane: View {
     }
 }
 
-/// The two activation modes as selectable radio rows. The bare dropdown made
-/// the labels carry all the meaning ("Toggle on and off" read as opaque); a
-/// radio row pairs each label with a one-line gesture description, which is
-/// where the meaning actually lands. Shared by the General pane and search.
-private struct ActivationModeRows: View {
+/// Activation-mode chooser as two selectable cards, side by side — each shows
+/// the mode name and its one-line gesture, so the two options can be compared
+/// at a glance and picked directly (the same card pattern as Appearance).
+/// Shared by the General pane and search.
+private struct ActivationModeCardPicker: View {
     @Binding var mode: DictationMode
 
     var body: some View {
-        ForEach(DictationMode.allCases) { m in
-            ActivationModeRow(mode: m, selection: $mode)
+        HStack(alignment: .top, spacing: 12) {
+            ForEach(DictationMode.allCases) { m in
+                ActivationModeCard(mode: m, isSelected: mode == m) { mode = m }
+            }
         }
+        .padding(.vertical, 4)
     }
 }
 
-private struct ActivationModeRow: View {
+private struct ActivationModeCard: View {
     let mode: DictationMode
-    @Binding var selection: DictationMode
-
-    private var isSelected: Bool { selection == mode }
+    let isSelected: Bool
+    let action: () -> Void
 
     var body: some View {
-        Button { selection = mode } label: {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
-                    .font(.system(size: 15))
-                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
-                    .padding(.top, 1)
-                VStack(alignment: .leading, spacing: SettingsMetrics.captionSpacing) {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 7) {
+                    Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
+                        .font(.system(size: 14))
+                        .foregroundStyle(isSelected ? Color.accentColor : .secondary)
                     Text(mode.displayName)
+                        .font(.inkBodyEmphasized)
                         .foregroundStyle(.primary)
-                    Text(mode.detail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
                 }
-                Spacer(minLength: 0)
+                Text(mode.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .contentShape(Rectangle())
+            .padding(12)
+            // Fill the tallest card's height so both cards match even when one
+            // description wraps to two lines and the other to one.
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.card)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(isSelected ? Color.accentColor : Color(nsColor: .separatorColor),
+                            lineWidth: isSelected ? 2 : 1)
+            )
         }
         .buttonStyle(.plain)
+        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .modifier(PointingHandCursor())
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
@@ -1454,7 +1476,9 @@ struct HotkeyRecorder: View {
 
     private var shortcutDescription: String {
         if isEditing { return "Press a new shortcut" }
-        return settings.dictationMode.detail
+        // The gesture is explained by the Activation mode cards above; here the
+        // caption just says what this key is, so the two don't repeat.
+        return "Your dictation shortcut, active in any app"
     }
 
     private var shortcutTokens: [String] {

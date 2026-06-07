@@ -125,8 +125,8 @@ enum DictationMode: String, CaseIterable, Identifiable {
     /// Kept strictly parallel so the two modes read as a clean contrast.
     var detail: String {
         switch self {
-        case .hold:   return "Hold while you speak, release to paste."
-        case .toggle: return "Press once to start, press again to paste."
+        case .hold:   return "Hold your shortcut while you speak, release to paste."
+        case .toggle: return "Press your shortcut once to start, again to paste."
         }
     }
 }

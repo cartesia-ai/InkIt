@@ -254,7 +254,10 @@ struct MainWindowView: View {
     }
 
     var body: some View {
-        homeView
+        VStack(spacing: 0) {
+            dictationIssueBanner
+            homeView
+        }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             // "InkIt" rides in the native titlebar (no glass). No dedicated top
             // strip — the gear floats in the bottom-right corner and the
@@ -335,7 +338,9 @@ struct MainWindowView: View {
     // Hotkey hint at rest; appends the live state only while something is
     // actually happening, so the bar stays quiet when idle.
     private var statusLine: String {
-        let hint = "Hold \(settings.hotkeyDisplayString) to dictate"
+        let hint = settings.dictationMode == .toggle
+            ? "Press \(settings.hotkeyDisplayString) to start and stop"
+            : "Hold \(settings.hotkeyDisplayString) to dictate"
         let status = coordinator.statusText
         return status == "Idle" ? hint : "\(hint) · \(status)"
     }
@@ -377,6 +382,10 @@ struct MainWindowView: View {
                     VStack(alignment: .leading, spacing: 0) {
                         columnHeader("Your stats", subtitle: nil)
                         railPanel
+                        if settings.polishIssue != nil {
+                            polishIssueCard
+                                .padding(.top, 14)
+                        }
                         Spacer(minLength: 0)
                     }
                     .frame(width: 300)
@@ -515,6 +524,163 @@ struct MainWindowView: View {
 
     private var showPolishNudge: Bool {
         !settings.correctionEnabled && !settings.polishNudgeDismissed
+    }
+
+    // A lost dictation is critical (the core feature is down), so a Cartesia key
+    // /credit problem gets a full-width banner across the top of Home — more
+    // noticeable than a rail card. Polish failing is only degraded (raw text
+    // still pastes), so it stays a calm rail card below. Both are driven by the
+    // persisted flags, so they're sticky until fixed — never a 2.5s flash.
+    @ViewBuilder private var dictationIssueBanner: some View {
+        if let issue = settings.transcriptionIssue {
+            HStack(spacing: 12) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Dictation is paused")
+                        .font(.inkBodyEmphasized)
+                        .foregroundStyle(.primary)
+                    Text(transcriptionIssueMessage(issue))
+                        .font(.inkCaption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 12)
+                Button { transcriptionIssueAction(issue) } label: {
+                    Text(transcriptionIssueCTA(issue))
+                        .font(.inkCaption.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .fill(Color.accentColor))
+                }
+                .buttonStyle(.plain)
+                .modifier(PointingHandCursor())
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.accentSoft)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(Color.accentColor.opacity(0.28), lineWidth: 1)
+            )
+            .padding(.horizontal, 18)
+            .padding(.top, 16)
+        }
+    }
+
+    // The Polish (provider) problem as a calm rail card below the stats. Soft
+    // amber, same language as the stats/nudge — guidance, not alarm.
+    @ViewBuilder private var polishIssueCard: some View {
+        if let issue = settings.polishIssue {
+            statusCard(
+                icon: "exclamationmark.triangle.fill",
+                title: "Polish is paused",
+                message: polishIssueMessage(issue),
+                cta: polishIssueCTA(issue),
+                action: { polishIssueAction(issue) }
+            )
+        }
+    }
+
+    private func statusCard(icon: String, title: String, message: String,
+                            cta: String, action: @escaping () -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 11) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(Color.accentSoft)
+                    Image(systemName: icon)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                }
+                .frame(width: 30, height: 30)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.inkBodyEmphasized)
+                        .foregroundStyle(.primary)
+                    Text(message)
+                        .font(.inkCaption)
+                        .foregroundStyle(.secondary)
+                        .lineSpacing(1)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+
+            Button(action: action) {
+                Text(cta)
+                    .font(.inkCaption.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
+            }
+            .buttonStyle(.plain)
+            .modifier(PointingHandCursor())
+            .padding(.leading, 41)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+        )
+    }
+
+    // MARK: Status-card copy + actions
+
+    private func transcriptionIssueMessage(_ issue: SettingsStore.ServiceIssue) -> String {
+        switch issue {
+        case .keyInvalid:
+            return "Your Cartesia API key is invalid. Update it to start dictating again."
+        case .outOfCredits:
+            return "You're out of Cartesia credits. Review your plan to keep going before your credits reset."
+        }
+    }
+    private func transcriptionIssueCTA(_ issue: SettingsStore.ServiceIssue) -> String {
+        switch issue {
+        case .keyInvalid:   return "Update your Cartesia key"
+        case .outOfCredits: return "Review your Cartesia plan"
+        }
+    }
+    private func transcriptionIssueAction(_ issue: SettingsStore.ServiceIssue) {
+        switch issue {
+        case .keyInvalid:
+            settingsPane = .general
+            showSettings = true
+        case .outOfCredits:
+            NSWorkspace.shared.open(URL(string: "https://play.cartesia.ai/subscription")!)
+        }
+    }
+
+    private func polishIssueMessage(_ issue: SettingsStore.ServiceIssue) -> String {
+        let p = settings.rewriteProvider.displayName
+        switch issue {
+        case .keyInvalid:
+            return "Your \(p) API key is invalid. Update it to turn Polish back on."
+        case .outOfCredits:
+            return "You're out of \(p) credits. Review your \(p) plan to re-enable Polish."
+        }
+    }
+    private func polishIssueCTA(_ issue: SettingsStore.ServiceIssue) -> String {
+        let p = settings.rewriteProvider.displayName
+        switch issue {
+        case .keyInvalid:   return "Update your \(p) key"
+        case .outOfCredits: return "Review your \(p) plan"
+        }
+    }
+    private func polishIssueAction(_ issue: SettingsStore.ServiceIssue) {
+        switch issue {
+        case .keyInvalid:
+            settingsPane = .polish
+            showSettings = true
+        case .outOfCredits:
+            NSWorkspace.shared.open(settings.rewriteProvider.billingURL)
+        }
     }
 
     private var wordsStatRow: some View {
@@ -741,7 +907,7 @@ private struct HomeTryItPanel: View {
 
             TryItPracticeCard()
 
-            Text("Or hold \(settings.hotkeyDisplayString) in any app and start talking.")
+            Text("Or \(settings.dictationMode == .toggle ? "press" : "hold") \(settings.hotkeyDisplayString) in any app and start talking.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
@@ -904,6 +1070,8 @@ private struct TranscriptHistoryRow: View {
             return "Polish timed out — raw text pasted. Re-dictate to retry."
         case .invalidKey:
             return "Invalid \(p) API key — raw text pasted. Fix it in Settings."
+        case .outOfCredits:
+            return "Out of \(p) credits — raw text pasted. Review your \(p) plan to re-enable Polish."
         case .serverError:
             return "\(p) server error — raw text pasted. Try again shortly."
         case .unknown:
@@ -1285,6 +1453,14 @@ private struct WindowChrome: NSViewRepresentable {
         window.titleVisibility = .visible
         window.titlebarAppearsTransparent = true
         window.styleMask.insert(.fullSizeContentView)
+        // Pin the window background to the warm canvas. With a transparent
+        // titlebar + full-size content, the titlebar shows the window background
+        // wherever the SwiftUI layer isn't fully opaque — and the default
+        // (white) bleeds through on a later redraw, flipping the titlebar from
+        // canvas-grey to white. Setting it to the canvas asset keeps it constant.
+        if let canvas = NSColor(named: "HomeCanvas") {
+            window.backgroundColor = canvas
+        }
         // InkIt is a fixed utility window — full screen is meaningless and only
         // litters the menu bar with a "View ▸ Enter Full Screen" item. Opting the
         // window out removes both the green-button behavior and that menu entry.

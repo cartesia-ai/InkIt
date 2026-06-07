@@ -36,6 +36,7 @@ final class TranscriptHistoryStore: ObservableObject {
         case offline       // no network / can't reach host
         case timedOut      // request exceeded the rewrite timeout
         case invalidKey    // 401/403 or missing key
+        case outOfCredits  // provider 402 / billing limit reached
         case serverError   // provider 5xx
         case unknown       // parse error, sanity reject, anything else
     }

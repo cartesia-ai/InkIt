@@ -109,6 +109,7 @@ enum RewriteFailure: Error, Equatable {
     case offline                      // no network / can't reach host
     case timedOut                     // exceeded the request timeout
     case invalidKey                   // 401/403 or missing key
+    case outOfCredits                 // provider 402 / billing limit reached
     case serverError                  // provider 5xx
     case unknown                      // parse error, sanity reject, anything else
 }
@@ -290,6 +291,8 @@ final class TranscriptRewriter {
             return .rateLimited(retryAt: retryAt(from: headers))
         case 401, 403:
             return .invalidKey
+        case 402:
+            return .outOfCredits
         case 408, 504:
             return .timedOut
         case 500...599:
