@@ -62,6 +62,20 @@ enum LLMProvider: String, CaseIterable, Identifiable, Hashable {
 
     var defaultModel: String { models.first! }
 
+    /// Hard ceiling on a rewrite request before we abandon it and fall back to
+    /// the raw transcript. Sized just above each model's observed p99 so it only
+    /// fires on a genuinely hung request, never a healthy-but-slow one — cutting
+    /// a tighter ceiling would silently downgrade good rewrites to raw text.
+    /// Groq Llama 3.3 70B (the default) never crossed 0.9s across hundreds of
+    /// dictations, so 1.0s is ample; the other small models get more headroom
+    /// since we haven't measured their tails.
+    var rewriteTimeout: TimeInterval {
+        switch self {
+        case .groq:                       return 1.0
+        case .gemini, .openai, .anthropic: return 2.0
+        }
+    }
+
     /// Where the user obtains an API key.
     var keyURL: URL {
         switch self {

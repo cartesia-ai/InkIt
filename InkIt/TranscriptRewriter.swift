@@ -130,8 +130,8 @@ final class TranscriptRewriter {
         self.model = model
         self.apiKey = apiKey
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 3.5
-        config.timeoutIntervalForResource = 3.5
+        config.timeoutIntervalForRequest = provider.rewriteTimeout
+        config.timeoutIntervalForResource = provider.rewriteTimeout
         config.waitsForConnectivity = false
         self.session = URLSession(configuration: config)
     }
@@ -156,7 +156,7 @@ final class TranscriptRewriter {
     /// (captured via Accessibility) as context.
     func rewriteWithRawContext(transcript: String,
                                context: String,
-                               timeout: TimeInterval = 3.5,
+                               timeout: TimeInterval? = nil,
                                runID: String? = nil) async -> Result<String, RewriteFailure> {
         guard !apiKey.isEmpty else { return .failure(.invalidKey) }
         guard !transcript.isEmpty, !context.isEmpty else { return .failure(.unknown) }
@@ -167,14 +167,14 @@ final class TranscriptRewriter {
             ["type": "text", "text": Self.instructions],
             ["type": "text", "text": "<context>\n\(context)\n</context>"]
         ]
-        return await call(system: system, transcript: transcript, model: self.model, timeout: timeout, label: "ax", runID: runID)
+        return await call(system: system, transcript: transcript, model: self.model, timeout: timeout ?? provider.rewriteTimeout, label: "ax", runID: runID)
     }
 
     /// Rewrites the transcript with no on-screen context — used when the user
     /// has opted out of screen-context capture. The model can still strip
     /// filler and fix obvious slips, just without a glossary of proper nouns.
     func rewriteWithoutContext(transcript: String,
-                               timeout: TimeInterval = 3.5,
+                               timeout: TimeInterval? = nil,
                                runID: String? = nil) async -> Result<String, RewriteFailure> {
         guard !apiKey.isEmpty else { return .failure(.invalidKey) }
         guard !transcript.isEmpty else { return .failure(.unknown) }
@@ -184,7 +184,7 @@ final class TranscriptRewriter {
         let system: [[String: Any]] = [
             ["type": "text", "text": Self.instructions]
         ]
-        return await call(system: system, transcript: transcript, model: self.model, timeout: timeout, label: "plain", runID: runID)
+        return await call(system: system, transcript: transcript, model: self.model, timeout: timeout ?? provider.rewriteTimeout, label: "plain", runID: runID)
     }
 
     // MARK: - Shared HTTP plumbing
