@@ -35,3 +35,11 @@ cp -R build/Build/Products/Release/InkIt.app /Applications/
 ```
 
 Code changes only take effect after replacing `/Applications/InkIt.app` — rebuilding alone isn't enough.
+
+## Feedback & contributions
+
+InkIt is open source, not open contribution — built and maintained by the Cartesia team. Code is provided as-is, with no guarantee of support or maintenance.
+
+Feedback and bug reports: https://forms.gle/jXNtDsTaLt2rKQ8N9
+
+You're welcome to fork and modify InkIt for your own use. Pull requests aren't guaranteed a review — see [CONTRIBUTING.md](CONTRIBUTING.md).
