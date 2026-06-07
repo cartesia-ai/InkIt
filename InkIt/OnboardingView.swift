@@ -714,30 +714,54 @@ private struct PrimaryButton: View {
 /// inverting to a warm off-white fill with navy text in dark — the pen color
 /// from the app icon. The amber accent stays reserved for live-signal cues
 /// (selection, links, the waveform), per DESIGN_SYSTEM.md.
-private struct InkButtonStyle: ButtonStyle {
+/// The "ink" call-to-action style — the app's one solid button. Shared beyond
+/// onboarding (e.g. Settings ▸ General permission rows) so every primary action
+/// reads as the same navy fill. See DESIGN_SYSTEM.md › Solid CTA fill.
+struct InkButtonStyle: ButtonStyle {
+    /// `ink` is the standard navy CTA; `destructive` swaps the fill to red for
+    /// dangerous confirms (e.g. Delete All) while keeping the same shape, hover,
+    /// and press behavior so the two read as one family.
+    enum Variant { case ink, destructive }
+
+    var variant: Variant = .ink
     var compact = false
 
     func makeBody(configuration: Configuration) -> some View {
-        Surface(configuration: configuration, compact: compact)
+        Surface(configuration: configuration, variant: variant, compact: compact)
     }
 
     /// Hover needs `@State`, which a `ButtonStyle` can't hold directly, so the
     /// label is rendered through this small stateful view.
     private struct Surface: View {
         let configuration: ButtonStyleConfiguration
+        let variant: Variant
         let compact: Bool
         @Environment(\.isEnabled) private var isEnabled
         @State private var hovering = false
 
+        private var fill: Color {
+            switch variant {
+            case .ink:         return Color("InkFill")
+            case .destructive: return .inkDanger
+            }
+        }
+
+        private var textColor: Color {
+            switch variant {
+            case .ink:         return Color("InkFillText")
+            case .destructive: return .white  // ds-allow: legible label on the red destructive fill
+            }
+        }
+
         var body: some View {
             configuration.label
                 .font(.system(size: compact ? 13 : 15, weight: .semibold))  // ds-allow: button label scale
-                .foregroundStyle(Color("InkFillText"))
+                .foregroundStyle(textColor)
                 .padding(.horizontal, compact ? 14 : 26)
                 .padding(.vertical, compact ? 6 : 11)
                 .background(
                     RoundedRectangle(cornerRadius: compact ? 7 : 9, style: .continuous)
-                        .fill(Color("InkFill"))
+                        .fill(fill)
                         // Brighten the fill on hover (no movement) so the button
                         // reads as live before the press-dim takes over.
                         .brightness(hovering && isEnabled ? Hover.fillShift : 0)
@@ -747,6 +771,36 @@ private struct InkButtonStyle: ButtonStyle {
                 .opacity(isEnabled ? 1 : 0.4)
                 .contentShape(Rectangle())
                 .onHover { hovering = $0 }
+        }
+    }
+}
+
+/// The quiet secondary action: a text-only label with no fill or border, used
+/// beside a solid `InkButtonStyle` in confirm dialogs (e.g. Cancel next to a
+/// destructive primary). Shares the same label scale and padding so the two sit
+/// at one height; recedes via `.secondary` and dims slightly on hover/press.
+struct InkSecondaryButtonStyle: ButtonStyle {
+    var compact = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        Surface(configuration: configuration, compact: compact)
+    }
+
+    private struct Surface: View {
+        let configuration: ButtonStyleConfiguration
+        let compact: Bool
+        @State private var hovering = false
+
+        var body: some View {
+            configuration.label
+                .font(.system(size: compact ? 13 : 15, weight: .semibold))  // ds-allow: button label scale
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, compact ? 14 : 26)
+                .padding(.vertical, compact ? 6 : 11)
+                .opacity(configuration.isPressed ? 0.55 : (hovering ? 0.75 : 1))
+                .contentShape(Rectangle())
+                .onHover { hovering = $0 }
+                .animation(Hover.animation, value: hovering)
         }
     }
 }

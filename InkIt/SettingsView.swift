@@ -383,7 +383,7 @@ struct SettingsView: View {
     /// own rich, multi-state pane; General gathers app chrome, the OS permission
     /// grants, and the lone Advanced toggle.
     enum Pane: String, CaseIterable, Identifiable {
-        case dictation, polish, general
+        case general, dictation, polish
         var id: String { rawValue }
         var title: String {
             switch self {
@@ -401,7 +401,7 @@ struct SettingsView: View {
         }
     }
 
-    @State private var pane: Pane? = .dictation
+    @State private var pane: Pane? = .general
 
     var body: some View {
         NavigationSplitView {
@@ -545,18 +545,9 @@ private struct SettingsCloseButton: View {
     let onClose: () -> Void
 
     var body: some View {
-        Button(action: onClose) {
-            Image(systemName: "xmark")
-                .font(.system(size: 12, weight: .semibold))  // ds-allow: icon
-                .foregroundStyle(.secondary)
-                .frame(width: 26, height: 26)
-                .hoverBackdrop(cornerRadius: Radius.control)
-        }
-        .buttonStyle(.plain)
-        .keyboardShortcut(.cancelAction)
-        .modifier(PointingHandCursor())
-        .help("Close settings")
-        .accessibilityLabel("Close settings")
+        // Reuse the shared icon ✕ and add the Esc path the old hidden button owned.
+        InkCloseButton(onClose: onClose, help: "Close settings")
+            .keyboardShortcut(.cancelAction)
     }
 }
 
@@ -1540,7 +1531,7 @@ struct PermissionRow: View {
                     .foregroundStyle(.secondary)
             } else {
                 Button("Enable") { action() }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(InkButtonStyle(compact: true))
                     .modifier(PointingHandCursor())
             }
         } label: {

@@ -17,6 +17,9 @@ extension Color {
     static let recordingAmber = Color("recordingAmber")
     /// "Added / fixed" text in the Polish before→after diff.
     static let diffAdd = Color.green
+    /// Destructive fill — a warm brick red tuned to the paper palette (not the
+    /// neon system red), backing the `InkButtonStyle(.destructive)` confirm CTA.
+    static let inkDanger = Color("InkDanger")
 
     // Warm-paper neutrals (asset catalog, light + dark). The app's chrome reads
     // warmer than raw system gray; these back every surface, Settings included.
@@ -333,6 +336,30 @@ private struct InkModal<Content: View>: View {
     }
 }
 
+/// The app's icon ✕ — a 26pt circle that lifts the standard hover backdrop,
+/// for the Settings header and any modal that needs a corner dismiss. One source
+/// of truth so every close affordance reads identically. Callers add the Esc
+/// shortcut themselves only where one isn't already claimed (e.g. by a Cancel
+/// button), so two `.cancelAction`s never collide in the same view.
+struct InkCloseButton: View {
+    let onClose: () -> Void
+    var help: String = "Close"
+
+    var body: some View {
+        Button(action: onClose) {
+            Image(systemName: "xmark")
+                .font(.system(size: 12, weight: .semibold))  // ds-allow: icon
+                .foregroundStyle(.secondary)
+                .frame(width: 26, height: 26)
+                .hoverBackdrop(cornerRadius: Radius.control)
+        }
+        .buttonStyle(.plain)
+        .modifier(PointingHandCursor())
+        .help(help)
+        .accessibilityLabel(help)
+    }
+}
+
 extension Notification.Name {
     /// Posted by the "Settings…" menu command (⌘,); the main window opens the
     /// settings modal in response. Lets the menu reach in-window @State.
@@ -450,7 +477,7 @@ struct MainWindowView: View {
     @EnvironmentObject var history: TranscriptHistoryStore
     @State private var copiedID: UUID?
     @State private var showSettings = false
-    @State private var settingsPane: SettingsView.Pane = .dictation
+    @State private var settingsPane: SettingsView.Pane = .general
     // History controls. Search collapses to a single icon at rest and expands
     // inline; the field stays open while there's a query and collapses only when
     // emptied (macOS toolbar-search convention). Sort persists across launches —
@@ -528,6 +555,7 @@ struct MainWindowView: View {
             .overlay { deleteConfirmModal }
             // The "Settings…" menu item (⌘,) posts this; open the modal in response.
             .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
+                settingsPane = .general
                 withAnimation(Motion.quick) { showSettings = true }
             }
     }
@@ -548,7 +576,11 @@ struct MainWindowView: View {
     }
 
     private var gearButton: some View {
-        Button { withAnimation(Motion.quick) { showSettings.toggle() } } label: {
+        Button {
+            // Always land on General — Settings doesn't remember the last pane.
+            if !showSettings { settingsPane = .general }
+            withAnimation(Motion.quick) { showSettings.toggle() }
+        } label: {
             Image(systemName: "gearshape")
                 .font(.system(size: 17, weight: .medium))  // ds-allow: icon
                 .foregroundStyle(showSettings ? Color.accentColor : .secondary)
@@ -768,8 +800,8 @@ struct MainWindowView: View {
     @ViewBuilder private var deleteConfirmModal: some View {
         if showDeleteConfirm {
             InkModal(onDismiss: dismissDeleteConfirm) {
-                VStack(spacing: 18) {
-                    VStack(spacing: 7) {
+                VStack(spacing: 28) {
+                    VStack(spacing: 10) {
                         Text("Delete all transcripts")
                             .font(.inkSheetTitle)
                             .foregroundStyle(.primary)
@@ -779,17 +811,27 @@ struct MainWindowView: View {
                             .multilineTextAlignment(.center)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    HStack(spacing: 10) {
+                    HStack(spacing: 8) {
                         Button("Cancel") { dismissDeleteConfirm() }
+                            .buttonStyle(InkSecondaryButtonStyle(compact: true))
                             .keyboardShortcut(.cancelAction)
+                            .modifier(PointingHandCursor())
                         Button("Delete All", role: .destructive) { confirmDeleteAll() }
+                            .buttonStyle(InkButtonStyle(variant: .destructive, compact: true))
                             .keyboardShortcut(.defaultAction)
+                            .modifier(PointingHandCursor())
                     }
-                    .controlSize(.large)
-                    .buttonStyle(.bordered)
                 }
-                .padding(24)
-                .frame(width: 320)
+                .padding(.horizontal, 36)
+                .padding(.top, 36)
+                .padding(.bottom, 32)
+                .frame(width: 400)
+                // Corner ✕ — the same icon close button used in the Settings
+                // header — so the modal reads as dismissable at a glance.
+                .overlay(alignment: .topTrailing) {
+                    InkCloseButton(onClose: dismissDeleteConfirm)
+                        .padding(10)
+                }
             }
         }
     }
