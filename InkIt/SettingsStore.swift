@@ -3,6 +3,7 @@ import SwiftUI
 import AppKit
 import Carbon.HIToolbox
 import Security
+import ServiceManagement
 
 /// The kind of hotkey binding currently in use.
 ///
@@ -104,6 +105,32 @@ enum AppearancePreference: String, CaseIterable, Identifiable {
     }
 }
 
+/// How the dictation hotkey behaves. `.hold` is press-and-hold — release to
+/// paste, the original (and default) behavior. `.toggle` is hands-free: one
+/// press starts, the next press stops and pastes, for dictating longer
+/// passages without holding the key. See AppCoordinator's hotkey handlers.
+enum DictationMode: String, CaseIterable, Identifiable {
+    case hold, toggle
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .hold:   return "Hold to talk"
+        case .toggle: return "Hands-free"
+        }
+    }
+
+    /// One-line gesture description shown beneath the label in the picker.
+    /// Kept strictly parallel so the two modes read as a clean contrast.
+    var detail: String {
+        switch self {
+        case .hold:   return "Hold while you speak, release to paste."
+        case .toggle: return "Press once to start, press again to paste."
+        }
+    }
+}
+
 final class SettingsStore: ObservableObject {
     static let shared = SettingsStore()
 
@@ -115,6 +142,7 @@ final class SettingsStore: ObservableObject {
         static let hotkeyKind = "hotkeyKind"           // "carbon" | "fn"
         static let hotkeyKeyCode = "hotkeyKeyCode"
         static let hotkeyModifiers = "hotkeyModifiers"
+        static let dictationMode = "dictationMode"     // "hold" | "toggle"
         static let hasCompletedOnboarding = "hasCompletedOnboarding"
         static let notchHorizontalPosition = "notchHorizontalPosition"
         static let playFeedbackSounds = "playFeedbackSounds"
@@ -123,6 +151,9 @@ final class SettingsStore: ObservableObject {
         static let screenContextEnabled = "screenContextEnabled"
         static let preferredInputDeviceUID = "preferredInputDeviceUID"
         static let polishKeyInvalid = "polishKeyInvalid"
+        static let polishOutOfCredits = "polishOutOfCredits"
+        static let cartesiaKeyInvalid = "cartesiaKeyInvalid"
+        static let cartesiaOutOfCredits = "cartesiaOutOfCredits"
         static let anthropicAPIKey = "anthropicAPIKey"   // legacy; migrated into llmKeys
         static let rewriteProvider = "rewriteProvider"
         static let rewriteModel = "rewriteModel"
@@ -194,13 +225,35 @@ final class SettingsStore: ObservableObject {
         didSet { defaults.set(polishKeyInvalid, forKey: Keys.polishKeyInvalid) }
     }
 
+    /// True when a polish rewrite last failed because the provider rejected the
+    /// request for billing reasons (402). Drives the "Polish is paused — out of
+    /// credits" home card. Cleared when a rewrite succeeds or the provider changes.
+    @Published var polishOutOfCredits: Bool {
+        didSet { defaults.set(polishOutOfCredits, forKey: Keys.polishOutOfCredits) }
+    }
+
+    /// True when an STT session last failed on an invalid/expired Cartesia key
+    /// (401/403). Drives the "Transcription is paused — invalid key" home card.
+    /// Cleared on the next successful transcription. See AppCoordinator.
+    @Published var cartesiaKeyInvalid: Bool {
+        didSet { defaults.set(cartesiaKeyInvalid, forKey: Keys.cartesiaKeyInvalid) }
+    }
+
+    /// True when an STT session last failed because Cartesia credits are used up
+    /// (402 / quota_exceeded / plan_upgrade_required). Drives the "Transcription
+    /// is paused — out of credits" home card. Cleared on the next success.
+    @Published var cartesiaOutOfCredits: Bool {
+        didSet { defaults.set(cartesiaOutOfCredits, forKey: Keys.cartesiaOutOfCredits) }
+    }
+
     /// Selected LLM provider + model for the rewrite ("Polish transcripts").
     @Published var rewriteProvider: LLMProvider {
         didSet {
             defaults.set(rewriteProvider.rawValue, forKey: Keys.rewriteProvider)
-            // A broken-key verdict belongs to the old provider; clear it so the
-            // newly selected provider starts from a clean slate.
+            // A broken-key / out-of-credits verdict belongs to the old provider;
+            // clear both so the newly selected provider starts from a clean slate.
             polishKeyInvalid = false
+            polishOutOfCredits = false
         }
     }
 
@@ -238,6 +291,30 @@ final class SettingsStore: ObservableObject {
         return polishKeyInvalid ? .keyBroken : .on
     }
 
+    /// A persistent, user-fixable problem with one of the two services, surfaced
+    /// as a calm card in the Home rail. Only config/account problems that won't
+    /// fix themselves — never transient blips (offline, 5xx, rate limit), which
+    /// live in the moment (notch) and the history log.
+    enum ServiceIssue: Equatable { case keyInvalid, outOfCredits }
+
+    /// Transcription (Cartesia) problem to surface on Home, or nil when healthy.
+    /// Suppressed when no key is set yet — that's onboarding/setup, not a fault.
+    var transcriptionIssue: ServiceIssue? {
+        guard !cartesiaAPIKey.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
+        if cartesiaKeyInvalid { return .keyInvalid }
+        if cartesiaOutOfCredits { return .outOfCredits }
+        return nil
+    }
+
+    /// Polish (LLM provider) problem to surface on Home, or nil. Suppressed when
+    /// Polish is off or has no key — there's nothing paused to fix in that case.
+    var polishIssue: ServiceIssue? {
+        guard correctionEnabled, hasRewriteKey else { return nil }
+        if polishKeyInvalid { return .keyInvalid }
+        if polishOutOfCredits { return .outOfCredits }
+        return nil
+    }
+
     /// Turn on the LLM "Polish transcripts" rewrite for `provider`, keeping the
     /// selected model valid. Centralizes the provider/model/enabled trio so the
     /// Polish settings pane stays consistent.
@@ -247,6 +324,7 @@ final class SettingsStore: ObservableObject {
             rewriteModel = provider.defaultModel
         }
         polishKeyInvalid = false
+        polishOutOfCredits = false
         correctionEnabled = true
     }
 
@@ -255,6 +333,53 @@ final class SettingsStore: ObservableObject {
 
     @Published var hotkey: HotkeyBinding {
         didSet { saveHotkey() }
+    }
+
+    /// Hold-to-talk vs tap-to-toggle. Persisted; read by AppCoordinator's
+    /// hotkey handlers to decide whether release stops dictation (`.hold`) or
+    /// a second press does (`.toggle`).
+    @Published var dictationMode: DictationMode {
+        didSet { defaults.set(dictationMode.rawValue, forKey: Keys.dictationMode) }
+    }
+
+    /// Whether InkIt opens automatically at login. The system (`SMAppService`)
+    /// is the source of truth, so this mirrors the real registration status
+    /// rather than a separately-persisted flag — flipping it registers or
+    /// unregisters the login item, and `syncLaunchAtLoginFromSystem()`
+    /// reconciles it (the user can change Login Items in System Settings).
+    @Published var launchAtLogin: Bool {
+        didSet {
+            guard !isSyncingLaunchAtLogin, launchAtLogin != oldValue else { return }
+            applyLaunchAtLogin()
+        }
+    }
+    /// Set while mirroring the system status into `launchAtLogin` so the didSet
+    /// doesn't bounce back into another register/unregister.
+    private var isSyncingLaunchAtLogin = false
+
+    private func applyLaunchAtLogin() {
+        let service = SMAppService.mainApp
+        do {
+            if launchAtLogin {
+                if service.status != .enabled { try service.register() }
+            } else {
+                if service.status == .enabled { try service.unregister() }
+            }
+        } catch {
+            NSLog("InkIt: launch-at-login %@ failed: %@",
+                  launchAtLogin ? "register" : "unregister", error.localizedDescription)
+            syncLaunchAtLoginFromSystem()   // fall back to the real state
+        }
+    }
+
+    /// Re-reads the actual login-item registration and mirrors it into the
+    /// toggle without re-triggering registration. Call when Settings appears.
+    func syncLaunchAtLoginFromSystem() {
+        let enabled = SMAppService.mainApp.status == .enabled
+        guard launchAtLogin != enabled else { return }
+        isSyncingLaunchAtLogin = true
+        launchAtLogin = enabled
+        isSyncingLaunchAtLogin = false
     }
 
     @Published var hasCompletedOnboarding: Bool {
@@ -313,6 +438,9 @@ final class SettingsStore: ObservableObject {
         self.correctionEnabled = defaults.bool(forKey: Keys.correctionEnabled)
         self.polishNudgeDismissed = defaults.bool(forKey: Keys.polishNudgeDismissed)
         self.polishKeyInvalid = defaults.bool(forKey: Keys.polishKeyInvalid)
+        self.polishOutOfCredits = defaults.bool(forKey: Keys.polishOutOfCredits)
+        self.cartesiaKeyInvalid = defaults.bool(forKey: Keys.cartesiaKeyInvalid)
+        self.cartesiaOutOfCredits = defaults.bool(forKey: Keys.cartesiaOutOfCredits)
         // Default on so existing users keep the context-aware behavior they
         // already had before this toggle existed.
         if defaults.object(forKey: Keys.screenContextEnabled) == nil {
@@ -345,6 +473,11 @@ final class SettingsStore: ObservableObject {
         self.llmAPIKeys = loadedLLMKeys
         defaults.removeObject(forKey: Keys.llmKeys)
         defaults.removeObject(forKey: Keys.anthropicAPIKey)
+        self.dictationMode = defaults.string(forKey: Keys.dictationMode)
+            .flatMap(DictationMode.init(rawValue:)) ?? .hold
+        // Mirror the real login-item status. didSet does not fire for this
+        // initial assignment, so reading the system here never re-registers.
+        self.launchAtLogin = SMAppService.mainApp.status == .enabled
         self.hasCompletedOnboarding = defaults.bool(forKey: Keys.hasCompletedOnboarding)
         self.debugLoggingEnabled = defaults.bool(forKey: Keys.debugLogging)
         if defaults.object(forKey: Keys.playFeedbackSounds) == nil {

@@ -72,6 +72,19 @@ enum LLMProvider: String, CaseIterable, Identifiable, Hashable {
         }
     }
 
+    /// Where the user reviews their plan / billing when Polish is paused because
+    /// they're out of credits. Mirrors the console domains of `keyURL`. Anthropic
+    /// is verified; the others are best-effort and land on the right console even
+    /// if the exact subpath shifts.
+    var billingURL: URL {
+        switch self {
+        case .groq:      return URL(string: "https://console.groq.com/settings/billing")!
+        case .gemini:    return URL(string: "https://aistudio.google.com/")!
+        case .openai:    return URL(string: "https://platform.openai.com/settings/organization/billing")!
+        case .anthropic: return URL(string: "https://console.anthropic.com/settings/billing")!
+        }
+    }
+
     /// Whether this provider is the recommended default — Groq, for its free
     /// tier and lowest latency. Surfaced as a "Recommended" badge in the picker.
     var isRecommended: Bool { self == .groq }
