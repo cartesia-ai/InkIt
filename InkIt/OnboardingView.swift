@@ -357,14 +357,8 @@ private struct PermissionCard: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 14) {
                 // Stronger amber tile so the glyph reads against the tinted card.
-                ZStack {
-                    RoundedRectangle(cornerRadius: 13, style: .continuous)
-                        .fill(Color.accentColor.opacity(0.22))
-                        .frame(width: 48, height: 48)
-                    Image(systemName: icon)
-                        .font(.system(size: 22, weight: .medium))
-                        .foregroundStyle(Color.accentColor)
-                }
+                GlyphTile(icon: icon, size: 48, corner: 13, iconSize: 22,
+                          fill: Color.accentColor.opacity(0.22))
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title).font(.title3.weight(.semibold)).foregroundStyle(.primary)
                     Text("Finish in System Settings")
@@ -487,7 +481,7 @@ private struct APIKeyStep: View {
             // single focal point — this recedes into the page as a caption.
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "gift")
-                    .font(.system(size: 13))
+                    .font(.system(size: 13))  // ds-allow: icon
                     .foregroundStyle(.tertiary)
                 Text("About 15,000 words of dictation a month, free with your Cartesia key. Powered by Cartesia Ink-2.")
                     .font(.inkCallout)
@@ -516,12 +510,12 @@ private struct APIKeyStep: View {
     private var keyField: some View {
         HStack(spacing: 12) {
             Image(systemName: "key.fill")
-                .font(.system(size: 15))
+                .font(.system(size: 15))  // ds-allow: icon
                 .foregroundStyle(.secondary)
 
             SecureField("sk_car_…", text: $settings.cartesiaAPIKey)
                 .textFieldStyle(.plain)
-                .font(.system(size: 15, design: .monospaced))
+                .font(.inkMono)
                 .focused($fieldFocused)
 
             KeyValidationLabel(state: validator.state)
@@ -593,7 +587,7 @@ private struct DoneStep: View {
             ZStack {
                 Circle().fill(Color.accentSoft).frame(width: 160, height: 160)
                 Image(systemName: "sparkles")
-                    .font(.system(size: 80))
+                    .font(.system(size: 80))  // ds-allow: icon
                     .foregroundStyle(Color.accentColor)
                     .scaleEffect(pop ? 1.0 : 0.7)
                     .opacity(pop ? 1 : 0)
@@ -628,11 +622,14 @@ private struct GlyphTile: View {
     var size: CGFloat = 84
     var corner: CGFloat = 22
     var iconSize: CGFloat = 36
+    /// Tile fill. Defaults to the soft accent; callers on a tinted card pass a
+    /// stronger amber so the glyph still reads (the manual-permission step).
+    var fill: Color = Color.accentSoft
 
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: corner, style: .continuous)
-                .fill(Color.accentSoft)
+                .fill(fill)
                 .frame(width: size, height: size)
             Image(systemName: icon)
                 .font(.system(size: iconSize, weight: .medium))
@@ -703,7 +700,7 @@ private struct InkButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: compact ? 13 : 15, weight: .semibold))
+            .font(.system(size: compact ? 13 : 15, weight: .semibold))  // ds-allow: button label scale
             .foregroundStyle(Color("InkFillText"))
             .padding(.horizontal, compact ? 14 : 26)
             .padding(.vertical, compact ? 6 : 11)

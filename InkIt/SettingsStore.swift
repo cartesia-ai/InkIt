@@ -325,6 +325,10 @@ final class SettingsStore: ObservableObject {
         }
         polishKeyInvalid = false
         polishOutOfCredits = false
+        // Turning Polish on opts you into context awareness by default — it's
+        // what makes Polish spell names right, so the first-run experience
+        // should have it on rather than making the user discover a second toggle.
+        screenContextEnabled = true
         correctionEnabled = true
     }
 

@@ -286,7 +286,7 @@ private struct NotchHUDView: View {
     private var liveContent: some View {
         HStack(spacing: 7) {
             Text("InkIt")
-                .font(.system(size: 8, weight: .semibold))
+                .font(.inkNotchBrand)
                 .foregroundStyle(.white.opacity(0.85))
             HUDWaveform(level: coordinator.inputLevel)
                 .frame(width: 32, height: 9)
@@ -301,7 +301,7 @@ private struct NotchHUDView: View {
                 .tint(.white)
                 .scaleEffect(0.7)
             Text(label)
-                .font(.system(size: 10, weight: .medium))
+                .font(.inkNotchLabel)
                 .foregroundStyle(.white.opacity(0.82))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
@@ -310,13 +310,13 @@ private struct NotchHUDView: View {
     private func noticeContent(label: String) -> some View {
         HStack(spacing: 5) {
             Text("InkIt")
-                .font(.system(size: 9, weight: .semibold))
+                .font(.inkNotchBrand)
                 .foregroundStyle(.white.opacity(0.85))
             Text("•")
-                .font(.system(size: 9, weight: .semibold))
+                .font(.inkNotchBrand)
                 .foregroundStyle(.white.opacity(0.4))
             Text(label)
-                .font(.system(size: 10, weight: .medium))
+                .font(.inkNotchLabel)
                 .foregroundStyle(.white.opacity(0.82))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
@@ -328,13 +328,13 @@ private struct NotchHUDView: View {
     private func errorNoticeContent(label: String) -> some View {
         HStack(spacing: 5) {
             Text("InkIt")
-                .font(.system(size: 9, weight: .semibold))
+                .font(.inkNotchBrand)
                 .foregroundStyle(.white.opacity(0.85))
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 8, weight: .semibold))
+                .font(.system(size: 8, weight: .semibold))  // ds-allow: icon
                 .foregroundStyle(Color(nsColor: .systemRed))
             Text(label)
-                .font(.system(size: 10, weight: .medium))
+                .font(.inkNotchLabel)
                 .foregroundStyle(.white.opacity(0.85))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)

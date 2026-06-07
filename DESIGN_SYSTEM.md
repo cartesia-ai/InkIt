@@ -121,17 +121,29 @@ not be themed.
 | HUD label | `.system(size: 10, weight: .medium)` | 10 / 500 | fixed (not Dynamic Type — HUD is fixed-size) |
 | Keycaps | `.system(size: 13, weight: .medium)` | 13 / 500 | drop `.rounded`; monospaced-digit optional |
 
-These roles are codified as `Font` tokens (`inkLargeTitle`, `inkTitle`,
-`inkHeadline`, `inkStat`, `inkEyebrow`, `inkBody`, `inkBodyEmphasized`,
-`inkCallout`, `inkCaption`) — all built on named system text styles so Dynamic
-Type works. **Display text uses a token, never a raw `.system(size:)`.**
+These roles are codified as `Font` tokens, defined once in `InkItApp.swift`:
+`inkLargeTitle`, `inkStat`, `inkTitle`, `inkSheetTitle`, `inkHeadline`,
+`inkBody` / `inkBodyEmphasized`, `inkReading` / `inkReadingEmphasized` (Try-It
+practice text), `inkMono` (credential entry), `inkNav` (sidebar), `inkCallout` /
+`inkCalloutEmphasized`, `inkSectionHeader` (grouped headers + keycaps),
+`inkEyebrow`, `inkCaption`. Need a size/weight that isn't here? **Add a token**,
+don't inline the literal. **Display text uses a token, never a raw
+`.system(size:)`.**
 
-Exempt from the token rule (legitimately point-sized): SF Symbol glyph sizes
-(icons scale by point size), the fixed-geometry HUD, keycaps, text-field input,
-and the onboarding hero (a deliberately larger full-screen moment).
+### Enforcement (the `ds-allow` escape hatch)
 
-Rule of thumb: **prefer the `inkX` tokens / named text styles** over fixed point
-sizes everywhere except the cases above.
+`scripts/check-design-tokens.sh` runs in CI and fails any PR that introduces a
+bare `.system(size: N)` for display text or a raw `Color(red:/white:)`. A genuine
+one-off opts out with a trailing comment that names the reason:
+
+```swift
+Image(systemName: "gearshape").font(.system(size: 17, weight: .medium))  // ds-allow: icon
+```
+
+Sanctioned one-offs: SF Symbol icon glyphs (sized to their container), the
+always-dark notch HUD micro-type, the dual-appearance `AppearanceThumbnail`, the
+onboarding hero mark. Everything that recurs or is plain running text is a token,
+not a one-off. See `AGENTS.md` for the contributor-facing summary.
 
 ---
 

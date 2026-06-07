@@ -356,29 +356,30 @@ private final class RevealingTextField: NSTextField {
 struct SettingsView: View {
     @EnvironmentObject var settings: SettingsStore
 
-    /// Settings is organized into a small sidebar. Polish earns its own pane
-    /// (rich, multi-state); everything else collapses into General, with
-    /// Permissions kept separate for its OS grant flows.
+    /// Settings is organized into a small sidebar. Dictation holds the core
+    /// flow (activation, shortcut, microphone, transcription key); Polish is its
+    /// own rich, multi-state pane; General gathers app chrome, the OS permission
+    /// grants, and the lone Advanced toggle.
     enum Pane: String, CaseIterable, Identifiable {
-        case general, polish, permissions
+        case dictation, polish, general
         var id: String { rawValue }
         var title: String {
             switch self {
-            case .general:     return "General"
-            case .polish:      return "Polish"
-            case .permissions: return "Permissions"
+            case .dictation: return "Dictation"
+            case .polish:    return "Polish"
+            case .general:   return "General"
             }
         }
         var icon: String {
             switch self {
-            case .general:     return "gearshape"
-            case .polish:      return "wand.and.stars"
-            case .permissions: return "lock.shield"
+            case .dictation: return "mic"
+            case .polish:    return "wand.and.stars"
+            case .general:   return "gearshape"
             }
         }
     }
 
-    @State private var pane: Pane? = .general
+    @State private var pane: Pane? = .dictation
 
     var body: some View {
         NavigationSplitView {
@@ -388,10 +389,10 @@ struct SettingsView: View {
             .navigationSplitViewColumnWidth(min: 168, ideal: 184, max: 220)
         } detail: {
             Group {
-                switch pane ?? .general {
-                case .general:     GeneralSettingsPane()
+                switch pane ?? .dictation {
+                case .dictation:   DictationSettingsPane()
                 case .polish:      PolishSettingsView()
-                case .permissions: PermissionsPane()
+                case .general:     GeneralSettingsPane()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -454,10 +455,10 @@ struct SettingsPopover: View {
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: p.icon)
-                    .font(.system(size: 13, weight: .regular))
+                    .font(.inkNav)
                     .frame(width: 18)
                 Text(p.title)
-                    .font(.inkBody)
+                    .font(.inkNav)
                 Spacer(minLength: 0)
             }
             .foregroundStyle(selected ? Color.accentColor : .primary)
@@ -478,7 +479,7 @@ struct SettingsPopover: View {
             HStack(alignment: .firstTextBaseline) {
                 Text(search.isSearching ? "Search Results" : pane.title)
                     .foregroundStyle(.primary)
-                    .font(.system(size: 16, weight: .medium))
+                    .font(.inkSheetTitle)
                 Spacer()
                 closeButton
             }
@@ -491,9 +492,9 @@ struct SettingsPopover: View {
                     SettingsSearchResults(items: search.results())
                 } else {
                     switch pane {
-                    case .general:     GeneralSettingsPane()
+                    case .dictation:   DictationSettingsPane()
                     case .polish:      PolishSettingsView()
-                    case .permissions: PermissionsPane()
+                    case .general:     GeneralSettingsPane()
                     }
                 }
             }
@@ -513,7 +514,7 @@ struct SettingsPopover: View {
         // keyboard path that the old hidden button owned still works.
         Button(action: onClose) {
             Image(systemName: "xmark")
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 12, weight: .semibold))  // ds-allow: icon
                 .foregroundStyle(.secondary)
                 .frame(width: 26, height: 26)
                 .background(Circle().fill(Color.primary.opacity(0.06)))
@@ -567,17 +568,17 @@ struct SettingsSearchItem: Identifiable {
               keywords: ["theme", "light", "dark", "system", "mode", "color", "look"]),
         .init(title: "Launch InkIt at login", pane: .general, anchor: "general.login",
               keywords: ["startup", "login", "launch", "open", "boot", "start", "auto", "sign in"]),
-        .init(title: "Activation", pane: .general, anchor: "general.activation",
+        .init(title: "Activation", pane: .dictation, anchor: "general.activation",
               keywords: ["activation", "hold", "toggle", "push to talk", "hands free", "tap", "mode"]),
-        .init(title: "Dictation shortcut", pane: .general, anchor: "general.hotkey",
+        .init(title: "Dictation shortcut", pane: .dictation, anchor: "general.hotkey",
               keywords: ["hotkey", "shortcut", "key", "binding", "dictate", "fn", "trigger"]),
-        .init(title: "Sound on press and release", pane: .general, anchor: "general.sound",
+        .init(title: "Sound on press and release", pane: .dictation, anchor: "general.sound",
               keywords: ["sound", "feedback", "audio", "cue", "beep", "haptic"]),
-        .init(title: "Microphone", pane: .general, anchor: "general.microphone",
+        .init(title: "Microphone", pane: .dictation, anchor: "general.microphone",
               keywords: ["mic", "input", "device", "audio", "bluetooth", "airpods"]),
-        .init(title: "Cartesia API key", pane: .general, anchor: "general.cartesia",
+        .init(title: "Cartesia API key", pane: .dictation, anchor: "general.cartesia",
               keywords: ["transcription", "api", "key", "cartesia", "token", "credential"]),
-        .init(title: "Language", pane: .general, anchor: "general.language",
+        .init(title: "Language", pane: .dictation, anchor: "general.language",
               keywords: ["language", "english", "locale", "multilingual", "spanish", "french"]),
         .init(title: "Debug logging", pane: .general, anchor: "general.debug",
               keywords: ["advanced", "log", "trace", "debug", "diagnostics"]),
@@ -589,9 +590,9 @@ struct SettingsSearchItem: Identifiable {
               keywords: ["provider", "groq", "openai", "gemini", "anthropic", "model", "ai", "llm"]),
         .init(title: "Polish API key", pane: .polish, anchor: "polish.key",
               keywords: ["api", "key", "provider", "token", "credential", "llm"]),
-        .init(title: "Microphone permission", pane: .permissions, anchor: "perm.mic",
+        .init(title: "Microphone permission", pane: .general, anchor: "perm.mic",
               keywords: ["microphone", "mic", "permission", "privacy", "access"]),
-        .init(title: "Accessibility permission", pane: .permissions, anchor: "perm.accessibility",
+        .init(title: "Accessibility permission", pane: .general, anchor: "perm.accessibility",
               keywords: ["accessibility", "permission", "privacy", "type", "paste", "control"]),
     ]
 }
@@ -610,7 +611,7 @@ private struct SettingsSearchField: View {
     var body: some View {
         HStack(spacing: 7) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: 13, weight: .medium))  // ds-allow: icon
                 .foregroundStyle(.secondary)
             TextField("Search settings", text: $text)
                 .textFieldStyle(.plain)
@@ -618,7 +619,7 @@ private struct SettingsSearchField: View {
             if !text.isEmpty {
                 Button { text = "" } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 13))
+                        .font(.system(size: 13))  // ds-allow: icon
                         .foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.plain)
@@ -677,7 +678,7 @@ private struct SettingsSearchResults: View {
         if items.isEmpty {
             VStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 22, weight: .regular))
+                    .font(.system(size: 22, weight: .regular))  // ds-allow: icon
                     .foregroundStyle(.tertiary)
                 Text("No matching settings")
                     .font(.inkBody)
@@ -771,31 +772,21 @@ private extension View {
     /// quietly above its card, instead of the bold near-black default that
     /// grouped `Form` headers ship with. Sentence case, never uppercased.
     func settingsSectionHeader() -> some View {
-        font(.system(size: 12.5, weight: .medium))
+        font(.inkSectionHeader)
             .foregroundStyle(.secondary)
             .textCase(nil)
     }
 }
 
-/// General pane — appearance, the dictation shortcut, the Cartesia key, and the
-/// lone Advanced (debug) toggle. Everything that isn't Polish or Permissions.
-private struct GeneralSettingsPane: View {
+/// Dictation pane — the core flow: how you trigger dictation (activation mode,
+/// shortcut), what it listens to (microphone), and what powers transcription
+/// (the Cartesia key + language). The settings a user actually configures to
+/// dictate, gathered under one purpose-named tab.
+private struct DictationSettingsPane: View {
     @EnvironmentObject var settings: SettingsStore
 
     var body: some View {
         Form {
-            // Headerless top group — login behavior lives in General, the way
-            // Apple and most Mac apps file it (no dedicated "Startup" section).
-            Section {
-                SettingsToggle("Launch InkIt at login", isOn: $settings.launchAtLogin)
-            }
-
-            Section {
-                AppearanceCardPicker(selection: $settings.appearance)
-            } header: {
-                Text("Appearance").settingsSectionHeader()
-            }
-
             Section {
                 ActivationModeCardPicker(mode: $settings.dictationMode)
             } header: {
@@ -818,6 +809,50 @@ private struct GeneralSettingsPane: View {
             } header: {
                 Text("Transcription").settingsSectionHeader()
             }
+        }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .navigationTitle("Dictation")
+    }
+}
+
+/// General pane — app chrome (appearance, launch behavior), the OS permission
+/// grants, and the lone Advanced (debug) toggle. Everything that isn't the
+/// dictation flow or Polish. Permissions live here (rather than a dedicated
+/// tab) because they're two static rows once granted; onboarding and the Home
+/// status cards still surface a missing grant, and search finds them directly.
+private struct GeneralSettingsPane: View {
+    @EnvironmentObject var settings: SettingsStore
+    @StateObject private var permissions = PermissionsService.shared
+
+    var body: some View {
+        Form {
+            Section {
+                AppearanceCardPicker(selection: $settings.appearance)
+            } header: {
+                Text("Appearance").settingsSectionHeader()
+            }
+
+            Section {
+                SettingsToggle("Launch InkIt at login", isOn: $settings.launchAtLogin)
+            } header: {
+                Text("Behavior").settingsSectionHeader()
+            }
+
+            Section {
+                PermissionRow(label: "Microphone",
+                              subtitle: "So InkIt can hear you",
+                              granted: permissions.hasMicrophone) {
+                    permissions.requestMicrophone { _ in }
+                }
+                PermissionRow(label: "Accessibility",
+                              subtitle: "So InkIt can type for you",
+                              granted: permissions.hasAccessibility) {
+                    permissions.requestAccessibility()
+                }
+            } header: {
+                Text("Permissions").settingsSectionHeader()
+            }
 
             Section {
                 SettingsToggle(
@@ -832,7 +867,11 @@ private struct GeneralSettingsPane: View {
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
         .navigationTitle("General")
-        .onAppear { settings.syncLaunchAtLoginFromSystem() }
+        .onAppear {
+            settings.syncLaunchAtLoginFromSystem()
+            permissions.startPolling()
+        }
+        .onDisappear { permissions.stopPolling() }
     }
 }
 
@@ -863,10 +902,10 @@ private struct ActivationModeCard: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 7) {
                     Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
-                        .font(.system(size: 14))
+                        .font(.system(size: 14))  // ds-allow: icon
                         .foregroundStyle(isSelected ? Color.accentColor : .secondary)
                     Text(mode.displayName)
-                        .font(.inkBodyEmphasized)
+                        .font(.inkCalloutEmphasized)
                         .foregroundStyle(.primary)
                     Spacer(minLength: 0)
                 }
@@ -1011,36 +1050,6 @@ private struct MicrophonePickerRow: View {
     }
 }
 
-/// Permissions pane — mic + Accessibility, kept separate because each has its
-/// own OS grant flow and "needs manual fix" state.
-private struct PermissionsPane: View {
-    @StateObject private var permissions = PermissionsService.shared
-
-    var body: some View {
-        Form {
-            Section {
-                PermissionRow(label: "Microphone",
-                              subtitle: "So InkIt can hear you",
-                              granted: permissions.hasMicrophone) {
-                    permissions.requestMicrophone { _ in }
-                }
-                PermissionRow(label: "Accessibility",
-                              subtitle: "So InkIt can type for you",
-                              granted: permissions.hasAccessibility) {
-                    permissions.requestAccessibility()
-                }
-            } header: {
-                Text("Permissions").settingsSectionHeader()
-            }
-        }
-        .formStyle(.grouped)
-        .scrollContentBackground(.hidden)
-        .navigationTitle("Permissions")
-        .onAppear { permissions.startPolling() }
-        .onDisappear { permissions.stopPolling() }
-    }
-}
-
 // MARK: - Polish pane
 
 /// The "Polish" settings pane. The key is the switch: with no key it's a setup
@@ -1082,10 +1091,13 @@ struct PolishSettingsView: View {
             modelRow
             keyField
         } header: {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Turn on Polish").textCase(nil)
+            // Same muted section-header treatment as every other pane, with the
+            // one-line explainer beneath it — so the setup header doesn't read as
+            // a heavier, different-scale title than the rest of Settings.
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Turn on Polish").settingsSectionHeader()
                 Text("Cleans up fillers, punctuation, and misheard words")
-                    .font(.subheadline).foregroundStyle(.secondary).textCase(nil)
+                    .font(.caption).foregroundStyle(.secondary).textCase(nil)
             }
             .padding(.bottom, 2)
         }
@@ -1296,10 +1308,10 @@ private struct AppearanceThumbnail: View {
     enum Style { case light, dark, system }
     let style: Style
 
-    private let lightSurface = Color(red: 0.910, green: 0.902, blue: 0.886)  // HomeCanvas light
-    private let darkSurface  = Color(red: 0.118, green: 0.110, blue: 0.102)  // HomeCanvas dark
-    private let lightLine    = Color(red: 0.80, green: 0.79, blue: 0.76)
-    private let darkLine     = Color(red: 0.29, green: 0.28, blue: 0.26)
+    private let lightSurface = Color(red: 0.910, green: 0.902, blue: 0.886)  // HomeCanvas light — ds-allow: dual-appearance preview
+    private let darkSurface  = Color(red: 0.118, green: 0.110, blue: 0.102)  // HomeCanvas dark — ds-allow: dual-appearance preview
+    private let lightLine    = Color(red: 0.80, green: 0.79, blue: 0.76)  // ds-allow: dual-appearance preview
+    private let darkLine     = Color(red: 0.29, green: 0.28, blue: 0.26)  // ds-allow: dual-appearance preview
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -1325,16 +1337,16 @@ private struct AppearanceThumbnail: View {
         case .light:  return lightLine
         case .dark:   return darkLine
         // Mid gray reads on both halves of the split.
-        case .system: return Color(white: 0.55)
+        case .system: return Color(white: 0.55)  // ds-allow: dual-appearance preview
         }
     }
 
     private var content: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 3) {
-                Circle().fill(Color(red: 1, green: 0.37, blue: 0.34)).frame(width: 5, height: 5)
-                Circle().fill(Color(red: 1, green: 0.74, blue: 0.18)).frame(width: 5, height: 5)
-                Circle().fill(Color(red: 0.16, green: 0.78, blue: 0.25)).frame(width: 5, height: 5)
+                Circle().fill(Color(red: 1, green: 0.37, blue: 0.34)).frame(width: 5, height: 5)  // ds-allow: dual-appearance preview
+                Circle().fill(Color(red: 1, green: 0.74, blue: 0.18)).frame(width: 5, height: 5)  // ds-allow: dual-appearance preview
+                Circle().fill(Color(red: 0.16, green: 0.78, blue: 0.25)).frame(width: 5, height: 5)  // ds-allow: dual-appearance preview
             }
             .padding(.bottom, 2)
             Capsule().fill(lineColor).frame(width: 38, height: 4)
@@ -1743,7 +1755,7 @@ private struct ShortcutCaptureField: View {
                 Spacer(minLength: 12)
 
                 Image(systemName: "pencil")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))  // ds-allow: icon
                     .foregroundStyle(Color.secondary)
             }
         }
@@ -1758,7 +1770,7 @@ private struct ShortcutKeycap: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 12.5, weight: .medium))
+            .font(.inkSectionHeader)
             .foregroundStyle(.primary)
             .padding(.horizontal, 7)
             .frame(minWidth: 28, minHeight: 22)

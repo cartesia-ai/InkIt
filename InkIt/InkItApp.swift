@@ -40,6 +40,9 @@ extension Font {
     static let inkLargeTitle = Font.system(size: 28, weight: .bold)
     /// Screen / pane / column title (History, Your stats, Settings pane).
     static let inkTitle = Font.system(size: 18, weight: .semibold)
+    /// Compact sheet / popover header title — smaller than a full-window pane
+    /// title (the Settings popover header).
+    static let inkSheetTitle = Font.system(size: 16, weight: .medium)
     /// Card / sub-section heading (nudge title, field group).
     static let inkHeadline = Font.system(size: 15, weight: .semibold)
     /// Featured stat number — monospaced digits applied at use.
@@ -50,10 +53,31 @@ extension Font {
     static let inkBody = Font.system(size: 15)
     /// Emphasized body — button labels, selectable item titles.
     static let inkBodyEmphasized = Font.system(size: 15, weight: .medium)
+    /// Reading text for the Try-It practice card — a touch larger than body so
+    /// the prompt and the user's words have room to breathe.
+    static let inkReading = Font.system(size: 17)
+    /// Emphasized reading text — the practice prompt itself.
+    static let inkReadingEmphasized = Font.system(size: 17, weight: .medium)
+    /// Monospaced credential entry (API-key fields), at body size.
+    static let inkMono = Font.system(size: 15, design: .monospaced)
     /// Secondary body / metadata that still needs to read easily.
     static let inkCallout = Font.system(size: 13)
+    /// Emphasized callout — selectable card / control titles that sit at the
+    /// body-row scale rather than the heavier 15pt (Settings option cards).
+    static let inkCalloutEmphasized = Font.system(size: 13, weight: .medium)
+    /// Sidebar / navigation item label. A hair above the 13pt detail rows so
+    /// the nav reads as primary without overpowering the content it points to.
+    static let inkNav = Font.system(size: 13.5)
+    /// Small medium-weight UI label at the same scale step — grouped-section
+    /// headers in Settings and keycap chips in the shortcut recorder.
+    static let inkSectionHeader = Font.system(size: 12.5, weight: .medium)
     /// Helper / captions / units.
     static let inkCaption = Font.system(size: 12)
+    /// Always-dark notch HUD micro-type — the fixed-size strip by the camera
+    /// notch (DESIGN_SYSTEM.md principle 4). Off the content scale by design;
+    /// not for general app UI. Brand wordmark and status label.
+    static let inkNotchBrand = Font.system(size: 8, weight: .semibold)
+    static let inkNotchLabel = Font.system(size: 10, weight: .medium)
 }
 
 /// Swaps the cursor to the pointing-hand while hovering, signalling that a
@@ -218,7 +242,7 @@ struct MainWindowView: View {
     @State private var copiedID: UUID?
     @State private var showSettings = false
     @State private var gearHovering = false
-    @State private var settingsPane: SettingsView.Pane = .general
+    @State private var settingsPane: SettingsView.Pane = .dictation
 
     private struct TranscriptGroup: Identifiable {
         let id: Date
@@ -305,7 +329,7 @@ struct MainWindowView: View {
     private var gearButton: some View {
         Button { withAnimation(.easeOut(duration: 0.12)) { showSettings.toggle() } } label: {
             Image(systemName: "gearshape")
-                .font(.system(size: 17, weight: .medium))
+                .font(.system(size: 17, weight: .medium))  // ds-allow: icon
                 .foregroundStyle(showSettings ? Color.accentColor : .secondary)
                 .frame(width: 34, height: 34)
                 .background(
@@ -535,7 +559,7 @@ struct MainWindowView: View {
         if let issue = settings.transcriptionIssue {
             HStack(spacing: 12) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.system(size: 16, weight: .semibold))  // ds-allow: icon
                     .foregroundStyle(Color.accentColor)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Dictation is paused")
@@ -594,7 +618,7 @@ struct MainWindowView: View {
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
                         .fill(Color.accentSoft)
                     Image(systemName: icon)
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: 15, weight: .semibold))  // ds-allow: icon
                         .foregroundStyle(Color.accentColor)
                 }
                 .frame(width: 30, height: 30)
@@ -650,7 +674,7 @@ struct MainWindowView: View {
     private func transcriptionIssueAction(_ issue: SettingsStore.ServiceIssue) {
         switch issue {
         case .keyInvalid:
-            settingsPane = .general
+            settingsPane = .dictation
             showSettings = true
         case .outOfCredits:
             NSWorkspace.shared.open(URL(string: "https://play.cartesia.ai/subscription")!)
@@ -710,7 +734,7 @@ struct MainWindowView: View {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(Color.accentSoft)
                 Image(systemName: icon)
-                    .font(.system(size: 15, weight: .medium))
+                    .font(.system(size: 15, weight: .medium))  // ds-allow: icon
                     .foregroundStyle(Color.accentColor)
             }
             .frame(width: 34, height: 34)
@@ -744,7 +768,7 @@ struct MainWindowView: View {
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
                         .fill(Color.accentSoft)
                     Image(systemName: "sparkles")
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.system(size: 16, weight: .semibold))  // ds-allow: icon
                         .foregroundStyle(Color.accentColor)
                 }
                 .frame(width: 30, height: 30)
@@ -753,7 +777,7 @@ struct MainWindowView: View {
 
                 Button { settings.polishNudgeDismissed = true } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: 11, weight: .semibold))  // ds-allow: icon
                         .foregroundStyle(.tertiary)
                         .padding(5)
                         .contentShape(Rectangle())
@@ -785,7 +809,7 @@ struct MainWindowView: View {
             } label: {
                 HStack(spacing: 7) {
                     Image(systemName: "sparkles")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))  // ds-allow: icon
                     Text("Set up Polish")
                         .font(.inkBodyEmphasized)
                 }
@@ -1194,11 +1218,11 @@ private struct PolishMiniDemo: View {
     private func row(_ label: String, _ content: Text, accent: Bool) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(label)
-                .font(.system(size: 9.5, weight: .bold))
+                .font(.inkEyebrow)
                 .tracking(0.5)
                 .foregroundStyle(accent ? Color.accentColor : Color(nsColor: .tertiaryLabelColor))
             content
-                .font(.system(size: 12.5))
+                .font(.inkCallout)
                 .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -1424,7 +1448,7 @@ private struct DiffPopover: View {
 private struct DiffLegendLabelStyle: LabelStyle {
     func makeBody(configuration: Configuration) -> some View {
         HStack(spacing: 4) {
-            configuration.icon.font(.system(size: 6))
+            configuration.icon.font(.system(size: 6))  // ds-allow: icon
             configuration.title
         }
     }
@@ -1491,7 +1515,7 @@ private struct HoverHintLabel: View {
     let text: String
     var body: some View {
         Text(text)
-            .font(.system(size: 11, weight: .medium))
+            .font(.system(size: 11, weight: .medium))  // ds-allow: hover-hint pill
             .foregroundStyle(Color.white)
             .lineLimit(1)
             .fixedSize()
@@ -1636,7 +1660,7 @@ private struct IconChip: View {
 
     var body: some View {
         Image(systemName: systemName)
-            .font(.system(size: 13, weight: .semibold))
+            .font(.system(size: 13, weight: .semibold))  // ds-allow: icon
             .foregroundStyle(fg)
             .frame(width: 24, height: 24)
             .background(
@@ -1655,7 +1679,7 @@ private struct CopyTranscriptGlyph: View {
 
     var body: some View {
         Image(systemName: copied ? "checkmark" : "doc.on.doc")
-            .font(.system(size: 12, weight: .medium))
+            .font(.system(size: 12, weight: .medium))  // ds-allow: icon
             .foregroundStyle(copied ? Color.accentColor : .secondary)
             .frame(width: 24, height: 24)
             .background(

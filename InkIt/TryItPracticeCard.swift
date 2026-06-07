@@ -145,7 +145,7 @@ struct TryItPracticeCard: View {
             // Wrapped in curly quotes so it reads as a spoken line, with a larger
             // size and looser leading to give the prompt room to breathe.
             Text("\u{201C}\(sampleLine)\u{201D}")
-                .font(.system(size: 17, weight: .medium))
+                .font(.inkReadingEmphasized)
                 .lineSpacing(5)
                 .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -169,7 +169,7 @@ struct TryItPracticeCard: View {
             HStack(spacing: 6) {
                 if isComplete {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 11))
+                        .font(.system(size: 11))  // ds-allow: icon
                         .foregroundStyle(.green)
                 }
                 Text("What InkIt heard")
@@ -179,14 +179,14 @@ struct TryItPracticeCard: View {
             ZStack(alignment: .topLeading) {
                 if editedText.isEmpty {
                     Text("Your words appear here after you let go.")
-                        .font(.system(size: 17))
+                        .font(.inkReading)
                         .foregroundStyle(.tertiary)
                         .padding(.leading, 5)
                         .padding(.top, 1)
                         .allowsHitTesting(false)
                 }
                 TextEditor(text: $editedText)
-                    .font(.system(size: 17))
+                    .font(.inkReading)
                     .lineSpacing(3)
                     .scrollContentBackground(.hidden)
                     .background(Color.clear)
@@ -216,7 +216,7 @@ struct TryItPracticeCard: View {
     private var sendButton: some View {
         Button { send() } label: {
             Image(systemName: "paperplane.fill")
-                .font(.system(size: 15, weight: .semibold))
+                .font(.system(size: 15, weight: .semibold))  // ds-allow: icon
                 .foregroundStyle(.white)
                 .frame(width: 34, height: 34)
                 .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color.accentColor))
@@ -240,19 +240,19 @@ struct TryItPracticeCard: View {
                     .shadow(color: Color.recordingAmber.opacity(0.7), radius: 5)
             } else {
                 Image(systemName: "mic.fill")
-                    .font(.system(size: 19))
+                    .font(.system(size: 19))  // ds-allow: icon
                     .foregroundStyle(.primary)
             }
             HStack(spacing: 7) {
                 Text("Hold")
                 Text(settings.hotkeyDisplayString)
-                    .font(.system(size: 14, weight: .bold))
+                    .font(.system(size: 14, weight: .bold))  // ds-allow: inline keycap
                     .foregroundStyle(Color.accentColor)
                     .padding(.horizontal, 9).padding(.vertical, 3)
                     .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.accentSoft))
                 Text("to talk")
             }
-            .font(.system(size: 17, weight: .bold))
+            .font(.system(size: 17, weight: .bold))  // ds-allow: practice hint
             .foregroundStyle(.primary)
         }
         .padding(.horizontal, 26).padding(.vertical, 13)
