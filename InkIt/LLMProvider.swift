@@ -62,6 +62,20 @@ enum LLMProvider: String, CaseIterable, Identifiable, Hashable {
 
     var defaultModel: String { models.first! }
 
+    /// Hard ceiling on a rewrite request before we abandon it and fall back to
+    /// the raw transcript. Sized just above each model's observed p99 so it only
+    /// fires on a genuinely hung request, never a healthy-but-slow one — cutting
+    /// a tighter ceiling would silently downgrade good rewrites to raw text.
+    /// Groq Llama 3.3 70B (the default) never crossed 0.9s across hundreds of
+    /// dictations, so 1.0s is ample; the other small models get more headroom
+    /// since we haven't measured their tails.
+    var rewriteTimeout: TimeInterval {
+        switch self {
+        case .groq:                       return 1.0
+        case .gemini, .openai, .anthropic: return 2.0
+        }
+    }
+
     /// Where the user obtains an API key.
     var keyURL: URL {
         switch self {
@@ -70,6 +84,60 @@ enum LLMProvider: String, CaseIterable, Identifiable, Hashable {
         case .openai:    return URL(string: "https://platform.openai.com/api-keys")!
         case .anthropic: return URL(string: "https://console.anthropic.com/settings/keys")!
         }
+    }
+
+    /// Where the user reviews their plan / billing when Polish is paused because
+    /// they're out of credits. Mirrors the console domains of `keyURL`. Anthropic
+    /// is verified; the others are best-effort and land on the right console even
+    /// if the exact subpath shifts.
+    var billingURL: URL {
+        switch self {
+        case .groq:      return URL(string: "https://console.groq.com/settings/billing")!
+        case .gemini:    return URL(string: "https://aistudio.google.com/")!
+        case .openai:    return URL(string: "https://platform.openai.com/settings/organization/billing")!
+        case .anthropic: return URL(string: "https://console.anthropic.com/settings/billing")!
+        }
+    }
+
+    /// Whether this provider is the recommended default — Groq, for its free
+    /// tier and lowest latency. Surfaced as a "Recommended" badge in the picker.
+    var isRecommended: Bool { self == .groq }
+
+    /// A short, plain-English note for the key field (why a key, what it costs).
+    var keyHint: String {
+        switch self {
+        case .groq:      return "Free tier, no card needed."
+        case .gemini:    return "Free tier from Google AI Studio."
+        case .openai:    return "Uses your existing OpenAI account."
+        case .anthropic: return "Uses your existing Anthropic account."
+        }
+    }
+
+    /// Credit-free endpoint that requires auth — listing models — used to
+    /// validate a key without spending tokens.
+    private var validationURL: URL {
+        switch self {
+        case .groq:      return URL(string: "https://api.groq.com/openai/v1/models")!
+        case .gemini:    return URL(string: "https://generativelanguage.googleapis.com/v1beta/openai/models")!
+        case .openai:    return URL(string: "https://api.openai.com/v1/models")!
+        case .anthropic: return URL(string: "https://api.anthropic.com/v1/models")!
+        }
+    }
+
+    /// Builds the credit-free probe request used to validate `key` for this
+    /// provider. OpenAI-compatible providers carry a bearer token; Anthropic
+    /// uses its `x-api-key` + version headers.
+    func validationRequest(key: String) -> URLRequest {
+        var req = URLRequest(url: validationURL)
+        req.httpMethod = "GET"
+        req.timeoutInterval = 8
+        if self == .anthropic {
+            req.setValue(key, forHTTPHeaderField: "x-api-key")
+            req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        } else {
+            req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        }
+        return req
     }
 }
 

@@ -10,11 +10,29 @@ final class AudioCaptureService {
     private let queue = DispatchQueue(label: "inkit.audio", qos: .userInitiated)
     private var isRunning = false
 
+    /// UID of the user's pinned input device, or nil/empty to follow the macOS
+    /// default. Set before `start()`. When set but the device is unplugged we
+    /// fall back to the system default rather than failing — see `start()`.
+    var preferredDeviceUID: String?
+
     func start(onChunk: @escaping (Data) -> Void) throws {
         guard !isRunning else { return }
         self.onChunk = onChunk
 
         let input = engine.inputNode
+
+        // Pin the user's chosen input device, or reset to the system default.
+        // This must happen while the engine is stopped and BEFORE we read the
+        // input format (which is the active device's format). If the pinned
+        // device is gone, `deviceID(forUID:)` returns nil and we route to the
+        // current default — the graceful AirPods-unplugged fallback. We also
+        // reset to default when unpinned, since the engine instance is reused
+        // across takes and would otherwise keep a previously pinned device.
+        let pinnedID = preferredDeviceUID.flatMap { AudioDevices.deviceID(forUID: $0) }
+        if let deviceID = pinnedID ?? AudioDevices.defaultInputDeviceID() {
+            try? input.auAudioUnit.setDeviceID(deviceID)
+        }
+
         let inputFormat = input.inputFormat(forBus: 0)
 
         guard let targetFormat = AVAudioFormat(

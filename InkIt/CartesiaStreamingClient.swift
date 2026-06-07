@@ -16,9 +16,70 @@ import Foundation
 /// All emitted transcripts are already "final" words; partials are not exposed.
 /// We accumulate completed turns and append the latest in-flight `turn.update`
 /// to produce the full press-to-talk transcript.
+/// Why an STT session failed, classified from Cartesia's error event
+/// (`status_code` + `error_code`, per docs.cartesia.ai/use-the-api/api-conventions)
+/// or a transport-level URLError. Drives the short notch message and the
+/// persistent Home "Transcription is paused" card.
+enum STTFailure: Equatable {
+    case offline        // no network / can't reach host
+    case serverError    // 5xx, timeout, or unreachable server
+    case rateLimited    // 429 / concurrency_limited
+    case outOfCredits   // 402 / quota_exceeded / plan_upgrade_required
+    case invalidKey     // 401 / 403
+    case unknown        // 400 (bad input) or anything unclassified
+
+    /// Short, glanceable copy for the notch island. Plain language, no codes.
+    var notchMessage: String {
+        switch self {
+        case .offline:      return "No internet"
+        case .serverError:  return "Server error"
+        case .rateLimited:  return "Too many requests"
+        case .outOfCredits: return "Out of credits"
+        case .invalidKey:   return "Invalid API key"
+        case .unknown:      return "Couldn't transcribe"
+        }
+    }
+
+    /// Classify from a Cartesia error event. `error_code` is the most reliable
+    /// signal (credits come back as quota_exceeded / plan_upgrade_required), then
+    /// the HTTP `status_code`.
+    static func classify(statusCode: Int?, errorCode: String?) -> STTFailure {
+        switch errorCode {
+        case "quota_exceeded", "plan_upgrade_required": return .outOfCredits
+        case "concurrency_limited":                     return .rateLimited
+        default: break
+        }
+        switch statusCode {
+        case 401, 403:                    return .invalidKey
+        case 402:                         return .outOfCredits
+        case 429:                         return .rateLimited
+        case .some(let s) where s >= 500: return .serverError
+        default:                          return .unknown
+        }
+    }
+
+    /// Classify a transport error: prefer the HTTP status on a failed WebSocket
+    /// upgrade, else map the URLError (offline vs. server/timeout).
+    static func classify(transportError error: Error, response: URLResponse?) -> STTFailure {
+        if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
+            return classify(statusCode: http.statusCode, errorCode: nil)
+        }
+        guard let urlError = error as? URLError else { return .unknown }
+        switch urlError.code {
+        case .notConnectedToInternet, .networkConnectionLost, .cannotConnectToHost,
+             .cannotFindHost, .dnsLookupFailed, .dataNotAllowed:
+            return .offline
+        case .timedOut:
+            return .serverError
+        default:
+            return .unknown
+        }
+    }
+}
+
 final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
     var onTranscriptUpdate: ((String) -> Void)?
-    var onError: ((String) -> Void)?
+    var onError: ((STTFailure) -> Void)?
     var onClosed: ((String) -> Void)?
 
     private let apiKey: String
@@ -62,7 +123,7 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
             URLQueryItem(name: "cartesia_version", value: cartesiaVersion)
         ]
         guard let url = comps.url else {
-            onError?("Invalid Cartesia URL")
+            onError?(.unknown)
             return
         }
         var req = URLRequest(url: url)
@@ -83,7 +144,7 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
         }
         stateLock.unlock()
         task.send(.data(data)) { [weak self] err in
-            if let err { self?.onError?("Send failed: \(err.localizedDescription)") }
+            if let err { self?.onError?(STTFailure.classify(transportError: err, response: self?.task?.response)) }
         }
     }
 
@@ -129,7 +190,11 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
 
     func cancel() { finishClose(reason: .externalCancel) }
 
-    private func finishClose(reason: CloseReason) {
+    /// `reportClosed: false` finishes the session WITHOUT firing `onClosed` — used
+    /// on error paths, which already reported via `onError`. Otherwise the error's
+    /// close would also deliver an (empty) transcript to `onClosed`, and the
+    /// coordinator would reset its state to `.idle`, wiping the error notice.
+    private func finishClose(reason: CloseReason, reportClosed: Bool = true) {
         // Atomic so the final `turn.end` and the socket close racing to finish
         // can't both report `onClosed`.
         stateLock.lock()
@@ -140,7 +205,29 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
         SessionMetrics.record(reason: reason, elapsedAfterCloseSent: elapsed)
         task?.cancel(with: .goingAway, reason: nil)
         task = nil
-        onClosed?(joinedTranscript())
+        if reportClosed { onClosed?(joinedTranscript()) }
+    }
+
+    /// Decide whether a terminal failure is a real error the user should see, or
+    /// a silent / too-short press that just said nothing. A press with no (or
+    /// near-no) audio can make Cartesia reject the session — sometimes as an
+    /// in-stream `error` event, but more often by closing the socket (surfacing
+    /// through `receive()` or `didCompleteWithError`). In every case the signal
+    /// is the same: the failure classifies as `.unknown` (unclassified / 400)
+    /// AND we never received any transcript content. Collapse those to the clean
+    /// empty-transcript path (onClosed → idle, no notch error). Real failures
+    /// (offline, timeout, 401/402/429/5xx, or a 400 after partial content) keep
+    /// their classification and surface via `onError`.
+    private func reportFailureOrCollapse(_ failure: STTFailure, errorReason: CloseReason) {
+        stateLock.lock()
+        let hasContent = !completedTurns.isEmpty || !currentTurn.isEmpty
+        stateLock.unlock()
+        if failure == .unknown && !hasContent {
+            finishClose(reason: .silentNoAudio, reportClosed: true)
+        } else {
+            onError?(failure)
+            finishClose(reason: errorReason, reportClosed: false)
+        }
     }
 
     // MARK: - Receive loop
@@ -151,8 +238,10 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
             switch result {
             case .failure(let error):
                 if !self.hasClosed {
-                    self.onError?("Receive failed: \(error.localizedDescription)")
-                    self.finishClose(reason: .receiveFailed)
+                    self.reportFailureOrCollapse(
+                        STTFailure.classify(transportError: error, response: self.task?.response),
+                        errorReason: .receiveFailed
+                    )
                 }
             case .success(let message):
                 switch message {
@@ -206,9 +295,25 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
             break
 
         case "error":
+            // Cartesia error events carry a required `status_code` and an optional
+            // `error_code` (e.g. quota_exceeded, concurrency_limited) — classify
+            // off those rather than the human-readable message.
+            let status = json["status_code"] as? Int
+            let code = json["error_code"] as? String
             let msg = (json["message"] as? String) ?? (json["title"] as? String) ?? "Cartesia error"
-            onError?(msg)
-            finishClose(reason: .serverError)
+            NSLog("[InkIt] STT error event: status=\(status.map(String.init) ?? "nil") code=\(code ?? "nil") msg=\(msg)")
+            // A too-short / silent press can make Cartesia reject the session with
+            // a 400 instead of returning an empty turn. That's not a failure the
+            // user should see ("Couldn't transcribe" reads as something broke) —
+            // it just means they said nothing. When the 400 classifies as
+            // `.unknown` AND we never received any transcript content, collapse to
+            // the clean empty-transcript path (onClosed → idle, no notch error)
+            // instead of surfacing an error. Real failures (401/402/429/5xx, or a
+            // 400 after partial content) still report via onError.
+            reportFailureOrCollapse(
+                STTFailure.classify(statusCode: status, errorCode: code),
+                errorReason: .serverError
+            )
 
         default:
             break
@@ -229,7 +334,7 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
         pendingClose = false
         for chunk in buffered {
             task.send(.data(chunk)) { [weak self] err in
-                if let err { self?.onError?("Send failed: \(err.localizedDescription)") }
+                if let err { self?.onError?(STTFailure.classify(transportError: err, response: self?.task?.response)) }
             }
         }
         isConnected = true
@@ -257,6 +362,27 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
                     reason: Data?) {
         finishClose(reason: .serverClosed)
     }
+
+    /// A rejected WebSocket *upgrade* — invalid/expired key, over credit limit,
+    /// rate limited — is delivered here, not through `receive()`. Without this
+    /// the failure is swallowed and the session ends silently (no notch error).
+    /// The HTTP status on `task.response` carries the cause; fall back to the
+    /// URLError. Guarded so the happy-path completion and `receive()`'s own
+    /// failure handling don't double-report.
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        guard !hasClosed else { return }
+        if let error {
+            reportFailureOrCollapse(
+                STTFailure.classify(transportError: error, response: task.response),
+                errorReason: .receiveFailed
+            )
+        } else if let http = task.response as? HTTPURLResponse, http.statusCode >= 400 {
+            reportFailureOrCollapse(
+                STTFailure.classify(statusCode: http.statusCode, errorCode: nil),
+                errorReason: .receiveFailed
+            )
+        }
+    }
 }
 
 // MARK: - Close-path metrics
@@ -266,6 +392,7 @@ enum CloseReason: String, Codable {
     case serverClosed         // server closed the socket before a post-close turn.end (e.g. nothing to flush)
     case graceTimerExpired    // safety timer fired before the server finished
     case serverError          // server sent {"type":"error"}
+    case silentNoAudio        // 400 on a press with no transcript content — treated as "said nothing"
     case receiveFailed        // receive loop errored
     case externalCancel       // cancel() called from outside (e.g. audio start failure, app error)
 }

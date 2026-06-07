@@ -9,13 +9,14 @@ private enum SettingsMetrics {
     /// Shared height for text-entry controls.
     static let fieldHeight: CGFloat = 30
     /// Corner radius for those fields.
-    static let fieldCornerRadius: CGFloat = 7
+    static let fieldCornerRadius = Radius.keycap
     /// Gap between a control and its caption.
     static let captionSpacing: CGFloat = 3
 
     /// Editable-field surface. The same token backs every text field and the
-    /// hotkey recorder so they match exactly.
-    static let fieldBackground = Color(nsColor: .textBackgroundColor)
+    /// hotkey recorder so they match exactly. Warm card, matching the onboarding
+    /// key field, so Settings reads as the same paper as the rest of the app.
+    static let fieldBackground = Color.card
     /// Resting field border.
     static let fieldBorder = Color(nsColor: .separatorColor)
     static let fieldBorderWidth: CGFloat = 1
@@ -50,52 +51,6 @@ private extension View {
     }
 }
 
-/// A grouped-Form section header with an inline info glyph that reveals an
-/// explanatory tooltip on hover. Keeps every category self-documenting.
-private struct SectionHeader: View {
-    let title: String
-    let help: String
-
-    init(_ title: String, help: String) {
-        self.title = title
-        self.help = help
-    }
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Text(title)
-            InfoTooltip(text: help)
-        }
-    }
-}
-
-/// An info glyph that reveals an explanatory popover. Shows on hover (with a
-/// small grace delay so it doesn't flicker) and on click, so it's discoverable
-/// either way — `.help()` tooltips proved unreliable inside Form headers.
-private struct InfoTooltip: View {
-    let text: String
-    @State private var isShown = false
-
-    var body: some View {
-        Image(systemName: "info.circle")
-            .imageScale(.small)
-            .foregroundStyle(isShown ? Color.accentColor : .secondary)
-            .contentShape(Rectangle())
-            .onHover { hovering in isShown = hovering }
-            .onTapGesture { isShown.toggle() }
-            .modifier(PointingHandCursor())
-            .popover(isPresented: $isShown, arrowEdge: .bottom) {
-                Text(text)
-                    .font(.callout)
-                    .foregroundStyle(.primary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(width: 240, alignment: .leading)
-                    .padding(12)
-            }
-            .accessibilityLabel(Text(text))
-    }
-}
-
 /// A switch styled the one way switches are styled across Settings.
 private struct SettingsToggle: View {
     let title: String
@@ -109,21 +64,28 @@ private struct SettingsToggle: View {
     }
 
     var body: some View {
-        Toggle(isOn: $isOn) {
-            if let caption {
-                VStack(alignment: .leading, spacing: SettingsMetrics.captionSpacing) {
-                    Text(title)
+        // Spread the label and switch to the row's edges ourselves — outside a
+        // grouped `Form`, a `Toggle`'s label and knob hug together instead.
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: SettingsMetrics.captionSpacing) {
+                Text(title)
+                if let caption {
                     Text(caption)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-            } else {
-                Text(title)
             }
+            Spacer(minLength: 12)
+            Toggle("", isOn: $isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .tint(.accentColor)
+                .controlSize(.small)
+                .modifier(PointingHandCursor())
         }
-        .toggleStyle(.switch)
-        .tint(.accentColor)
-        .controlSize(.small)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
     }
 }
 
@@ -148,7 +110,18 @@ private struct WindowFrameReader: NSViewRepresentable {
 
     final class TrackingView: NSView {
         var onFrame: ((CGRect) -> Void)?
-        private func report() { if window != nil { onFrame?(convert(bounds, to: nil)) } }
+        private var lastReported: CGRect?
+        // Only emit when the window-space frame actually changes. report() runs on
+        // every layout() pass; the callback writes SwiftUI @State, so an
+        // unconditional emit re-renders → re-lays-out → re-emits, an infinite loop
+        // that pegs the main thread (and, here, freezes the app's CGEventTap).
+        private func report() {
+            guard window != nil else { return }
+            let frame = convert(bounds, to: nil)
+            guard frame != lastReported else { return }
+            lastReported = frame
+            onFrame?(frame)
+        }
         override func layout() { super.layout(); report() }
         override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); report() }
     }
@@ -167,6 +140,10 @@ private struct ClickOutsideDismiss: ViewModifier {
     func body(content: Content) -> some View {
         content
             .background(WindowFrameReader { frameInWindow = $0 })
+            // Install on appear too: a view that's conditionally rendered only
+            // while active (e.g. the History search field) is born with
+            // isActive == true, so onChange never fires for it.
+            .onAppear { if isActive { install() } }
             .onChange(of: isActive) { _, active in active ? install() : remove() }
             .onDisappear(perform: remove)
     }
@@ -206,30 +183,72 @@ private struct APIKeyField: View {
     let placeholder: String
     let linkTitle: String
     let linkURL: URL
+    /// Drives the field's verdict, all rendered against the field itself: a glyph
+    /// inside the trailing edge (spinner / green check / red ✗) and, for the error
+    /// states, a one-line message directly beneath it — never a separate row.
+    var validationState: APIKeyValidator.State = .idle
 
     @State private var isFocused = false
 
     var body: some View {
         LabeledContent {
-            RevealableSecureField(text: $text, placeholder: placeholder) { focused in
-                isFocused = focused
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    RevealableSecureField(text: $text, placeholder: placeholder) { focused in
+                        isFocused = focused
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    inlineStatus
+                }
+                .padding(.horizontal, 10)
+                .fieldSurface(focused: isFocused)
+
+                statusMessage
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 10)
-            .fieldSurface(focused: isFocused)
             .frame(width: 230)
         } label: {
             VStack(alignment: .leading, spacing: SettingsMetrics.captionSpacing) {
                 Text(title)
-                Link(destination: linkURL) {
-                    HStack(spacing: 3) {
-                        Text(linkTitle)
-                        Image(systemName: "arrow.up.right")
-                    }
-                }
-                .font(.caption)
-                .modifier(PointingHandCursor())
+                ExternalLink(title: linkTitle, url: linkURL)
             }
+        }
+    }
+
+    @ViewBuilder private var inlineStatus: some View {
+        switch validationState {
+        case .checking:
+            ProgressView().controlSize(.small)
+        case .verified:
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+                .help("Key verified")
+        case .invalidKey:
+            Image(systemName: "xmark.circle.fill")
+                .foregroundStyle(.red)
+                .help("Invalid key")
+        case .couldNotVerify:
+            Image(systemName: "exclamationmark.circle.fill")
+                .foregroundStyle(.orange)
+                .help("Couldn’t verify")
+        default:
+            EmptyView()
+        }
+    }
+
+    /// Spelled out directly under the field for the two error states; checking
+    /// and verified speak through the inline glyph alone.
+    @ViewBuilder private var statusMessage: some View {
+        switch validationState {
+        case .invalidKey:
+            Text("Invalid key")
+                .font(.caption).foregroundStyle(.red)
+                .fixedSize(horizontal: false, vertical: true)
+        case .couldNotVerify:
+            Text("Couldn’t verify — check your connection")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        default:
+            EmptyView()
         }
     }
 }
@@ -358,9 +377,954 @@ private final class RevealingTextField: NSTextField {
 
 struct SettingsView: View {
     @EnvironmentObject var settings: SettingsStore
+
+    /// Settings is organized into a small sidebar. Dictation holds the core
+    /// flow (activation, shortcut, microphone, transcription key); Polish is its
+    /// own rich, multi-state pane; General gathers app chrome, the OS permission
+    /// grants, and the lone Advanced toggle.
+    enum Pane: String, CaseIterable, Identifiable {
+        case general, dictation, polish
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .dictation: return "Dictation"
+            case .polish:    return "Polish"
+            case .general:   return "General"
+            }
+        }
+        var icon: String {
+            switch self {
+            case .dictation: return "mic"
+            case .polish:    return "wand.and.stars"
+            case .general:   return "gearshape"
+            }
+        }
+    }
+
+    @State private var pane: Pane? = .general
+
+    var body: some View {
+        NavigationSplitView {
+            List(Pane.allCases, selection: $pane) { p in
+                Label(p.title, systemImage: p.icon).tag(p)
+            }
+            .navigationSplitViewColumnWidth(min: 168, ideal: 184, max: 220)
+        } detail: {
+            Group {
+                switch pane ?? .dictation {
+                case .dictation:   DictationSettingsPane()
+                case .polish:      PolishSettingsView()
+                case .general:     GeneralSettingsPane()
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
+        .navigationSplitViewStyle(.balanced)
+    }
+}
+
+/// Settings as a popover: a seamless sidebar → detail layout in a fixed-size
+/// panel, opened from the Home gear button. There's no divider between the two
+/// columns and none under the detail header — sidebar and detail read as one
+/// warm sheet. Dismisses on the ✕, on Esc, or by clicking outside (the modal
+/// host handles click-out). A sidebar search field surfaces matching settings
+/// as editable controls in the detail. Reuses the existing panes so there's one
+/// source of truth for each.
+struct SettingsPopover: View {
+    @EnvironmentObject var settings: SettingsStore
+    @Binding var pane: SettingsView.Pane
+    let onClose: () -> Void
+
+    @StateObject private var search = SettingsSearch()
+
+    var body: some View {
+        HStack(spacing: 0) {
+            sidebar
+            detail
+        }
+        .frame(width: 840, height: 600)
+    }
+
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            SettingsSearchField(text: $search.query)
+                .padding(.top, 8)
+                .padding(.bottom, 10)
+
+            ForEach(SettingsView.Pane.allCases) { p in
+                // While searching, no pane is "current", so nothing reads as selected.
+                SidebarItem(pane: p, selected: !search.isSearching && pane == p) {
+                    search.query = ""
+                    pane = p
+                }
+            }
+            Spacer()
+            ExternalLink(
+                title: "Share feedback",
+                url: URL(string: "https://forms.gle/jXNtDsTaLt2rKQ8N9")!
+            )
+            .padding(.horizontal, 9)
+            .padding(.bottom, 4)
+        }
+        .padding(10)
+        .frame(width: 224)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(Color.canvas)
+    }
+
+    private var detail: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(search.isSearching ? "Search Results" : pane.title)
+                    .foregroundStyle(.primary)
+                    .font(.inkSheetTitle)
+                Spacer()
+                SettingsCloseButton(onClose: onClose)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 14)
+            .padding(.bottom, 6)
+
+            Group {
+                if search.isSearching {
+                    SettingsSearchResults(items: search.results())
+                } else {
+                    switch pane {
+                    case .dictation:   DictationSettingsPane()
+                    case .polish:      PolishSettingsView()
+                    case .general:     GeneralSettingsPane()
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            // Warm canvas behind the grouped Forms (each hides its own system
+            // scroll background) so Settings reads as the same paper as Home.
+            .background(Color.canvas)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // With no divider, a left gutter keeps the detail from crowding the
+        // sidebar — the breathing room the divider used to imply.
+        .padding(.leading, 20)
+    }
+
+}
+
+/// A single Settings sidebar row. Selected rows hold the amber soft-fill and stay
+/// put; unselected rows lift an 8% backdrop on hover — the same quiet treatment as
+/// the header chips elsewhere in the app.
+private struct SidebarItem: View {
+    let pane: SettingsView.Pane
+    let selected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: pane.icon)
+                    .font(.inkNav)
+                    .frame(width: 18)
+                Text(pane.title)
+                    .font(.inkNav)
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(selected ? Color.accentColor : .primary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 10)
+            // Selected row holds the amber fill; others lift the standard backdrop.
+            .hoverBackdrop(cornerRadius: Radius.control, isActive: selected)
+        }
+        .buttonStyle(.plain)
+        .modifier(PointingHandCursor())
+    }
+}
+
+/// The Settings ✕ in the top-right; carries the Esc shortcut so the keyboard path
+/// the old hidden button owned still works, and lifts the same hover backdrop as
+/// the rest of the icon-button family (26pt frame, radius 13 → a circle).
+private struct SettingsCloseButton: View {
+    let onClose: () -> Void
+
+    var body: some View {
+        // Reuse the shared icon ✕ and add the Esc path the old hidden button owned.
+        InkCloseButton(onClose: onClose, help: "Close settings")
+            .keyboardShortcut(.cancelAction)
+    }
+}
+
+// MARK: - Settings search
+
+/// Cross-pane Settings search: holds the live `query` and resolves it to the
+/// matching settings, which the detail renders inline as editable controls.
+final class SettingsSearch: ObservableObject {
+    @Published var query: String = ""
+
+    var isSearching: Bool {
+        !query.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    func results() -> [SettingsSearchItem] {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return [] }
+        return SettingsSearchItem.all.filter { $0.matches(q) }
+    }
+}
+
+/// One searchable setting: its display title, the pane it lives in, a stable
+/// `anchor` (the key the results view switches on to render the control), and
+/// extra keywords so a search finds it by intent ("mic" → Microphone) not just
+/// by its exact label.
+struct SettingsSearchItem: Identifiable {
+    let title: String
+    let pane: SettingsView.Pane
+    let anchor: String
+    let keywords: [String]
+
+    var id: String { anchor }
+
+    func matches(_ q: String) -> Bool {
+        if title.lowercased().contains(q) { return true }
+        return keywords.contains { $0.contains(q) }
+    }
+
+    static let all: [SettingsSearchItem] = [
+        .init(title: "Appearance", pane: .general, anchor: "general.appearance",
+              keywords: ["theme", "light", "dark", "system", "mode", "color", "look"]),
+        .init(title: "Launch InkIt at login", pane: .general, anchor: "general.login",
+              keywords: ["startup", "login", "launch", "open", "boot", "start", "auto", "sign in"]),
+        .init(title: "Activation", pane: .dictation, anchor: "general.activation",
+              keywords: ["activation", "hold", "toggle", "push to talk", "hands free", "tap", "mode"]),
+        .init(title: "Dictation shortcut", pane: .dictation, anchor: "general.hotkey",
+              keywords: ["hotkey", "shortcut", "key", "binding", "dictate", "fn", "trigger"]),
+        .init(title: "Sound on press and release", pane: .dictation, anchor: "general.sound",
+              keywords: ["sound", "feedback", "audio", "cue", "beep", "haptic"]),
+        .init(title: "Microphone", pane: .dictation, anchor: "general.microphone",
+              keywords: ["mic", "input", "device", "audio", "bluetooth", "airpods"]),
+        .init(title: "Cartesia API key", pane: .dictation, anchor: "general.cartesia",
+              keywords: ["transcription", "api", "key", "cartesia", "token", "credential"]),
+        .init(title: "Language", pane: .dictation, anchor: "general.language",
+              keywords: ["language", "english", "locale", "multilingual", "spanish", "french"]),
+        .init(title: "Debug logging", pane: .general, anchor: "general.debug",
+              keywords: ["advanced", "log", "trace", "debug", "diagnostics"]),
+        .init(title: "Polish transcripts", pane: .polish, anchor: "polish.toggle",
+              keywords: ["polish", "rewrite", "clean", "fillers", "punctuation", "ai", "tidy"]),
+        .init(title: "AI provider", pane: .polish, anchor: "polish.provider",
+              keywords: ["provider", "groq", "openai", "gemini", "anthropic", "model", "ai", "llm"]),
+        .init(title: "Polish API key", pane: .polish, anchor: "polish.key",
+              keywords: ["api", "key", "provider", "token", "credential", "llm"]),
+        .init(title: "Microphone permission", pane: .general, anchor: "perm.mic",
+              keywords: ["microphone", "mic", "permission", "privacy", "access"]),
+        .init(title: "Accessibility permission", pane: .general, anchor: "perm.accessibility",
+              keywords: ["accessibility", "permission", "privacy", "type", "paste", "control"]),
+    ]
+}
+
+/// The sidebar search field: magnifying glass, plain text entry, and a clear
+/// button once there's text. Taller than the shared field surface, with its own
+/// rounded background, and it gives up focus on any click outside it (otherwise
+/// the caret keeps blinking after you click away — a SwiftUI `Form`/window quirk
+/// where clicks elsewhere don't resign first responder).
+private struct SettingsSearchField: View {
+    @Binding var text: String
+    @FocusState private var focused: Bool
+
+    private let height: CGFloat = 36
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 13, weight: .medium))  // ds-allow: icon
+                .foregroundStyle(.secondary)
+            TextField("Search settings", text: $text)
+                .textFieldStyle(.plain)
+                .focused($focused)
+            if !text.isEmpty {
+                Button { text = "" } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 13))  // ds-allow: icon
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .modifier(PointingHandCursor())
+                .accessibilityLabel("Clear search")
+            }
+        }
+        .padding(.horizontal, 10)
+        .frame(height: height)
+        .background(
+            RoundedRectangle(cornerRadius: Radius.button, style: .continuous)
+                .fill(SettingsMetrics.fieldBackground)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Radius.button, style: .continuous)
+                .stroke(
+                    focused ? Color.accentColor : SettingsMetrics.fieldBorder,
+                    lineWidth: focused ? SettingsMetrics.fieldFocusBorderWidth : SettingsMetrics.fieldBorderWidth
+                )
+        )
+        // Click anywhere outside the field → drop the caret. Without this the
+        // text field stays first responder and keeps blinking.
+        .dismissOnClickOutside(isActive: focused) { focused = false }
+    }
+}
+
+/// The search results shown in the detail while searching. Rather than redirect
+/// to a pane, it renders each matching setting's *actual* control inline, grouped
+/// under its pane, so it can be edited right here. The stateful rows reuse the
+/// same extracted components as the panes (CartesiaKeyField / PolishKeyField /
+/// MicrophonePickerRow), so behavior stays identical; the rest are plain bindings
+/// to the shared `SettingsStore`.
+private struct SettingsSearchResults: View {
+    let items: [SettingsSearchItem]
+
+    @EnvironmentObject var settings: SettingsStore
     @StateObject private var permissions = PermissionsService.shared
 
-    private var llmKeyBinding: Binding<String> {
+    /// Matches grouped by pane, preserving the canonical pane and within-pane
+    /// order from `SettingsSearchItem.all`.
+    private var grouped: [(pane: SettingsView.Pane, matches: [SettingsSearchItem])] {
+        SettingsView.Pane.allCases.compactMap { pane in
+            let matches = items.filter { $0.pane == pane }
+            return matches.isEmpty ? nil : (pane, matches)
+        }
+    }
+
+    private var polishMasterBinding: Binding<Bool> {
+        Binding(
+            get: { settings.polishUIState == .on },
+            set: { on in on ? (settings.correctionEnabled = true) : settings.pausePolish() }
+        )
+    }
+
+    var body: some View {
+        if items.isEmpty {
+            VStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 22, weight: .regular))  // ds-allow: icon
+                    .foregroundStyle(.tertiary)
+                Text("No matching settings")
+                    .font(.inkBody)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            SettingsStack {
+                ForEach(grouped, id: \.pane) { group in
+                    SettingsGroup {
+                        ForEach(group.matches) { item in
+                            row(for: item.anchor)
+                        }
+                    } header: {
+                        Text(group.pane.title).settingsSectionHeader()
+                    }
+                }
+            }
+            .onAppear { permissions.startPolling() }
+            .onDisappear { permissions.stopPolling() }
+        }
+    }
+
+    @ViewBuilder private func row(for anchor: String) -> some View {
+        switch anchor {
+        case "general.appearance":
+            AppearanceCardPicker(selection: $settings.appearance)
+        case "general.login":
+            SettingsToggle("Launch InkIt at login", isOn: $settings.launchAtLogin)
+        case "general.activation":
+            ActivationModeCardPicker(mode: $settings.dictationMode)
+        case "general.hotkey":
+            HotkeyRecorder().environmentObject(settings)
+        case "general.sound":
+            SettingsToggle("Play sound on press and release", isOn: $settings.playFeedbackSounds)
+        case "general.microphone":
+            MicrophonePickerRow()
+        case "general.cartesia":
+            CartesiaKeyField()
+        case "general.language":
+            LanguageRow()
+        case "general.debug":
+            SettingsToggle(
+                "Debug logging",
+                caption: "Writes a developer trace to ~/Library/Logs/InkIt-debug.log.",
+                isOn: $settings.debugLoggingEnabled
+            )
+        case "polish.toggle":
+            SettingsToggle(
+                "Polish transcripts",
+                caption: "Cleans up fillers, punctuation, and misheard words",
+                isOn: polishMasterBinding
+            )
+        case "polish.provider":
+            LabeledContent("Provider") {
+                Picker("", selection: $settings.rewriteProvider) {
+                    ForEach(LLMProvider.allCases) { p in
+                        Text(p.isRecommended ? "\(p.displayName) (Recommended)" : p.displayName).tag(p)
+                    }
+                }
+                .labelsHidden()
+                .modifier(PointingHandCursor())
+            }
+            LabeledContent("Model", value: settings.rewriteModel)
+        case "polish.key":
+            PolishKeyField()
+        case "perm.mic":
+            PermissionRow(label: "Microphone",
+                          subtitle: "So InkIt can hear you",
+                          granted: permissions.hasMicrophone) {
+                permissions.requestMicrophone { _ in }
+            }
+        case "perm.accessibility":
+            PermissionRow(label: "Accessibility",
+                          subtitle: "So InkIt can type for you",
+                          granted: permissions.hasAccessibility) {
+                permissions.requestAccessibility()
+            }
+        default:
+            EmptyView()
+        }
+    }
+}
+
+private extension View {
+    /// Section-header styling for Settings: a small, muted label that sits
+    /// quietly above its card, instead of the bold near-black default that
+    /// grouped `Form` headers ship with. Sentence case, never uppercased.
+    func settingsSectionHeader() -> some View {
+        font(.inkSectionHeader)
+            .foregroundStyle(.secondary)
+            .textCase(nil)
+    }
+}
+
+// MARK: - Grouped settings layout
+//
+// Replaces SwiftUI's `.formStyle(.grouped)`. The native grouped section
+// background lands *below* `Color.canvas`, so every section read as a sunken
+// well — the chrome inverted, content felt recessed instead of raised. These
+// primitives put each section on `Color.lift` with a hairline (no shadow): one
+// calm step *above* the canvas, in line with the app's surface ladder
+// (canvas → surface → lift → card). See DESIGN_SYSTEM.md › Color and
+// prototypes/settings-surface-elevation.html.
+
+/// Spreads a `LabeledContent`'s label to the leading edge and its control to the
+/// trailing edge — the label-left / control-right row a grouped `Form` gave us for
+/// free, restored now that Settings rows live on the custom `SettingsCard` surface
+/// instead of inside a `Form` (which otherwise packs the two together on the left).
+/// Applied once at the `SettingsStack` level so every row shares the one pattern:
+/// API-key fields, the provider/microphone pickers, the hotkey recorder, and the
+/// permission buttons. The activation-mode and appearance pickers are full-width
+/// card pickers, not `LabeledContent`, so they stay full-width — the two intended
+/// exceptions.
+private struct SettingsRowLabeledContentStyle: LabeledContentStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 12) {
+            configuration.label
+            Spacer(minLength: 12)
+            configuration.content
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private extension LabeledContentStyle where Self == SettingsRowLabeledContentStyle {
+    static var settingsRow: SettingsRowLabeledContentStyle { .init() }
+}
+
+/// Scrolling column of sections on the warm canvas. Drop-in replacement for
+/// `Form { … }.formStyle(.grouped).scrollContentBackground(.hidden)`.
+private struct SettingsStack<Content: View>: View {
+    @ViewBuilder var content: Content
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                content
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
+            .padding(.bottom, 28)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            // Restore the label-left / control-right row the grouped Form gave us;
+            // every LabeledContent in the panes and search inherits it from here.
+            .labeledContentStyle(.settingsRow)
+        }
+        .background(Color.canvas)
+    }
+}
+
+/// The `lift` card a group's rows sit on: hairline border, no shadow, rows split
+/// by leading-inset hairline dividers — the macOS grouped inset, recolored to the
+/// app's paper. Auto-divides whatever rows it's handed.
+private struct SettingsCard<Content: View>: View {
+    @ViewBuilder var content: Content
+    var body: some View {
+        _VariadicView.Tree(SettingsRows()) { content }
+            .background(
+                RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
+                    .fill(Color.lift)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
+                    .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
+            )
+    }
+}
+
+/// Lays each row with the shared inset and drops a hairline between rows (never
+/// after the last). `_VariadicView` is what lets a `SettingsCard { rowA; rowB }`
+/// call site read like a `Section` while we own the divider + padding.
+private struct SettingsRows: _VariadicView.MultiViewRoot {
+    @ViewBuilder func body(children: _VariadicView.Children) -> some View {
+        let last = children.last?.id
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(children) { child in
+                child
+                    .padding(.horizontal, 15)
+                    .padding(.vertical, 11)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if child.id != last {
+                    Divider().padding(.leading, 15)
+                }
+            }
+        }
+    }
+}
+
+/// A muted header above a `lift` card — the standard section. Mirrors
+/// `Section(content:header:)` so call sites read the same.
+private struct SettingsGroup<Header: View, Content: View>: View {
+    @ViewBuilder var content: Content
+    @ViewBuilder var header: Header
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            header
+            SettingsCard { content }
+        }
+    }
+}
+
+/// A header above bare content with no card chrome — for sections whose content
+/// is already a self-contained surface (the activation / appearance card pickers
+/// bring their own `lift` cards, so wrapping them in another would be lift-on-lift).
+private struct SettingsPlainGroup<Header: View, Content: View>: View {
+    @ViewBuilder var content: Content
+    @ViewBuilder var header: Header
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            header
+            content
+        }
+    }
+}
+
+/// Dictation pane — the core flow: how you trigger dictation (activation mode,
+/// shortcut), what it listens to (microphone), and what powers transcription
+/// (the Cartesia key + language). The settings a user actually configures to
+/// dictate, gathered under one purpose-named tab.
+private struct DictationSettingsPane: View {
+    @EnvironmentObject var settings: SettingsStore
+
+    var body: some View {
+        SettingsStack {
+            SettingsPlainGroup {
+                ActivationModeCardPicker(mode: $settings.dictationMode)
+            } header: {
+                Text("Activation mode").settingsSectionHeader()
+            }
+
+            SettingsGroup {
+                HotkeyRecorder()
+                    .environmentObject(settings)
+                SettingsToggle("Play sound on press and release", isOn: $settings.playFeedbackSounds)
+            } header: {
+                Text("Shortcut").settingsSectionHeader()
+            }
+
+            MicrophoneSection()
+
+            SettingsGroup {
+                CartesiaKeyField()
+                LanguageRow()
+            } header: {
+                Text("Transcription").settingsSectionHeader()
+            }
+        }
+        .navigationTitle("Dictation")
+    }
+}
+
+/// General pane — app chrome (appearance, launch behavior), the OS permission
+/// grants, and the lone Advanced (debug) toggle. Everything that isn't the
+/// dictation flow or Polish. Permissions live here (rather than a dedicated
+/// tab) because they're two static rows once granted; onboarding and the Home
+/// status cards still surface a missing grant, and search finds them directly.
+private struct GeneralSettingsPane: View {
+    @EnvironmentObject var settings: SettingsStore
+    @StateObject private var permissions = PermissionsService.shared
+
+    var body: some View {
+        SettingsStack {
+            SettingsPlainGroup {
+                AppearanceCardPicker(selection: $settings.appearance)
+            } header: {
+                Text("Appearance").settingsSectionHeader()
+            }
+
+            SettingsGroup {
+                SettingsToggle("Launch InkIt at login", isOn: $settings.launchAtLogin)
+            } header: {
+                Text("Behavior").settingsSectionHeader()
+            }
+
+            SettingsGroup {
+                PermissionRow(label: "Microphone",
+                              subtitle: "So InkIt can hear you",
+                              granted: permissions.hasMicrophone) {
+                    permissions.requestMicrophone { _ in }
+                }
+                PermissionRow(label: "Accessibility",
+                              subtitle: "So InkIt can type for you",
+                              granted: permissions.hasAccessibility) {
+                    permissions.requestAccessibility()
+                }
+            } header: {
+                Text("Permissions").settingsSectionHeader()
+            }
+
+            SettingsGroup {
+                SettingsToggle(
+                    "Debug logging",
+                    caption: "Writes a developer trace to ~/Library/Logs/InkIt-debug.log.",
+                    isOn: $settings.debugLoggingEnabled
+                )
+            } header: {
+                Text("Advanced").settingsSectionHeader()
+            }
+        }
+        .navigationTitle("General")
+        .onAppear {
+            settings.syncLaunchAtLoginFromSystem()
+            permissions.startPolling()
+        }
+        .onDisappear { permissions.stopPolling() }
+    }
+}
+
+/// Activation-mode chooser as two selectable cards, side by side — each shows
+/// the mode name and its one-line gesture, so the two options can be compared
+/// at a glance and picked directly (the same card pattern as Appearance).
+/// Shared by the General pane and search.
+private struct ActivationModeCardPicker: View {
+    @Binding var mode: DictationMode
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            ForEach(DictationMode.allCases) { m in
+                ActivationModeCard(mode: m, isSelected: mode == m) { mode = m }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+private struct ActivationModeCard: View {
+    let mode: DictationMode
+    let isSelected: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 7) {
+                    Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
+                        .font(.system(size: 14))  // ds-allow: icon
+                        .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                    Text(mode.displayName)
+                        .font(.inkCalloutEmphasized)
+                        .foregroundStyle(.primary)
+                    Spacer(minLength: 0)
+                }
+                Text(mode.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(12)
+            // Fill the tallest card's height so both cards match even when one
+            // description wraps to two lines and the other to one.
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(
+                RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
+                    // `lift`, not white `card`, so the activation cards match the
+                    // grouped section surfaces and the whole pane reads as one
+                    // ladder above the canvas (DESIGN_SYSTEM.md › Color).
+                    .fill(Color.lift)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
+                    // On hover an unselected card firms its border so it reads as
+                    // pickable; the selected card keeps its amber outline.
+                    .stroke(Hover.cardBorder(isSelected: isSelected, hovering: hovering),
+                            lineWidth: isSelected ? 2 : 1)
+            )
+            .shadow(color: hovering && !isSelected ? Elevation.hover : .clear,
+                    radius: 5, y: 2)
+        }
+        .buttonStyle(.plain)
+        .contentShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+        .onHover { hovering = $0 }
+        .animation(Hover.animation, value: hovering)
+        .modifier(PointingHandCursor())
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+    }
+}
+
+/// The transcription-language row. Read-only today — Cartesia STT is
+/// English-only — with the note as subtext directly under the label (no
+/// divider between value and note). Becomes a real picker when more languages
+/// ship. Shared by the General pane and search.
+private struct LanguageRow: View {
+    var body: some View {
+        LabeledContent {
+            Text("English").foregroundStyle(.secondary)
+        } label: {
+            VStack(alignment: .leading, spacing: SettingsMetrics.captionSpacing) {
+                Text("Language")
+                Text("English-only for now. More languages coming soon.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+/// The Cartesia transcription-key field: shares the redacted `APIKeyField` and
+/// owns the validator that drives its inline verdict. Extracted so the General
+/// pane and search results render the identical, self-validating control.
+private struct CartesiaKeyField: View {
+    @EnvironmentObject var settings: SettingsStore
+    @StateObject private var validator = CartesiaKeyValidator()
+
+    var body: some View {
+        APIKeyField(
+            title: "Cartesia API key",
+            text: $settings.cartesiaAPIKey,
+            placeholder: "sk_car_…",
+            linkTitle: "Get your free Cartesia API key",
+            linkURL: URL(string: "https://play.cartesia.ai/keys")!,
+            validationState: validator.state
+        )
+        .onAppear { validator.keyChanged(settings.cartesiaAPIKey) }
+        .onChange(of: settings.cartesiaAPIKey) { _, key in validator.keyChanged(key) }
+    }
+}
+
+/// Microphone picker for the General pane. Lets the user *pin* a specific input
+/// device for dictation instead of inheriting whatever macOS routes to — the fix
+/// for AirPods/Bluetooth silently hijacking the mic and degrading transcription.
+/// "System default" follows macOS; any other choice is honored at record time,
+/// with a graceful fallback to the default if the pinned device is unplugged
+/// (surfaced here as the "unavailable" caption). See AudioCaptureService.
+private struct MicrophoneSection: View {
+    var body: some View {
+        SettingsGroup {
+            MicrophonePickerRow()
+        } header: {
+            Text("Microphone").settingsSectionHeader()
+        }
+    }
+}
+
+/// The microphone input-device picker and its advisory caption, extracted so it
+/// can render both in the General pane and inline in search results. Owns its own
+/// device manager (each mount starts/stops its own polling).
+private struct MicrophonePickerRow: View {
+    @EnvironmentObject var settings: SettingsStore
+    @StateObject private var devices = AudioDeviceManager()
+
+    /// The pinned UID is set but no attached device matches it — we're falling
+    /// back to the system default until it's reconnected.
+    private var pinnedButMissing: Bool {
+        !settings.preferredInputDeviceUID.isEmpty
+            && !devices.devices.contains { $0.uid == settings.preferredInputDeviceUID }
+    }
+
+    /// The currently selected device, when present and pinned.
+    private var selectedDevice: AudioInputDevice? {
+        devices.devices.first { $0.uid == settings.preferredInputDeviceUID }
+    }
+
+    var body: some View {
+        // One row block: label-left / picker-right (spread via LabeledContent,
+        // since we're outside a grouped Form), with the advisory caption tucked
+        // beneath so no hairline divides it from the picker it explains.
+        VStack(alignment: .leading, spacing: 6) {
+            LabeledContent("Input device") {
+                Picker("", selection: $settings.preferredInputDeviceUID) {
+                    Text("System default").tag("")
+                    Divider()
+                    ForEach(devices.devices) { device in
+                        Text(device.isBluetooth ? "\(device.name) (Bluetooth)" : device.name)
+                            .tag(device.uid)
+                    }
+                }
+                .labelsHidden()
+                .modifier(PointingHandCursor())
+            }
+
+            if let caption {
+                Text(caption)
+                    .font(.caption)
+                    .foregroundStyle(captionIsWarning ? Color.orange : .secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .onAppear { devices.start() }
+        .onDisappear { devices.stop() }
+    }
+
+    private var captionIsWarning: Bool {
+        pinnedButMissing || (selectedDevice?.isBluetooth ?? false)
+    }
+
+    private var caption: String? {
+        if pinnedButMissing {
+            return "Pinned mic isn’t connected — using the system default until it’s back"
+        }
+        if selectedDevice?.isBluetooth ?? false {
+            return "Bluetooth mics use a narrowband profile that can lower transcription accuracy. A wired or built-in mic usually works better"
+        }
+        return nil
+    }
+}
+
+// MARK: - Polish pane
+
+/// The "Polish" settings pane. The key is the switch: with no key it's a setup
+/// screen (no toggle); a valid key turns polish on. Four honest states —
+/// setup / on / paused / key-broken — so it never silently pastes raw while
+/// claiming to be on. Provider defaults to Groq (recommended) but any of the
+/// supported providers works. See prototypes/polish-settings-sidebar.html.
+struct PolishSettingsView: View {
+    @EnvironmentObject var settings: SettingsStore
+
+    /// Master on/off as the user sees it: only truly "on" when running. Turning
+    /// it off pauses (keeps the key); turning it on resumes if the key is good.
+    private var masterBinding: Binding<Bool> {
+        Binding(
+            get: { settings.polishUIState == .on },
+            set: { on in on ? (settings.correctionEnabled = true) : settings.pausePolish() }
+        )
+    }
+
+    var body: some View {
+        SettingsStack {
+            switch settings.polishUIState {
+            case .setup:     setupSections
+            case .on:        configuredSections(paused: false, broken: false)
+            case .paused:    configuredSections(paused: true, broken: false)
+            case .keyBroken: configuredSections(paused: false, broken: true)
+            }
+        }
+        .navigationTitle("Polish")
+    }
+
+    // MARK: Setup (no key)
+
+    @ViewBuilder private var setupSections: some View {
+        SettingsGroup {
+            providerPicker
+            modelRow
+            keyField
+        } header: {
+            // Same muted section-header treatment as every other pane, with the
+            // one-line explainer beneath it — so the setup header doesn't read as
+            // a heavier, different-scale title than the rest of Settings.
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Turn on Polish").settingsSectionHeader()
+                Text("Cleans up fillers, punctuation, and misheard words")
+                    .font(.caption).foregroundStyle(.secondary).textCase(nil)
+            }
+            .padding(.bottom, 2)
+        }
+    }
+
+    // MARK: Configured (on / paused / key-broken)
+
+    @ViewBuilder private func configuredSections(paused: Bool, broken: Bool) -> some View {
+        if broken {
+            SettingsCard {
+                Label {
+                    Text("Polish is paused. Your key stopped working. Transcripts are pasting unchanged. Re-enter a key to resume.")
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                }
+                .font(.callout)
+            }
+        }
+
+        SettingsGroup {
+            SettingsToggle(
+                "Polish transcripts",
+                caption: "Cleans up fillers, punctuation, and misheard words",
+                isOn: masterBinding
+            )
+            .disabled(broken)   // in the broken state the fix is re-entering the key below
+        } header: {
+            Text("Polish").settingsSectionHeader()
+        }
+
+        // Always expanded: the provider dropdown and key field are live at all
+        // times, so switching providers or pasting a new key is one click away —
+        // no Change/Done round-trip, no collapsed summary to expand first.
+        SettingsGroup {
+            providerPicker
+            modelRow
+            keyField
+        } header: {
+            Text("Choose your AI").settingsSectionHeader()
+        }
+    }
+
+    // MARK: Shared rows
+
+    private var providerPicker: some View {
+        // Spread label / popup to the row edges (LabeledContent), as we're no
+        // longer inside a grouped Form that would do it automatically.
+        LabeledContent("Provider") {
+            Picker("", selection: $settings.rewriteProvider) {
+                ForEach(LLMProvider.allCases) { p in
+                    Text(p.isRecommended ? "\(p.displayName) (Recommended)" : p.displayName).tag(p)
+                }
+            }
+            .labelsHidden()
+            .modifier(PointingHandCursor())
+        }
+    }
+
+    private var keyField: some View {
+        PolishKeyField()
+    }
+
+    /// The curated model for the selected provider — shown read-only (one model
+    /// per provider today; the picker returns automatically if that changes).
+    private var modelRow: some View {
+        LabeledContent("Model", value: settings.rewriteModel)
+    }
+}
+
+/// The Polish provider key field. Owns the LLM validator and the policy that a
+/// verified key is the commit — it turns Polish on from setup or resumes it from
+/// a broken key (never auto-resuming a deliberate pause), and keeps the validator
+/// pointed at the current provider/key. Extracted so the Polish pane and search
+/// results share one self-contained, self-enabling control.
+private struct PolishKeyField: View {
+    @EnvironmentObject var settings: SettingsStore
+    @StateObject private var validator = LLMKeyValidator(provider: SettingsStore.shared.rewriteProvider)
+
+    private var keyBinding: Binding<String> {
         Binding(
             get: { settings.apiKey(for: settings.rewriteProvider) },
             set: { settings.setAPIKey($0, for: settings.rewriteProvider) }
@@ -368,127 +1332,34 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        Form {
-            Section {
-                AppearanceCardPicker(selection: $settings.appearance)
-            } header: {
-                SectionHeader(
-                    "Appearance",
-                    help: "Choose how InkIt looks. System follows your Mac’s appearance automatically."
-                )
-            }
-
-            Section {
-                APIKeyField(
-                    title: "Cartesia API key",
-                    text: $settings.cartesiaAPIKey,
-                    placeholder: "sk_car_…",
-                    linkTitle: "Get your Cartesia API key",
-                    linkURL: URL(string: "https://play.cartesia.ai/keys")!
-                )
-            } header: {
-                SectionHeader(
-                    "API key",
-                    help: "Your Cartesia key powers ink-2 speech-to-text. It’s stored locally on this Mac and only sent to Cartesia."
-                )
-            }
-
-            Section {
-                HotkeyRecorder()
-                    .environmentObject(settings)
-                SettingsToggle("Play sound on press and release", isOn: $settings.playFeedbackSounds)
-            } header: {
-                SectionHeader(
-                    "Hotkey",
-                    help: "Hold this shortcut to dictate; release to transcribe and paste. Pick any key with a modifier, or use Fn."
-                )
-            }
-
-            Section {
-                SettingsToggle(
-                    "Polish transcripts",
-                    caption: "Cleans up dictation with an LLM before pasting.",
-                    isOn: $settings.correctionEnabled
-                )
-
-                if settings.correctionEnabled {
-                    SettingsToggle(
-                        "Use screen context",
-                        caption: "Reads the focused app to fix names and identifiers.",
-                        isOn: $settings.screenContextEnabled
-                    )
-
-                    Picker("Provider", selection: $settings.rewriteProvider) {
-                        ForEach(LLMProvider.allCases) { provider in
-                            Text(provider.displayName).tag(provider)
-                        }
-                    }
-                    .onChange(of: settings.rewriteProvider) { _, newProvider in
-                        if !newProvider.models.contains(settings.rewriteModel) {
-                            settings.rewriteModel = newProvider.defaultModel
-                        }
-                    }
-
-                    // With a single curated model per provider the picker is
-                    // just a one-item dropdown, so show the model as a label.
-                    // The picker reappears automatically if a provider regains
-                    // multiple models.
-                    if settings.rewriteProvider.models.count > 1 {
-                        Picker("Model", selection: $settings.rewriteModel) {
-                            ForEach(settings.rewriteProvider.models, id: \.self) { model in
-                                Text(model).tag(model)
-                            }
-                        }
-                    } else {
-                        LabeledContent("Model", value: settings.rewriteModel)
-                    }
-
-                    APIKeyField(
-                        title: "\(settings.rewriteProvider.displayName) API key",
-                        text: llmKeyBinding,
-                        placeholder: settings.rewriteProvider.keyPlaceholder,
-                        linkTitle: "Get your \(settings.rewriteProvider.displayName) API key",
-                        linkURL: settings.rewriteProvider.keyURL
-                    )
-                }
-            } header: {
-                SectionHeader(
-                    "AI correction",
-                    help: "Optionally run your transcript through an LLM to fix punctuation, filler words, and names before it’s pasted. Uses your own provider key."
-                )
-            }
-
-            Section {
-                PermissionRow(label: "Microphone", granted: permissions.hasMicrophone) {
-                    permissions.requestMicrophone { _ in }
-                }
-                PermissionRow(label: "Accessibility", granted: permissions.hasAccessibility) {
-                    permissions.requestAccessibility()
-                }
-            } header: {
-                SectionHeader(
-                    "Permissions",
-                    help: "InkIt needs the microphone to record dictation, and Accessibility to read on-screen context and paste into the focused app."
-                )
-            }
-
-            Section {
-                SettingsToggle(
-                    "Debug logging",
-                    caption: "Writes a developer trace to ~/Library/Logs/InkIt-debug.log. Off by default — traces include your transcripts and on-screen context.",
-                    isOn: $settings.debugLoggingEnabled
-                )
-            } header: {
-                SectionHeader(
-                    "Advanced",
-                    help: "Enable only when reproducing a bug. The log stays on disk until you delete it."
-                )
+        APIKeyField(
+            title: "API key",
+            text: keyBinding,
+            placeholder: settings.rewriteProvider.keyPlaceholder,
+            linkTitle: "Get your \(settings.rewriteProvider.displayName) API key",
+            linkURL: settings.rewriteProvider.keyURL,
+            validationState: validator.state
+        )
+        .onAppear {
+            validator.setProvider(settings.rewriteProvider)
+            validator.keyChanged(settings.apiKey(for: settings.rewriteProvider))
+        }
+        .onChange(of: settings.rewriteProvider) { _, p in
+            if !p.models.contains(settings.rewriteModel) { settings.rewriteModel = p.defaultModel }
+            validator.setProvider(p)
+            validator.keyChanged(settings.apiKey(for: p))
+        }
+        .onChange(of: settings.llmAPIKeys) { _, _ in
+            validator.keyChanged(settings.apiKey(for: settings.rewriteProvider))
+        }
+        .onChange(of: validator.state) { _, state in
+            guard state == .verified else { return }
+            switch settings.polishUIState {
+            case .setup, .keyBroken:
+                settings.enablePolish(provider: settings.rewriteProvider)
+            default: break
             }
         }
-        .formStyle(.grouped)
-        .padding()
-        .onAppear { permissions.startPolling() }
-        .onDisappear { permissions.stopPolling() }
     }
 }
 
@@ -521,6 +1392,7 @@ private struct AppearanceCard: View {
     let preference: AppearancePreference
     let isSelected: Bool
     let action: () -> Void
+    @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
@@ -528,15 +1400,16 @@ private struct AppearanceCard: View {
                 AppearanceThumbnail(style: thumbnailStyle)
                     .frame(height: 64)
                     .frame(maxWidth: .infinity)
-                    .clipShape(RoundedRectangle(cornerRadius: 9))
+                    .clipShape(RoundedRectangle(cornerRadius: Radius.button))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 9)
-                            .stroke(
-                                isSelected ? Color.accentColor : Color(nsColor: .separatorColor),
-                                lineWidth: isSelected ? 2 : 1
-                            )
+                        RoundedRectangle(cornerRadius: Radius.button)
+                            // Firm the border on hover so an unselected swatch
+                            // reads as pickable; selected keeps its amber outline.
+                            .stroke(Hover.cardBorder(isSelected: isSelected, hovering: hovering),
+                                    lineWidth: isSelected ? 2 : 1)
                     )
-                    .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
+                    .shadow(color: hovering && !isSelected ? Elevation.lifted : Elevation.card,
+                            radius: 2, y: 1)
 
                 HStack(spacing: 5) {
                     Circle()
@@ -557,6 +1430,8 @@ private struct AppearanceCard: View {
         }
         .buttonStyle(.plain)
         .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .animation(Hover.animation, value: hovering)
         .modifier(PointingHandCursor())
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
@@ -571,16 +1446,21 @@ private struct AppearanceCard: View {
 }
 
 /// A tiny window mock used inside an `AppearanceCard`: traffic-light dots and a
-/// few text lines, one of them the indigo accent. The `.system` style splits
-/// the canvas diagonally between the light and dark surfaces.
+/// few text lines, one of them the amber accent. The `.system` style splits the
+/// canvas diagonally between the light and dark surfaces.
+///
+/// These are the one place raw literals are correct, not a smell: each card must
+/// show *both* appearances at once regardless of the active mode, so they can't
+/// resolve a single appearance-aware token. The values mirror the warm-paper
+/// `HomeCanvas` token (light + dark) so the preview reads as the real app.
 private struct AppearanceThumbnail: View {
     enum Style { case light, dark, system }
     let style: Style
 
-    private let lightSurface = Color(red: 0.945, green: 0.945, blue: 0.957)
-    private let darkSurface  = Color(red: 0.12, green: 0.12, blue: 0.13)
-    private let lightLine    = Color(red: 0.79, green: 0.79, blue: 0.82)
-    private let darkLine      = Color(red: 0.29, green: 0.29, blue: 0.31)
+    private let lightSurface = Color(red: 0.910, green: 0.902, blue: 0.886)  // HomeCanvas light — ds-allow: dual-appearance preview
+    private let darkSurface  = Color(red: 0.118, green: 0.110, blue: 0.102)  // HomeCanvas dark — ds-allow: dual-appearance preview
+    private let lightLine    = Color(red: 0.80, green: 0.79, blue: 0.76)  // ds-allow: dual-appearance preview
+    private let darkLine     = Color(red: 0.29, green: 0.28, blue: 0.26)  // ds-allow: dual-appearance preview
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -606,16 +1486,16 @@ private struct AppearanceThumbnail: View {
         case .light:  return lightLine
         case .dark:   return darkLine
         // Mid gray reads on both halves of the split.
-        case .system: return Color(white: 0.55)
+        case .system: return Color(white: 0.55)  // ds-allow: dual-appearance preview
         }
     }
 
     private var content: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 3) {
-                Circle().fill(Color(red: 1, green: 0.37, blue: 0.34)).frame(width: 5, height: 5)
-                Circle().fill(Color(red: 1, green: 0.74, blue: 0.18)).frame(width: 5, height: 5)
-                Circle().fill(Color(red: 0.16, green: 0.78, blue: 0.25)).frame(width: 5, height: 5)
+                Circle().fill(Color(red: 1, green: 0.37, blue: 0.34)).frame(width: 5, height: 5)  // ds-allow: dual-appearance preview
+                Circle().fill(Color(red: 1, green: 0.74, blue: 0.18)).frame(width: 5, height: 5)  // ds-allow: dual-appearance preview
+                Circle().fill(Color(red: 0.16, green: 0.78, blue: 0.25)).frame(width: 5, height: 5)  // ds-allow: dual-appearance preview
             }
             .padding(.bottom, 2)
             Capsule().fill(lineColor).frame(width: 38, height: 4)
@@ -641,21 +1521,29 @@ private struct DiagonalSplit: Shape {
 
 struct PermissionRow: View {
     let label: String
+    var subtitle: String? = nil
     let granted: Bool
     let action: () -> Void
     var body: some View {
         LabeledContent {
             if granted {
-                Text("Granted")
+                Text("Enabled")
                     .foregroundStyle(.secondary)
             } else {
-                Button("Request") { action() }
-                    .buttonStyle(.bordered)
+                Button("Enable") { action() }
+                    .buttonStyle(InkButtonStyle(compact: true))
                     .modifier(PointingHandCursor())
             }
         } label: {
             Label {
-                Text(label)
+                VStack(alignment: .leading, spacing: SettingsMetrics.captionSpacing) {
+                    Text(label)
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             } icon: {
                 Image(systemName: granted ? "checkmark.circle.fill" : "exclamationmark.circle")
                     .foregroundStyle(granted ? .green : .orange)
@@ -707,7 +1595,7 @@ struct HotkeyRecorder: View {
                 .dismissOnClickOutside(isActive: isEditing) { cancelEditing() }
             } label: {
                 VStack(alignment: .leading, spacing: SettingsMetrics.captionSpacing) {
-                    Text("Shortcut")
+                    Text("Hotkey")
                     Text(shortcutDescription)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -748,8 +1636,10 @@ struct HotkeyRecorder: View {
     }
 
     private var shortcutDescription: String {
-        if isEditing { return "Press a new shortcut." }
-        return "Hold to dictate."
+        if isEditing { return "Press a new shortcut" }
+        // The gesture is explained by the Activation mode cards above; here the
+        // caption just says what this key is, so the two don't repeat.
+        return "Your dictation shortcut, active in any app"
     }
 
     private var shortcutTokens: [String] {
@@ -1014,7 +1904,7 @@ private struct ShortcutCaptureField: View {
                 Spacer(minLength: 12)
 
                 Image(systemName: "pencil")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))  // ds-allow: icon
                     .foregroundStyle(Color.secondary)
             }
         }
@@ -1029,16 +1919,16 @@ private struct ShortcutKeycap: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 12.5, weight: .medium))
+            .font(.inkSectionHeader)
             .foregroundStyle(.primary)
             .padding(.horizontal, 7)
             .frame(minWidth: 28, minHeight: 22)
             .background(
-                RoundedRectangle(cornerRadius: 5)
-                    .fill(Color(nsColor: .windowBackgroundColor))
+                RoundedRectangle(cornerRadius: Radius.inset)
+                    .fill(Color.canvas)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 5)
+                RoundedRectangle(cornerRadius: Radius.inset)
                     .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
             )
     }

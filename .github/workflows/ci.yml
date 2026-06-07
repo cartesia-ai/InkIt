@@ -31,6 +31,9 @@ jobs:
           sw_vers
           xcodebuild -version
 
+      - name: Check design tokens
+        run: ./scripts/check-design-tokens.sh
+
       - name: Install build tools
         run: brew install xcodegen
 

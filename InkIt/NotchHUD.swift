@@ -160,6 +160,12 @@ private enum HUDPresentation: Equatable {
     case hidden
     case live
     case status(String)
+    /// A brief, self-clearing confirmation, e.g. "Saved to History" when a
+    /// transcript was held instead of pasted. Rendered as "InkIt • <label>".
+    case notice(String)
+    /// A brief, self-clearing error, e.g. a lost dictation. Same shape as
+    /// `.notice` but with a red warning glyph: "InkIt ⚠ <label>".
+    case errorNotice(String)
 }
 
 private struct NotchHUDView: View {
@@ -171,8 +177,10 @@ private struct NotchHUDView: View {
         // collapses the moment the hotkey is released. Polishing/pasting happen
         // silently in the background (the menu bar still reflects them).
         switch coordinator.state {
-        case .recording: return .live
-        default:         return .hidden
+        case .recording:        return .live
+        case .heldInHistory:    return .notice("Saved to History")
+        case .error(let m):     return .errorNotice(m)
+        default:                return .hidden
         }
     }
 
@@ -218,6 +226,12 @@ private struct NotchHUDView: View {
         case .status(let label):
             statusContent(label)
                 .id(label) // cross-fade only when the label actually changes
+        case .notice(let label):
+            noticeContent(label: label)
+                .id(label)
+        case .errorNotice(let label):
+            errorNoticeContent(label: label)
+                .id(label)
         case .hidden:
             EmptyView()
         }
@@ -272,7 +286,7 @@ private struct NotchHUDView: View {
     private var liveContent: some View {
         HStack(spacing: 7) {
             Text("InkIt")
-                .font(.system(size: 8, weight: .semibold))
+                .font(.inkNotchBrand)
                 .foregroundStyle(.white.opacity(0.85))
             HUDWaveform(level: coordinator.inputLevel)
                 .frame(width: 32, height: 9)
@@ -287,8 +301,41 @@ private struct NotchHUDView: View {
                 .tint(.white)
                 .scaleEffect(0.7)
             Text(label)
-                .font(.system(size: 10, weight: .medium))
+                .font(.inkNotchLabel)
                 .foregroundStyle(.white.opacity(0.82))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    }
+
+    private func noticeContent(label: String) -> some View {
+        HStack(spacing: 5) {
+            Text("InkIt")
+                .font(.inkNotchBrand)
+                .foregroundStyle(.white.opacity(0.85))
+            Text("•")
+                .font(.inkNotchBrand)
+                .foregroundStyle(.white.opacity(0.4))
+            Text(label)
+                .font(.inkNotchLabel)
+                .foregroundStyle(.white.opacity(0.82))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    }
+
+    /// Same compact shape as `noticeContent`, but leads with a red warning glyph
+    /// so a lost dictation reads as a problem at a glance. The label is kept very
+    /// short by the coordinator (e.g. "No internet", "Out of credits").
+    private func errorNoticeContent(label: String) -> some View {
+        HStack(spacing: 5) {
+            Text("InkIt")
+                .font(.inkNotchBrand)
+                .foregroundStyle(.white.opacity(0.85))
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 8, weight: .semibold))  // ds-allow: icon
+                .foregroundStyle(Color(nsColor: .systemRed))
+            Text(label)
+                .font(.inkNotchLabel)
+                .foregroundStyle(.white.opacity(0.85))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }

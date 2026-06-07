@@ -9,13 +9,15 @@ enum OnboardingStep: Int, CaseIterable {
     case permissions
     case apiKey
     case tryIt
-    case polish
     case done
 }
 
 struct OnboardingRootView: View {
     @EnvironmentObject var settings: SettingsStore
     @EnvironmentObject var coordinator: AppCoordinator
+    // Observed at the root so the progress dots can live-gate forward jumps on
+    // the current permission grants, not just on what's been reached.
+    @StateObject private var permissions = PermissionsService.shared
     @State private var step: OnboardingStep = {
         // If we just silently relaunched mid-onboarding to pick up a fresh
         // Accessibility grant, resume at the permissions step.
@@ -33,11 +35,11 @@ struct OnboardingRootView: View {
             // Calm, appearance-aware backdrop: a single solid warm-paper fill,
             // the same on every step (no gradient, no per-step rainbow).
             // See DESIGN_SYSTEM.md.
-            Color("PaperBG")
+            Color.paper
                 .ignoresSafeArea()
 
             VStack(spacing: 0) {
-                StepIndicator(step: step)
+                StepIndicator(step: step, isReachable: isReachable, go: go)
                     .padding(.top, 40)
 
                 Spacer(minLength: 56)
@@ -48,7 +50,6 @@ struct OnboardingRootView: View {
                     case .permissions: PermissionsStep(next: next)
                     case .apiKey:      APIKeyStep(next: next)
                     case .tryIt:       TryItStep(next: next)
-                    case .polish:      PolishStep(next: next)
                     case .done:        DoneStep(finish: finish)
                     }
                 }
@@ -80,22 +81,98 @@ struct OnboardingRootView: View {
         // MainWindowView in the same WindowGroup window — no need to close.
         settings.hasCompletedOnboarding = true
     }
+
+    /// Tap-to-navigate from the progress dots. Animates in the right direction
+    /// and is a no-op for the current step or any step that isn't reachable.
+    private func go(to target: OnboardingStep) {
+        guard target != step, isReachable(target) else { return }
+        direction = target.rawValue > step.rawValue ? 1 : -1
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
+            step = target
+        }
+    }
+
+    /// Whether a step's own gate is currently satisfied. Backward steps are
+    /// always re-enterable; forward jumps are only allowed when every earlier
+    /// step is still complete (live gating, so emptying the key re-locks ahead).
+    private func isComplete(_ s: OnboardingStep) -> Bool {
+        switch s {
+        case .welcome, .tryIt, .done:
+            return true
+        case .permissions:
+            return permissions.hasMicrophone && permissions.hasAccessibility
+        case .apiKey:
+            return !settings.cartesiaAPIKey.trimmingCharacters(in: .whitespaces).isEmpty
+        }
+    }
+
+    private func isReachable(_ s: OnboardingStep) -> Bool {
+        OnboardingStep.allCases
+            .filter { $0.rawValue < s.rawValue }
+            .allSatisfy(isComplete)
+    }
 }
 
 // MARK: - Step indicator
 
 private struct StepIndicator: View {
     let step: OnboardingStep
+    let isReachable: (OnboardingStep) -> Bool
+    let go: (OnboardingStep) -> Void
+
     var body: some View {
-        HStack(spacing: 8) {
+        // spacing 0 here; each dot carries its own horizontal padding so the
+        // tappable area is larger than the 8pt dot without widening the gaps.
+        HStack(spacing: 0) {
             ForEach(OnboardingStep.allCases, id: \.self) { s in
-                Capsule()
-                    .fill(s.rawValue <= step.rawValue
-                          ? Color.accentColor
-                          : Color.secondary.opacity(0.3))
-                    .frame(width: s == step ? 28 : 8, height: 8)
-                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: step)
+                StepDot(
+                    isCurrent: s == step,
+                    isFilled: s.rawValue <= step.rawValue,
+                    tappable: s != step && isReachable(s),
+                    animationKey: step
+                ) { go(s) }
             }
+        }
+    }
+}
+
+private struct StepDot: View {
+    let isCurrent: Bool
+    let isFilled: Bool
+    let tappable: Bool
+    let animationKey: OnboardingStep
+    let go: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Capsule()
+            .fill(isFilled ? Color.accentColor : Color.secondary.opacity(0.3))
+            // Tappable (already-completed) dots deepen on hover so they read as
+            // a place you can jump back to; the current and unreachable dots don't.
+            .brightness(tappable && hovering ? -Hover.fillShift : 0)
+            .frame(width: isCurrent ? 28 : 8, height: 8)
+            .animation(.spring(response: 0.4, dampingFraction: 0.8), value: animationKey)
+            .animation(Hover.animation, value: hovering)
+            // Generous invisible hit target so the tiny dots are easy to
+            // click; visual size is unchanged.
+            .padding(.vertical, 10)
+            .padding(.horizontal, 4)
+            .contentShape(Rectangle())
+            .onHover { hovering = tappable && $0 }
+            .onTapGesture(perform: go)
+            .modifier(ConditionalPointer(active: tappable))
+    }
+}
+
+/// Applies the pointing-hand cursor only when a control is actually clickable —
+/// used by the progress dots so unreachable steps don't signal as tappable.
+private struct ConditionalPointer: ViewModifier {
+    let active: Bool
+    func body(content: Content) -> some View {
+        if active {
+            content.modifier(PointingHandCursor())
+        } else {
+            content
         }
     }
 }
@@ -111,7 +188,7 @@ private struct WelcomeStep: View {
                 .resizable()
                 .interpolation(.high)
                 .frame(width: 112, height: 112)
-                .shadow(color: .black.opacity(0.18), radius: 12, y: 6)
+                .shadow(color: Elevation.lifted, radius: 12, y: 6)
                 .scaleEffect(pulse ? 1.0 : 0.94)
                 .onAppear {
                     withAnimation(.spring(response: 0.6, dampingFraction: 0.6)) {
@@ -121,7 +198,7 @@ private struct WelcomeStep: View {
 
             VStack(spacing: 8) {
                 Text("Welcome to InkIt")
-                    .font(.system(size: 34, weight: .bold))
+                    .font(.inkLargeTitle)
                     .foregroundStyle(.primary)
                 Text("Think out loud. Ink it.")
                     .font(.title3)
@@ -172,11 +249,11 @@ private struct BenefitRow: View {
         }
         .padding(16)
         .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color("CardBG"))
+            RoundedRectangle(cornerRadius: Radius.tile, style: .continuous)
+                .fill(Color.card)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.tile, style: .continuous)
                 .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
         )
     }
@@ -202,9 +279,9 @@ private struct PermissionsStep: View {
                 PermissionCard(
                     icon: "mic.fill",
                     title: "Microphone",
-                    subtitle: "So InkIt can hear you. Asleep until you hold the key.",
+                    subtitle: "So InkIt can hear you.",
                     state: permissions.microphoneState,
-                    deniedWhy: "This is how InkIt hears you. Without microphone access, there’s nothing for InkIt to transcribe. Let’s turn it back on.",
+                    manualWhy: "This is how InkIt hears you. Without it, there’s nothing to transcribe.",
                     settingsPath: "Privacy & Security ▸ Microphone",
                     enable: { permissions.requestMicrophone { _ in } },
                     openSettings: { permissions.openMicrophoneSettings() }
@@ -213,14 +290,15 @@ private struct PermissionsStep: View {
                 PermissionCard(
                     icon: "accessibility",
                     title: "Accessibility",
-                    subtitle: "So your words paste instantly, right at your cursor.",
+                    subtitle: "So InkIt can type for you.",
                     state: permissions.accessibilityState,
-                    deniedWhy: "This is how InkIt types your words straight into whatever app you’re in. Without it, your dictation has nowhere to land. Let’s turn it back on.",
+                    manualWhy: "This is how InkIt types into whatever app you’re in. Without it, dictation has nowhere to land.",
                     settingsPath: "Privacy & Security ▸ Accessibility",
                     enable: { permissions.requestAccessibility() },
-                    // Re-route through requestAccessibility so InkIt stays pre-added
-                    // to the Accessibility list (toggle present, just off).
-                    openSettings: { permissions.requestAccessibility() }
+                    // Already prompted (and pre-added to the list) by this point —
+                    // just open the pane. Re-firing the prompt would re-pop the
+                    // system bubble the user already dismissed.
+                    openSettings: { permissions.openAccessibilitySettings() }
                 )
             }
             .frame(maxWidth: 560)
@@ -241,9 +319,9 @@ private struct PermissionCard: View {
     let title: String
     let subtitle: String
     let state: PermissionState
-    /// Friendly one-liner explaining why the permission is required, shown only
-    /// in the `needsManual` state.
-    let deniedWhy: String
+    /// Friendly one-liner explaining why the permission is required and how to
+    /// finish granting it, shown only in the `needsManual` state.
+    let manualWhy: String
     /// The System Settings pane to send the user to, e.g.
     /// "Privacy & Security ▸ Accessibility".
     let settingsPath: String
@@ -265,11 +343,11 @@ private struct PermissionCard: View {
         }
         .padding(14)
         .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(manual ? Color.accentSoft : Color("CardBG"))
+            RoundedRectangle(cornerRadius: Radius.tile, style: .continuous)
+                .fill(manual ? Color.accentSoft : Color.card)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.tile, style: .continuous)
                 .stroke(manual ? Color.accentColor.opacity(0.4) : Color(nsColor: .separatorColor),
                         lineWidth: 1)
         )
@@ -299,25 +377,18 @@ private struct PermissionCard: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 14) {
                 // Stronger amber tile so the glyph reads against the tinted card.
-                ZStack {
-                    RoundedRectangle(cornerRadius: 13, style: .continuous)
-                        .fill(Color.accentColor.opacity(0.22))
-                        .frame(width: 48, height: 48)
-                    Image(systemName: icon)
-                        .font(.system(size: 22, weight: .medium))
-                        .foregroundStyle(Color.accentColor)
-                }
+                GlyphTile(icon: icon, size: 48, corner: 13, iconSize: 22,
+                          fill: Color.accentColor.opacity(0.22))
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title).font(.title3.weight(.semibold)).foregroundStyle(.primary)
-                    Label("Just one more step to start dictating",
-                          systemImage: "exclamationmark.triangle.fill")
-                        .font(.callout.weight(.semibold))
-                        .foregroundStyle(Color.accentColor)
+                    Text("Finish in System Settings")
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(.secondary)
                 }
                 Spacer()
             }
 
-            Text(deniedWhy)
+            Text(manualWhy)
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -334,8 +405,9 @@ private struct PermissionCard: View {
     }
 }
 
-/// A numbered instruction line — amber badge + "prefix **emphasis**" text — used
-/// in the permission card's manual-fix state.
+/// A numbered instruction line — amber badge + "prefix emphasis" text — used
+/// in the permission card's manual-fix state. The text reads in one uniform
+/// weight; no inline bolding.
 private struct ManualStep: View {
     let number: Int
     let prefix: String
@@ -345,10 +417,10 @@ private struct ManualStep: View {
         HStack(alignment: .top, spacing: 10) {
             Text("\(number)")
                 .font(.caption.weight(.bold))
-                .foregroundStyle(.black.opacity(0.85))
+                .foregroundStyle(.black.opacity(0.85))  // ds-allow: legible numeral on the amber badge
                 .frame(width: 18, height: 18)
                 .background(Circle().fill(Color.accentColor))
-            (Text(prefix) + Text(emphasis).fontWeight(.semibold))
+            Text(prefix + emphasis)
                 .font(.body)
                 .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -403,31 +475,41 @@ private struct APIKeyStep: View {
     }
 
     var body: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: 22) {
             HeaderBlock(
                 icon: "key.fill",
                 title: "Turn on the engine",
-                subtitle: "Powered by Cartesia ink-2. Free to start."
+                subtitle: "Fast and accurate dictation that just works."
             )
 
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
                 keyField
 
-                HStack(alignment: .firstTextBaseline) {
-                    Link(destination: URL(string: "https://play.cartesia.ai/keys")!) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.up.right.square")
-                            Text("Get your free Cartesia API key")
-                        }
-                        .font(.subheadline.weight(.medium))
-                    }
-                    .modifier(PointingHandCursor())
-                    Spacer(minLength: 0)
-                }
+                ExternalLink(
+                    title: "Get your free Cartesia API key",
+                    url: URL(string: "https://play.cartesia.ai/keys")!,
+                    font: .subheadline.weight(.medium)
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .frame(minHeight: 18)
                 .padding(.horizontal, 2)
             }
             .frame(maxWidth: 460)
+
+            // Information-only note: free-quota reassurance + attribution.
+            // No fill, border, or bold so the elevated key field stays the
+            // single focal point — this recedes into the page as a caption.
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "gift")
+                    .font(.system(size: 13))  // ds-allow: icon
+                    .foregroundStyle(.tertiary)
+                Text("About 15,000 words of dictation a month, free with your Cartesia key. Powered by Cartesia Ink-2.")
+                    .font(.inkCallout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: 460, alignment: .leading)
+            .padding(.horizontal, 2)
 
             PrimaryButton(
                 title: "Continue",
@@ -448,12 +530,12 @@ private struct APIKeyStep: View {
     private var keyField: some View {
         HStack(spacing: 12) {
             Image(systemName: "key.fill")
-                .font(.system(size: 15))
+                .font(.system(size: 15))  // ds-allow: icon
                 .foregroundStyle(.secondary)
 
             SecureField("sk_car_…", text: $settings.cartesiaAPIKey)
                 .textFieldStyle(.plain)
-                .font(.system(size: 15, design: .monospaced))
+                .font(.inkMono)
                 .focused($fieldFocused)
 
             KeyValidationLabel(state: validator.state)
@@ -463,16 +545,19 @@ private struct APIKeyStep: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 15)
         .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color("CardBG"))
+            RoundedRectangle(cornerRadius: Radius.tile, style: .continuous)
+                .fill(Color.card)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.tile, style: .continuous)
                 .stroke(
                     fieldFocused ? Color.accentColor : Color(nsColor: .separatorColor),
                     lineWidth: fieldFocused ? 2 : 1
                 )
         )
+        // Subtle elevation makes the key field the screen's focal point — it
+        // lifts off the paper while the note below stays flat/recessive.
+        .shadow(color: Elevation.drop, radius: 12, x: 0, y: 5)
         .animation(.easeInOut(duration: 0.15), value: fieldFocused)
         .contentShape(Rectangle())
         .onTapGesture { fieldFocused = true }
@@ -484,44 +569,12 @@ private struct APIKeyStep: View {
 
 private struct TryItStep: View {
     let next: () -> Void
-    @EnvironmentObject var coordinator: AppCoordinator
-
-    private let sampleLine = "Help me plan a slow Sunday full of pancakes, sunshine, and a long nap."
-
-    /// Matches the HUD's recording dot/waveform color (see NotchHUD): amber is
-    /// the app's "live recording" signal, distinct from the resting indigo.
-    private static let recordingAmber = Color(red: 1.0, green: 0.62, blue: 0.04)
-
-    @State private var invite = false
-    /// Once the user has held the key even once, the inviting glow ring retires —
-    /// it exists only to prompt the very first press, and pulsing forever reads
-    /// as distracting after that.
-    @State private var hasPressed = false
-    /// The editable contents of the result box. Seeded from the live transcript
-    /// while dictating, then fully the user's to edit by keyboard afterward —
-    /// the whole point being that a mistranscription is fixable in place.
-    @State private var editedText = ""
-    @FocusState private var boxFocused: Bool
-
-    var isRecording: Bool { coordinator.state == .recording }
-    var isFinalizing: Bool {
-        switch coordinator.state {
-        case .finalizing, .rewriting, .pasting: return true
-        default: return false
-        }
-    }
-    var transcript: String { coordinator.liveTranscript }
-    /// There's text to send and we're not mid-take.
-    var isComplete: Bool {
-        !isRecording && !isFinalizing
-            && !editedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
 
     var body: some View {
         VStack(spacing: 30) {
             VStack(spacing: 8) {
                 Text("Try it")
-                    .font(.system(size: 28, weight: .bold))
+                    .font(.inkLargeTitle)
                     .foregroundStyle(.primary)
                 Text("Hold the key, read the line aloud, then let go.")
                     .font(.title3)
@@ -529,7 +582,10 @@ private struct TryItStep: View {
                     .multilineTextAlignment(.center)
             }
 
-            panel
+            // The shared practice card owns the trial lifecycle, the staged
+            // reveal, the editable box, and history logging. Sending here just
+            // advances onboarding to the next step.
+            TryItPracticeCard(onSend: next)
 
             Button("Skip for now") { next() }
                 .buttonStyle(.plain)
@@ -538,335 +594,6 @@ private struct TryItStep: View {
                 .padding(.top, 2)
                 .modifier(PointingHandCursor())
         }
-        .onAppear {
-            coordinator.beginOnboardingTrial()
-            // Land with the cursor already in the box, ready to dictate or type.
-            DispatchQueue.main.async { boxFocused = true }
-        }
-        .onDisappear { coordinator.endOnboardingTrial() }
-        .onChange(of: isRecording) { _, recording in
-            if recording { hasPressed = true }
-        }
-        // Mirror the transcript into the editable field as it streams in and when
-        // it finalizes. liveTranscript only changes during a take, so the user's
-        // manual edits afterward are never clobbered.
-        .onChange(of: transcript) { _, newValue in
-            editedText = newValue
-        }
-    }
-
-    // MARK: Unified panel — prompt, the key, and the result in one calm card.
-    // The waveform and live status now live in the real Notch HUD (shown during
-    // the trial), so the screen itself stays quiet: read the line, hold the key,
-    // watch the words land here.
-
-    private var panel: some View {
-        VStack(spacing: 28) {
-            promptBar
-            keyCap
-            resultBox
-        }
-        .padding(.horizontal, 30)
-        .padding(.vertical, 30)
-        .frame(maxWidth: 600)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color("CardBG"))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.06), radius: 14, y: 6)
-    }
-
-    // MARK: Prompt — the line to read aloud, marked by a quiet left accent bar
-
-    private var promptBar: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text("READ THIS ALOUD")
-                .font(.system(size: 11, weight: .bold))
-                .tracking(0.8)
-                .foregroundStyle(Color.accentColor)
-            Text(sampleLine)
-                .font(.system(size: 17, weight: .medium))
-                .foregroundStyle(.primary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(.leading, 14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 2, style: .continuous)
-                .fill(Color.accentColor)
-                .frame(width: 3)
-        }
-    }
-
-    // MARK: Result — a real editable field. Lands focused (cursor already in it),
-    // fills from the transcript, and stays fully keyboard-editable so a
-    // mistranscription can be fixed in place before sending.
-
-    private var resultBox: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 6) {
-                if isComplete {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.green)
-                }
-                Text("What InkIt heard")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-            }
-            ZStack(alignment: .topLeading) {
-                if editedText.isEmpty {
-                    Text("Your words appear here after you let go.")
-                        .font(.system(size: 17))
-                        .foregroundStyle(.tertiary)
-                        .padding(.leading, 5)
-                        .padding(.top, 1)
-                        .allowsHitTesting(false)
-                }
-                TextEditor(text: $editedText)
-                    .font(.system(size: 17))
-                    .lineSpacing(3)
-                    .scrollContentBackground(.hidden)
-                    .background(Color.clear)
-                    .tint(Color.accentColor)
-                    .focused($boxFocused)
-                    .frame(minHeight: 72)
-            }
-            HStack {
-                Spacer()
-                sendButton
-            }
-        }
-        .padding(20)
-        .frame(maxWidth: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color("PaperBG"))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(boxFocused ? Color.accentColor.opacity(0.5) : Color(nsColor: .separatorColor),
-                        lineWidth: boxFocused ? 1.5 : 1)
-        )
-        .animation(.easeOut(duration: 0.15), value: boxFocused)
-    }
-
-    private var sendButton: some View {
-        Button { if isComplete { next() } } label: {
-            Image(systemName: "paperplane.fill")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 34, height: 34)
-                .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color.accentColor))
-        }
-        .buttonStyle(.plain)
-        .disabled(!isComplete)
-        .opacity(isComplete ? 1 : 0.3)
-        .scaleEffect(isComplete ? 1 : 0.9)
-        .animation(.spring(response: 0.35, dampingFraction: 0.6), value: isComplete)
-        .modifier(PointingHandCursor())
-    }
-
-    // MARK: Push-to-talk key — the hero control
-
-    private var keyCap: some View {
-        HStack(spacing: 12) {
-            if isRecording {
-                Circle()
-                    .fill(Self.recordingAmber)
-                    .frame(width: 13, height: 13)
-                    .shadow(color: Self.recordingAmber.opacity(0.7), radius: 5)
-            } else {
-                Image(systemName: "mic.fill")
-                    .font(.system(size: 19))
-                    .foregroundStyle(.primary)
-            }
-            HStack(spacing: 7) {
-                Text("Hold")
-                Text("fn")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(Color.accentColor)
-                    .padding(.horizontal, 9).padding(.vertical, 3)
-                    .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.accentSoft))
-                Text("to talk")
-            }
-            .font(.system(size: 17, weight: .bold))
-            .foregroundStyle(.primary)
-        }
-        .padding(.horizontal, 26).padding(.vertical, 13)
-        .background(
-            RoundedRectangle(cornerRadius: 15, style: .continuous)
-                .fill(isRecording ? Color.accentSoft : Color("PaperBG"))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 15, style: .continuous)
-                .stroke(isRecording ? Self.recordingAmber : Color(nsColor: .separatorColor),
-                        lineWidth: 1.5)
-        )
-        .scaleEffect(isRecording ? 0.97 : 1)
-        .shadow(color: .black.opacity(0.06), radius: 5, y: 2)
-        .overlay(inviteRing.opacity(showInvite ? 1 : 0))
-        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isRecording)
-        .animation(.easeOut(duration: 0.4), value: showInvite)
-    }
-
-    /// The glow only invites the *first* press — once `hasPressed` flips it never
-    /// returns, and it's always hidden while actively recording.
-    private var showInvite: Bool { !hasPressed && !isRecording }
-
-    private var inviteRing: some View {
-        RoundedRectangle(cornerRadius: 19, style: .continuous)
-            .stroke(Color.accentColor, lineWidth: 2)
-            .padding(-6)
-            .scaleEffect(invite ? 1.09 : 0.97)
-            .opacity(invite ? 0 : 0.5)
-            .allowsHitTesting(false)
-            .onAppear {
-                withAnimation(.easeOut(duration: 2.1).repeatForever(autoreverses: false)) {
-                    invite = true
-                }
-            }
-    }
-}
-
-// MARK: - Polish (optional)
-
-/// Optional final-mile step: offer the LLM "Polish transcripts" rewrite by
-/// collecting a Groq key. Skippable — polish stays off unless a key is given.
-/// Placed after Try-it so the accuracy demo there stays verbatim. Groq is
-/// pinned as the recommended provider and the picker is hidden; switching
-/// providers lives in Settings.
-private struct PolishStep: View {
-    let next: () -> Void
-    @EnvironmentObject var settings: SettingsStore
-    @State private var key: String = ""
-    @FocusState private var fieldFocused: Bool
-    @StateObject private var validator = GroqKeyValidator()
-
-    private var trimmedKey: String { key.trimmingCharacters(in: .whitespaces) }
-
-    var body: some View {
-        VStack(spacing: 24) {
-            HeaderBlock(
-                icon: "wand.and.stars",
-                title: "Polish as you speak",
-                subtitle: "Your words in, polished text out — powered by Groq."
-            )
-
-            chips
-
-            VStack(alignment: .leading, spacing: 12) {
-                keyField
-
-                HStack(alignment: .firstTextBaseline) {
-                    Link(destination: LLMProvider.groq.keyURL) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.up.right.square")
-                            Text("Get your free Groq API key")
-                        }
-                        .font(.subheadline.weight(.medium))
-                    }
-                    .modifier(PointingHandCursor())
-                    Spacer(minLength: 0)
-                }
-                .frame(minHeight: 18)
-                .padding(.horizontal, 2)
-            }
-            .frame(maxWidth: 460)
-
-            VStack(spacing: 14) {
-                PrimaryButton(
-                    title: "Continue",
-                    enabled: !trimmedKey.isEmpty,
-                    action: commit
-                )
-                Button("Skip for now") { next() }
-                    .buttonStyle(.plain)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .modifier(PointingHandCursor())
-            }
-        }
-        .onAppear {
-            key = settings.apiKey(for: .groq)
-            validator.keyChanged(key)
-        }
-        .onChange(of: key) { _, newValue in validator.keyChanged(newValue) }
-    }
-
-    /// Save the key and turn polish on. Never half-configured: we only flip
-    /// `correctionEnabled` here, where a non-empty key is guaranteed.
-    private func commit() {
-        let k = trimmedKey
-        guard !k.isEmpty else { next(); return }
-        settings.setAPIKey(k, for: .groq)
-        settings.enablePolish(provider: .groq)
-        next()
-    }
-
-    /// Three at-a-glance value props, matching the accent-soft glyph treatment.
-    private var chips: some View {
-        HStack(spacing: 8) {
-            PolishChip(icon: "scissors", text: "Removes filler")
-            PolishChip(icon: "textformat", text: "Fixes punctuation")
-            PolishChip(icon: "checkmark", text: "Repairs names")
-        }
-    }
-
-    /// Same custom credential field as the Cartesia step, bound to the Groq key.
-    /// Always masked — the key is never rendered in plain text.
-    private var keyField: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "key.fill")
-                .font(.system(size: 15))
-                .foregroundStyle(.secondary)
-
-            SecureField("gsk_…", text: $key)
-                .textFieldStyle(.plain)
-                .font(.system(size: 15, design: .monospaced))
-                .focused($fieldFocused)
-
-            KeyValidationLabel(state: validator.state)
-                .transition(.opacity.combined(with: .scale))
-                .animation(.easeInOut(duration: 0.2), value: validator.state)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 15)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color("CardBG"))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(
-                    fieldFocused ? Color.accentColor : Color(nsColor: .separatorColor),
-                    lineWidth: fieldFocused ? 2 : 1
-                )
-        )
-        .animation(.easeInOut(duration: 0.15), value: fieldFocused)
-        .contentShape(Rectangle())
-        .onTapGesture { fieldFocused = true }
-    }
-}
-
-/// Accent-soft capsule with an SF Symbol + label — the Polish-step value props.
-private struct PolishChip: View {
-    let icon: String
-    let text: String
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: icon).font(.caption2.weight(.semibold))
-            Text(text).font(.subheadline.weight(.medium))
-        }
-        .foregroundStyle(Color.accentColor)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(Capsule().fill(Color.accentSoft))
     }
 }
 
@@ -880,7 +607,7 @@ private struct DoneStep: View {
             ZStack {
                 Circle().fill(Color.accentSoft).frame(width: 160, height: 160)
                 Image(systemName: "sparkles")
-                    .font(.system(size: 80))
+                    .font(.system(size: 80))  // ds-allow: icon
                     .foregroundStyle(Color.accentColor)
                     .scaleEffect(pop ? 1.0 : 0.7)
                     .opacity(pop ? 1 : 0)
@@ -893,9 +620,9 @@ private struct DoneStep: View {
 
             VStack(spacing: 10) {
                 Text("You're ready!")
-                    .font(.system(size: 34, weight: .bold))
+                    .font(.inkLargeTitle)
                     .foregroundStyle(.primary)
-                Text("InkIt lives in your menu bar. Hold Fn anytime to dictate.")
+                Text("Type with your voice. Hold Fn and go.")
                     .font(.title3)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -915,24 +642,20 @@ private struct GlyphTile: View {
     var size: CGFloat = 84
     var corner: CGFloat = 22
     var iconSize: CGFloat = 36
+    /// Tile fill. Defaults to the soft accent; callers on a tinted card pass a
+    /// stronger amber so the glyph still reads (the manual-permission step).
+    var fill: Color = Color.accentSoft
 
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: corner, style: .continuous)
-                .fill(Color.accentSoft)
+                .fill(fill)
                 .frame(width: size, height: size)
             Image(systemName: icon)
                 .font(.system(size: iconSize, weight: .medium))
                 .foregroundStyle(Color.accentColor)
         }
     }
-}
-
-extension Color {
-    /// Tinted indigo fill behind glyphs/badges. Appearance-aware (14% light /
-    /// 18% dark) via the asset catalog so it matches DESIGN_SYSTEM.md exactly,
-    /// instead of a flat `accentColor.opacity` that stays too faint in dark.
-    static let accentSoft = Color("accentSoft")
 }
 
 private struct HeaderBlock: View {
@@ -965,7 +688,7 @@ private struct HeaderBlock: View {
         VStack(spacing: 14) {
             GlyphTile(icon: icon)
             Text(title)
-                .font(.system(size: 30, weight: .bold))
+                .font(.inkLargeTitle)
                 .foregroundStyle(.primary)
             subtitle
         }
@@ -991,22 +714,93 @@ private struct PrimaryButton: View {
 /// inverting to a warm off-white fill with navy text in dark — the pen color
 /// from the app icon. The amber accent stays reserved for live-signal cues
 /// (selection, links, the waveform), per DESIGN_SYSTEM.md.
-private struct InkButtonStyle: ButtonStyle {
+/// The "ink" call-to-action style — the app's one solid button. Shared beyond
+/// onboarding (e.g. Settings ▸ General permission rows) so every primary action
+/// reads as the same navy fill. See DESIGN_SYSTEM.md › Solid CTA fill.
+struct InkButtonStyle: ButtonStyle {
+    /// `ink` is the standard navy CTA; `destructive` swaps the fill to red for
+    /// dangerous confirms (e.g. Delete All) while keeping the same shape, hover,
+    /// and press behavior so the two read as one family.
+    enum Variant { case ink, destructive }
+
+    var variant: Variant = .ink
     var compact = false
-    @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: compact ? 13 : 15, weight: .semibold))
-            .foregroundStyle(Color("InkFillText"))
-            .padding(.horizontal, compact ? 14 : 26)
-            .padding(.vertical, compact ? 6 : 11)
-            .background(
-                RoundedRectangle(cornerRadius: compact ? 7 : 9, style: .continuous)
-                    .fill(Color("InkFill"))
-                    .opacity(configuration.isPressed ? 0.82 : 1)
-            )
-            .opacity(isEnabled ? 1 : 0.4)
-            .contentShape(Rectangle())
+        Surface(configuration: configuration, variant: variant, compact: compact)
+    }
+
+    /// Hover needs `@State`, which a `ButtonStyle` can't hold directly, so the
+    /// label is rendered through this small stateful view.
+    private struct Surface: View {
+        let configuration: ButtonStyleConfiguration
+        let variant: Variant
+        let compact: Bool
+        @Environment(\.isEnabled) private var isEnabled
+        @State private var hovering = false
+
+        private var fill: Color {
+            switch variant {
+            case .ink:         return Color("InkFill")
+            case .destructive: return .inkDanger
+            }
+        }
+
+        private var textColor: Color {
+            switch variant {
+            case .ink:         return Color("InkFillText")
+            case .destructive: return .white  // ds-allow: legible label on the red destructive fill
+            }
+        }
+
+        var body: some View {
+            configuration.label
+                .font(.system(size: compact ? 13 : 15, weight: .semibold))  // ds-allow: button label scale
+                .foregroundStyle(textColor)
+                .padding(.horizontal, compact ? 14 : 26)
+                .padding(.vertical, compact ? 6 : 11)
+                .background(
+                    RoundedRectangle(cornerRadius: compact ? 7 : 9, style: .continuous)
+                        .fill(fill)
+                        // Brighten the fill on hover (no movement) so the button
+                        // reads as live before the press-dim takes over.
+                        .brightness(hovering && isEnabled ? Hover.fillShift : 0)
+                        .opacity(configuration.isPressed ? 0.82 : 1)
+                        .animation(Hover.animation, value: hovering)
+                )
+                .opacity(isEnabled ? 1 : 0.4)
+                .contentShape(Rectangle())
+                .onHover { hovering = $0 }
+        }
+    }
+}
+
+/// The quiet secondary action: a text-only label with no fill or border, used
+/// beside a solid `InkButtonStyle` in confirm dialogs (e.g. Cancel next to a
+/// destructive primary). Shares the same label scale and padding so the two sit
+/// at one height; recedes via `.secondary` and dims slightly on hover/press.
+struct InkSecondaryButtonStyle: ButtonStyle {
+    var compact = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        Surface(configuration: configuration, compact: compact)
+    }
+
+    private struct Surface: View {
+        let configuration: ButtonStyleConfiguration
+        let compact: Bool
+        @State private var hovering = false
+
+        var body: some View {
+            configuration.label
+                .font(.system(size: compact ? 13 : 15, weight: .semibold))  // ds-allow: button label scale
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, compact ? 14 : 26)
+                .padding(.vertical, compact ? 6 : 11)
+                .opacity(configuration.isPressed ? 0.55 : (hovering ? 0.75 : 1))
+                .contentShape(Rectangle())
+                .onHover { hovering = $0 }
+                .animation(Hover.animation, value: hovering)
+        }
     }
 }

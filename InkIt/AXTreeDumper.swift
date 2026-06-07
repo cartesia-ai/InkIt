@@ -6,9 +6,9 @@ import ApplicationServices
 /// after a 2-second delay so the user can switch focus to the target app.
 /// Writes a structured dump of every node to `~/Library/Logs/InkIt-debug.log`.
 ///
-/// Use this when the regular `FocusedWindowAXProvider` walk comes back empty
-/// or with surprising content — the dump reveals what attributes each role
-/// actually exposes so we can extend `textAttributes` accordingly.
+/// A general-purpose Accessibility-tree inspector: the dump reveals what
+/// attributes each role actually exposes for a given app, which is handy when
+/// diagnosing why an app's AX tree looks the way it does.
 enum AXTreeDumper {
     static let nodeLimit = 5000
     static let wallClockLimit: TimeInterval = 5.0

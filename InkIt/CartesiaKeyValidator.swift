@@ -28,8 +28,14 @@ class APIKeyValidator: ObservableObject {
     @Published private(set) var state: State = .idle
 
     /// Builds the credit-free probe request for a given key. Should target an
-    /// endpoint that needs auth but costs nothing (e.g. a list call).
-    private let makeRequest: (String) -> URLRequest
+    /// endpoint that needs auth but costs nothing (e.g. a list call). Settable
+    /// so a provider-aware validator can re-point it when the provider changes.
+    private var makeRequest: (String) -> URLRequest
+
+    /// Swap the probe builder (e.g. after the user picks a different provider).
+    func updateRequest(_ make: @escaping (String) -> URLRequest) {
+        makeRequest = make
+    }
 
     private var task: URLSessionDataTask?
     private var debounce: DispatchWorkItem?
@@ -71,9 +77,13 @@ class APIKeyValidator: ObservableObject {
                 verdict = .couldNotVerify
             } else {
                 switch (response as? HTTPURLResponse)?.statusCode ?? 0 {
-                case 200...299: verdict = .verified
-                case 401, 403:  verdict = .invalidKey
-                default:        verdict = .couldNotVerify
+                case 200...299:      verdict = .verified
+                // Our probe is a fixed, well-formed GET /models with no body or
+                // query, so a 4xx back is the key being rejected, not a bad
+                // request. Gemini answers a bad key with 400 (API_KEY_INVALID)
+                // where the others use 401/403 — treat the whole range as invalid.
+                case 400, 401, 403:  verdict = .invalidKey
+                default:             verdict = .couldNotVerify
                 }
             }
             DispatchQueue.main.async { self?.settle(verdict, key: key, gen: gen) }
@@ -112,5 +122,25 @@ final class CartesiaKeyValidator: APIKeyValidator {
             req.timeoutInterval = 8
             return req
         })
+    }
+}
+
+/// Validates a rewrite-provider key against whichever provider is currently
+/// selected, re-pointing its probe when the user switches providers in the
+/// Polish settings pane. Advisory, like its base. See `LLMProvider.validationRequest`.
+@MainActor
+final class LLMKeyValidator: APIKeyValidator {
+    private(set) var provider: LLMProvider
+
+    init(provider: LLMProvider) {
+        self.provider = provider
+        super.init(makeRequest: { key in provider.validationRequest(key: key) })
+    }
+
+    /// Point the validator at a new provider (clears no state; caller should
+    /// re-run `keyChanged` with that provider's key).
+    func setProvider(_ provider: LLMProvider) {
+        self.provider = provider
+        updateRequest { key in provider.validationRequest(key: key) }
     }
 }

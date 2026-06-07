@@ -168,10 +168,20 @@ final class PermissionsService: ObservableObject {
     /// presses would keep re-popping the dialog. Polling (`refresh`) detects
     /// the grant live once the user flips the toggle.
     func requestAccessibility() {
-        let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-        _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
-        axRequestedAt = Date()
-        UserDefaults.standard.set(true, forKey: resumeOnboardingKey)
+        // Fire the prompting API at most once. macOS re-shows the dialog on
+        // every `AXIsProcessTrustedWithOptions(prompt: true)` call while the app
+        // is untrusted, so re-entering this (a second "Enable" tap, the Settings
+        // row, a key press on the dictation hot path) would re-pop the bubble
+        // the user just dismissed. Once we've prompted — or after a Deny, which
+        // sets the resume flag — every later call just re-opens Settings.
+        let alreadyPrompted = axRequestedAt != nil
+            || UserDefaults.standard.bool(forKey: resumeOnboardingKey)
+        if !alreadyPrompted {
+            let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+            _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
+            axRequestedAt = Date()
+            UserDefaults.standard.set(true, forKey: resumeOnboardingKey)
+        }
         openAccessibilitySettings()
     }
 
@@ -218,7 +228,9 @@ final class PermissionsService: ObservableObject {
         }
     }
 
-    private func openAccessibilitySettings() {
+    /// Opens System Settings → Privacy & Security → Accessibility without firing
+    /// the TCC prompt. Use this for the `needsManual` "Open Settings" action.
+    func openAccessibilitySettings() {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else {
             return
         }

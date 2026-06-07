@@ -1,26 +1,48 @@
-# InkIt
+<div align="center">
 
-Push-to-talk dictation for macOS. Hold a hotkey, speak, release — your words get transcribed by Cartesia's `ink-2` and pasted wherever your cursor is.
+<img src=".github/media/icon.png" width="88" height="88" alt="InkIt icon" />
 
-## Use it
+# Just ink it.
 
-1. Hold the **Fn 🌐** key.
-2. Speak. The notch HUD shows you're recording.
-3. Release. Transcript pastes at your cursor.
+Type at the speed of talking.<br>
+InkIt catches every word, even over a hissing espresso machine, a chattering open office, or a rumbling train.
 
-Works in any text field — Slack, Mail, your IDE, browser, anywhere.
+Powered by [Ink 2](https://www.cartesia.ai/ink) from Cartesia.
+
+<!-- HERO: replace with a ~6s GIF of the full loop (hold Fn → speak → text pastes).
+     Drop the file at .github/media/demo.gif and uncomment the line below. -->
+<!-- <img src=".github/media/demo.gif" width="720" alt="InkIt in action" /> -->
+
+<br />
+
+<a href="https://github.com/cartesia-ai/InkIt/releases/latest/download/InkIt.dmg">
+  <img src=".github/media/download-macos.svg" height="48" alt="Download for macOS" />
+</a>
+
+<sub>Requires macOS 14+ · Apple silicon & Intel</sub>
+
+</div>
+
+---
 
 ## Setup
 
-You need macOS 14+, a microphone, and a [Cartesia API key](https://play.cartesia.ai).
+All you need is a free [Cartesia API key](https://play.cartesia.ai), good for about 15,000 words of dictation a month.
 
-On first launch, onboarding walks you through Microphone + Accessibility permissions and your API key.
+On first launch, onboarding walks you through the permissions and your key.
 
-**The Fn 🌐 key just works.** macOS normally opens the emoji panel on that key, but InkIt installs an event tap that intercepts Fn before the system sees it (once Accessibility is granted), so holding it dictates instead — no need to remap it in System Settings.
+Optionally, you can turn on Polish to clean up filler, punctuation, and formatting without rewriting your words. Bring your own key from Groq, Google Gemini, OpenAI, or Anthropic.
 
-## Build from source
+## For developers
 
-No signed release yet — build it yourself. Needs Xcode 15+ and [XcodeGen](https://github.com/yonaskolb/XcodeGen).
+InkIt is open source but not open contribution.
+
+Fork and modify it for your own use. Pull requests aren't guaranteed a review: see [CONTRIBUTING.md](CONTRIBUTING.md). Bug reports and feedback go [here](https://forms.gle/jXNtDsTaLt2rKQ8N9).
+
+<details>
+<summary><strong>Build from source</strong> (Xcode 15+ and XcodeGen)</summary>
+
+<br />
 
 ```bash
 brew install xcodegen
@@ -28,10 +50,12 @@ xcodegen generate
 open InkIt.xcodeproj
 ```
 
-To install:
+Install the build:
 
 ```bash
 cp -R build/Build/Products/Release/InkIt.app /Applications/
 ```
 
-Code changes only take effect after replacing `/Applications/InkIt.app` — rebuilding alone isn't enough.
+Changes only take effect after you replace `/Applications/InkIt.app`. Rebuilding alone isn't enough.
+
+</details>
