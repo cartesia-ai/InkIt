@@ -124,6 +124,113 @@ struct ExternalLink: View {
     }
 }
 
+/// The shared visual for a quiet 28×28 header affordance: a tinted glyph that
+/// lifts a soft rounded backdrop on hover, with the hand cursor + a hover hint —
+/// the same treatment as `IconChip`/`CopyTranscriptGlyph`, sized for the header.
+/// Hover state lives on the glyph itself so it works whether the parent is a
+/// plain `Button` (search) or a `Menu` label (manage) — a `Menu` doesn't forward
+/// hover to its container, which is why the affordance must sit on the label.
+private struct HeaderIconLabel: View {
+    let systemName: String
+    let hint: String
+    @State private var hovering = false
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: 14, weight: .medium))  // ds-allow: icon
+            .foregroundStyle(.secondary)
+            .frame(width: 28, height: 28)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.primary.opacity(hovering ? 0.08 : 0))
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .onHover { hovering = $0 }
+            .modifier(PointingHandCursor())
+            .inkHoverHint(hint)
+    }
+}
+
+/// A quiet header icon *button* (History search). Wraps the shared
+/// `HeaderIconLabel`, so it reads as one family with the manage menu and the gear.
+private struct HeaderIconButton: View {
+    let systemName: String
+    let hint: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HeaderIconLabel(systemName: systemName, hint: hint)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// One row in the "Manage transcripts" popover. Leading column is either a
+/// checkmark (sort rows, shown when selected) or an icon (Delete All), so labels
+/// stay aligned. Lifts the same soft hover backdrop as the rest of the chrome.
+private struct ManageMenuRow: View {
+    let title: String
+    var icon: String? = nil
+    var checked: Bool = false
+    var destructive: Bool = false
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                Image(systemName: icon ?? "checkmark")
+                    .font(.inkCallout)
+                    .opacity(icon == nil && !checked ? 0 : 1)
+                    .frame(width: 16)
+                Text(title)
+                    .font(.inkCallout)
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(destructive ? Color.red : Color.primary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.primary.opacity(hovering ? 0.08 : 0))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .modifier(PointingHandCursor())
+    }
+}
+
+/// The app's one modal treatment: a centered card on the warm paper (`Color.canvas`,
+/// 16pt continuous corners, a hairline border, a soft drop shadow) over a dimmed
+/// backdrop. Defining it once keeps "an InkIt modal" a single source of truth, so
+/// Settings and the Delete-all confirm can't drift apart. Tap-out runs `onDismiss`;
+/// the caller owns Esc/Return via the content's keyboard shortcuts.
+private struct InkModal<Content: View>: View {
+    let onDismiss: () -> Void
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.18)
+                .contentShape(Rectangle())
+                .onTapGesture(perform: onDismiss)
+            content
+                .background(Color.canvas)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.08))
+                )
+                .shadow(color: .black.opacity(0.28), radius: 40, y: 18)
+        }
+        .transition(.opacity)
+    }
+}
+
 extension Notification.Name {
     /// Posted by the "Settings…" menu command (⌘,); the main window opens the
     /// settings modal in response. Lets the menu reach in-window @State.
@@ -243,6 +350,16 @@ struct MainWindowView: View {
     @State private var showSettings = false
     @State private var gearHovering = false
     @State private var settingsPane: SettingsView.Pane = .dictation
+    // History controls. Search collapses to a single icon at rest and expands
+    // inline; the field stays open while there's a query and collapses only when
+    // emptied (macOS toolbar-search convention). Sort persists across launches —
+    // it's a stated preference. Delete-all routes through a confirm modal.
+    @State private var searchExpanded = false
+    @State private var searchQuery = ""
+    @FocusState private var searchFocused: Bool
+    @AppStorage("history.newestFirst") private var newestFirst = true
+    @State private var showDeleteConfirm = false
+    @State private var showManageMenu = false
 
     private struct TranscriptGroup: Identifiable {
         let id: Date
@@ -263,16 +380,28 @@ struct MainWindowView: View {
         return f
     }()
 
+    // Case-insensitive substring match on the visible transcript text. Empty
+    // query returns everything, so the list renders unchanged when search is idle.
+    private var filteredEntries: [TranscriptHistoryStore.Entry] {
+        let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return history.entries }
+        return history.entries.filter { $0.text.lowercased().contains(q) }
+    }
+
     private var groupedEntries: [TranscriptGroup] {
         let calendar = Calendar.current
-        let grouped = Dictionary(grouping: history.entries) { entry in
+        let grouped = Dictionary(grouping: filteredEntries) { entry in
             calendar.startOfDay(for: entry.timestamp)
         }
 
+        // Day groups and the rows within them both follow the sort toggle, so
+        // "Oldest first" flips the whole list, not just the order inside a day.
         return grouped.keys
-            .sorted(by: >)
+            .sorted(by: newestFirst ? (>) : (<))
             .map { day in
-                let entries = grouped[day, default: []].sorted { $0.timestamp > $1.timestamp }
+                let entries = grouped[day, default: []].sorted {
+                    newestFirst ? $0.timestamp > $1.timestamp : $0.timestamp < $1.timestamp
+                }
                 return TranscriptGroup(id: day, title: title(for: day, calendar: calendar), entries: entries)
             }
     }
@@ -295,6 +424,7 @@ struct MainWindowView: View {
             .background(Color.canvas)
             .background(WindowChrome())
             .overlay { settingsModal }
+            .overlay { deleteConfirmModal }
             // The "Settings…" menu item (⌘,) posts this; open the modal in response.
             .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
                 withAnimation(.easeOut(duration: 0.12)) { showSettings = true }
@@ -303,22 +433,12 @@ struct MainWindowView: View {
 
     // Settings as a centered modal over a dimmed backdrop (Flow-style), not a
     // gear-anchored popover. Click-out or the pane's ✕ / Esc dismisses it.
+    // The backdrop + card chrome come from the shared `InkModal`.
     @ViewBuilder private var settingsModal: some View {
         if showSettings {
-            ZStack {
-                Color.black.opacity(0.18)
-                    .contentShape(Rectangle())
-                    .onTapGesture { dismissSettings() }
+            InkModal(onDismiss: dismissSettings) {
                 SettingsPopover(pane: $settingsPane, onClose: dismissSettings)
-                    .background(Color.canvas)
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .strokeBorder(Color.primary.opacity(0.08))
-                    )
-                    .shadow(color: .black.opacity(0.28), radius: 40, y: 18)
             }
-            .transition(.opacity)
         }
     }
 
@@ -422,18 +542,179 @@ struct MainWindowView: View {
         }
     }
 
-    // History header: title on the left, the "Hold fn to dictate" cue + live
-    // status dot right-aligned to the History box's right edge.
+    // History header: title + its two quiet actions (search, manage) on the left,
+    // the "Hold fn to dictate" cue + live status dot right-aligned. The actions
+    // sit by the title so the list itself stays the loudest thing on screen.
     private var historyHeader: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 8) {
             Text("History")
                 .font(.inkTitle)
                 .foregroundStyle(.primary)
+                .padding(.trailing, 2)
+            searchControl
+            manageMenu
             Spacer(minLength: 0)
             statusHint
         }
         .padding(.horizontal, 4)
         .padding(.bottom, 12)
+        .animation(.easeOut(duration: 0.16), value: searchExpanded)
+        // ⌘F opens (and focuses) search from anywhere in the window. Zero-opacity
+        // so it carries the shortcut without drawing anything.
+        .background(
+            Button(action: expandSearch) { EmptyView() }
+                .keyboardShortcut("f", modifiers: .command)
+                .opacity(0)
+                .allowsHitTesting(false)
+        )
+    }
+
+    // Collapsed: a lone magnifier. Expanded: an inline field on a card. The field
+    // collapses only when it loses focus while empty (see onChange below).
+    @ViewBuilder private var searchControl: some View {
+        if searchExpanded {
+            searchField
+                .transition(.opacity)
+        } else {
+            HeaderIconButton(systemName: "magnifyingglass",
+                             hint: "Search transcripts",
+                             action: expandSearch)
+        }
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12, weight: .regular))  // ds-allow: icon
+                .foregroundStyle(.tertiary)
+            TextField("Search transcripts…", text: $searchQuery)
+                .textFieldStyle(.plain)
+                .font(.inkCallout)
+                .focused($searchFocused)
+                .onExitCommand { collapseSearch() }
+            if !searchQuery.isEmpty {
+                Button {
+                    searchQuery = ""
+                    searchFocused = true
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12))  // ds-allow: icon
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .modifier(PointingHandCursor())
+            }
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .frame(width: 230)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.card)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08))
+        )
+        // Click anywhere outside the field collapses it and drops the caret,
+        // reusing the app's shared click-outside dismisser (a non-consuming
+        // NSEvent monitor — the click still does its normal job). Esc and the ✕
+        // also collapse; clicks inside the field keep it open.
+        .dismissOnClickOutside(isActive: searchExpanded) { collapseSearch() }
+    }
+
+    // The "Manage transcripts" overflow: sort order (checkmarked) + the
+    // destructive Delete All. Built as a HeaderIconButton (so it inherits the
+    // working hover fill + hand cursor, exactly like search and the gear) opening
+    // an inkDetailPopover — SwiftUI's Menu swallows hover on its label, so it
+    // can't carry the affordance the rest of the chrome has.
+    private var manageMenu: some View {
+        HeaderIconButton(systemName: "ellipsis", hint: "Manage transcripts") {
+            showManageMenu.toggle()
+        }
+        .inkDetailPopover(isPresented: $showManageMenu) {
+            VStack(alignment: .leading, spacing: 1) {
+                ManageMenuRow(title: "Newest first", checked: newestFirst) {
+                    newestFirst = true
+                    showManageMenu = false
+                }
+                ManageMenuRow(title: "Oldest first", checked: !newestFirst) {
+                    newestFirst = false
+                    showManageMenu = false
+                }
+                Divider()
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
+                ManageMenuRow(title: "Delete All", icon: "trash", destructive: true) {
+                    showManageMenu = false
+                    withAnimation(.easeOut(duration: 0.12)) { showDeleteConfirm = true }
+                }
+            }
+            .padding(5)
+            .frame(width: 200)
+        }
+    }
+
+    private func expandSearch() {
+        withAnimation(.easeOut(duration: 0.16)) { searchExpanded = true }
+        // Focus on the next runloop tick so the field exists before we target it.
+        DispatchQueue.main.async { searchFocused = true }
+    }
+
+    private func collapseSearch() {
+        searchQuery = ""
+        searchFocused = false
+        withAnimation(.easeOut(duration: 0.16)) { searchExpanded = false }
+    }
+
+    // Destructive confirm, on the same warm centered-card chrome as the Settings
+    // modal (dimmed backdrop, Color.canvas card, 16pt corners). Click-out or
+    // Cancel/Esc backs out; Delete All clears history and any active filter.
+    @ViewBuilder private var deleteConfirmModal: some View {
+        if showDeleteConfirm {
+            InkModal(onDismiss: dismissDeleteConfirm) {
+                VStack(spacing: 18) {
+                    VStack(spacing: 7) {
+                        Text("Delete all transcripts")
+                            .font(.inkSheetTitle)
+                            .foregroundStyle(.primary)
+                        Text(deleteConfirmMessage)
+                            .font(.inkCallout)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    HStack(spacing: 10) {
+                        Button("Cancel") { dismissDeleteConfirm() }
+                            .keyboardShortcut(.cancelAction)
+                        Button("Delete All", role: .destructive) { confirmDeleteAll() }
+                            .keyboardShortcut(.defaultAction)
+                    }
+                    .controlSize(.large)
+                    .buttonStyle(.bordered)
+                }
+                .padding(24)
+                .frame(width: 320)
+            }
+        }
+    }
+
+    // Exact count + plural so the number itself adds a beat of friction before an
+    // irreversible wipe. "will be permanently removed" per the locked copy.
+    private var deleteConfirmMessage: String {
+        let n = history.entries.count
+        let noun = n == 1 ? "transcript" : "transcripts"
+        return "\(n) \(noun) will be permanently removed. This can't be undone."
+    }
+
+    private func dismissDeleteConfirm() {
+        withAnimation(.easeOut(duration: 0.12)) { showDeleteConfirm = false }
+    }
+
+    private func confirmDeleteAll() {
+        history.clear()
+        collapseSearch()
+        dismissDeleteConfirm()
     }
 
     private func columnHeader(_ title: String, subtitle: String?) -> some View {
@@ -458,6 +739,15 @@ struct MainWindowView: View {
             // Pinned section headers keep the current day (Today / Yesterday / …)
             // stuck to the top of the panel as you scroll its rows.
             LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                // Reached only with an active query (the empty-history case shows
+                // the Try-It panel upstream), so this is always a "no match" state.
+                if groupedEntries.isEmpty {
+                    Text("No transcripts match “\(searchQuery)”")
+                        .font(.inkCallout)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.top, 56)
+                }
                 ForEach(groupedEntries) { group in
                     Section {
                         ForEach(Array(group.entries.enumerated()), id: \.element.id) { index, entry in

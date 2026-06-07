@@ -103,7 +103,18 @@ private struct WindowFrameReader: NSViewRepresentable {
 
     final class TrackingView: NSView {
         var onFrame: ((CGRect) -> Void)?
-        private func report() { if window != nil { onFrame?(convert(bounds, to: nil)) } }
+        private var lastReported: CGRect?
+        // Only emit when the window-space frame actually changes. report() runs on
+        // every layout() pass; the callback writes SwiftUI @State, so an
+        // unconditional emit re-renders → re-lays-out → re-emits, an infinite loop
+        // that pegs the main thread (and, here, freezes the app's CGEventTap).
+        private func report() {
+            guard window != nil else { return }
+            let frame = convert(bounds, to: nil)
+            guard frame != lastReported else { return }
+            lastReported = frame
+            onFrame?(frame)
+        }
         override func layout() { super.layout(); report() }
         override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); report() }
     }
@@ -122,6 +133,10 @@ private struct ClickOutsideDismiss: ViewModifier {
     func body(content: Content) -> some View {
         content
             .background(WindowFrameReader { frameInWindow = $0 })
+            // Install on appear too: a view that's conditionally rendered only
+            // while active (e.g. the History search field) is born with
+            // isActive == true, so onChange never fires for it.
+            .onAppear { if isActive { install() } }
             .onChange(of: isActive) { _, active in active ? install() : remove() }
             .onDisappear(perform: remove)
     }
