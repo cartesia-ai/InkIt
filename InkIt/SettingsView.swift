@@ -755,7 +755,7 @@ private struct SettingsSearchResults: View {
         case "general.debug":
             SettingsToggle(
                 "Debug logging",
-                caption: "Writes a developer trace to ~/Library/Logs/InkIt-debug.log. Off by default — traces include your transcripts and on-screen context",
+                caption: "Writes a developer trace to ~/Library/Logs/InkIt-debug.log.",
                 isOn: $settings.debugLoggingEnabled
             )
         case "polish.toggle":
@@ -771,10 +771,14 @@ private struct SettingsSearchResults: View {
                 isOn: $settings.screenContextEnabled
             )
         case "polish.provider":
-            Picker("Provider", selection: $settings.rewriteProvider) {
-                ForEach(LLMProvider.allCases) { p in
-                    Text(p.isRecommended ? "\(p.displayName) (Recommended)" : p.displayName).tag(p)
+            LabeledContent("Provider") {
+                Picker("", selection: $settings.rewriteProvider) {
+                    ForEach(LLMProvider.allCases) { p in
+                        Text(p.isRecommended ? "\(p.displayName) (Recommended)" : p.displayName).tag(p)
+                    }
                 }
+                .labelsHidden()
+                .modifier(PointingHandCursor())
             }
             LabeledContent("Model", value: settings.rewriteModel)
         case "polish.key":
@@ -818,6 +822,30 @@ private extension View {
 // (canvas → surface → lift → card). See DESIGN_SYSTEM.md › Color and
 // prototypes/settings-surface-elevation.html.
 
+/// Spreads a `LabeledContent`'s label to the leading edge and its control to the
+/// trailing edge — the label-left / control-right row a grouped `Form` gave us for
+/// free, restored now that Settings rows live on the custom `SettingsCard` surface
+/// instead of inside a `Form` (which otherwise packs the two together on the left).
+/// Applied once at the `SettingsStack` level so every row shares the one pattern:
+/// API-key fields, the provider/microphone pickers, the hotkey recorder, and the
+/// permission buttons. The activation-mode and appearance pickers are full-width
+/// card pickers, not `LabeledContent`, so they stay full-width — the two intended
+/// exceptions.
+private struct SettingsRowLabeledContentStyle: LabeledContentStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 12) {
+            configuration.label
+            Spacer(minLength: 12)
+            configuration.content
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private extension LabeledContentStyle where Self == SettingsRowLabeledContentStyle {
+    static var settingsRow: SettingsRowLabeledContentStyle { .init() }
+}
+
 /// Scrolling column of sections on the warm canvas. Drop-in replacement for
 /// `Form { … }.formStyle(.grouped).scrollContentBackground(.hidden)`.
 private struct SettingsStack<Content: View>: View {
@@ -831,6 +859,9 @@ private struct SettingsStack<Content: View>: View {
             .padding(.top, 8)
             .padding(.bottom, 28)
             .frame(maxWidth: .infinity, alignment: .leading)
+            // Restore the label-left / control-right row the grouped Form gave us;
+            // every LabeledContent in the panes and search inherits it from here.
+            .labeledContentStyle(.settingsRow)
         }
         .background(Color.canvas)
     }
@@ -978,7 +1009,7 @@ private struct GeneralSettingsPane: View {
             SettingsGroup {
                 SettingsToggle(
                     "Debug logging",
-                    caption: "Writes a developer trace to ~/Library/Logs/InkIt-debug.log. Off by default — traces include your transcripts and on-screen context",
+                    caption: "Writes a developer trace to ~/Library/Logs/InkIt-debug.log.",
                     isOn: $settings.debugLoggingEnabled
                 )
             } header: {
