@@ -64,23 +64,28 @@ private struct SettingsToggle: View {
     }
 
     var body: some View {
-        Toggle(isOn: $isOn) {
-            if let caption {
-                VStack(alignment: .leading, spacing: SettingsMetrics.captionSpacing) {
-                    Text(title)
+        // Spread the label and switch to the row's edges ourselves — outside a
+        // grouped `Form`, a `Toggle`'s label and knob hug together instead.
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: SettingsMetrics.captionSpacing) {
+                Text(title)
+                if let caption {
                     Text(caption)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-            } else {
-                Text(title)
             }
+            Spacer(minLength: 12)
+            Toggle("", isOn: $isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .tint(.accentColor)
+                .controlSize(.small)
+                .modifier(PointingHandCursor())
         }
-        .toggleStyle(.switch)
-        .tint(.accentColor)
-        .controlSize(.small)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
-        .modifier(PointingHandCursor())
     }
 }
 
@@ -713,9 +718,9 @@ private struct SettingsSearchResults: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            Form {
+            SettingsStack {
                 ForEach(grouped, id: \.pane) { group in
-                    Section {
+                    SettingsGroup {
                         ForEach(group.matches) { item in
                             row(for: item.anchor)
                         }
@@ -724,8 +729,6 @@ private struct SettingsSearchResults: View {
                     }
                 }
             }
-            .formStyle(.grouped)
-            .scrollContentBackground(.hidden)
             .onAppear { permissions.startPolling() }
             .onDisappear { permissions.stopPolling() }
         }
@@ -805,6 +808,99 @@ private extension View {
     }
 }
 
+// MARK: - Grouped settings layout
+//
+// Replaces SwiftUI's `.formStyle(.grouped)`. The native grouped section
+// background lands *below* `Color.canvas`, so every section read as a sunken
+// well — the chrome inverted, content felt recessed instead of raised. These
+// primitives put each section on `Color.lift` with a hairline (no shadow): one
+// calm step *above* the canvas, in line with the app's surface ladder
+// (canvas → surface → lift → card). See DESIGN_SYSTEM.md › Color and
+// prototypes/settings-surface-elevation.html.
+
+/// Scrolling column of sections on the warm canvas. Drop-in replacement for
+/// `Form { … }.formStyle(.grouped).scrollContentBackground(.hidden)`.
+private struct SettingsStack<Content: View>: View {
+    @ViewBuilder var content: Content
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                content
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
+            .padding(.bottom, 28)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(Color.canvas)
+    }
+}
+
+/// The `lift` card a group's rows sit on: hairline border, no shadow, rows split
+/// by leading-inset hairline dividers — the macOS grouped inset, recolored to the
+/// app's paper. Auto-divides whatever rows it's handed.
+private struct SettingsCard<Content: View>: View {
+    @ViewBuilder var content: Content
+    var body: some View {
+        _VariadicView.Tree(SettingsRows()) { content }
+            .background(
+                RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
+                    .fill(Color.lift)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
+                    .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
+            )
+    }
+}
+
+/// Lays each row with the shared inset and drops a hairline between rows (never
+/// after the last). `_VariadicView` is what lets a `SettingsCard { rowA; rowB }`
+/// call site read like a `Section` while we own the divider + padding.
+private struct SettingsRows: _VariadicView.MultiViewRoot {
+    @ViewBuilder func body(children: _VariadicView.Children) -> some View {
+        let last = children.last?.id
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(children) { child in
+                child
+                    .padding(.horizontal, 15)
+                    .padding(.vertical, 11)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if child.id != last {
+                    Divider().padding(.leading, 15)
+                }
+            }
+        }
+    }
+}
+
+/// A muted header above a `lift` card — the standard section. Mirrors
+/// `Section(content:header:)` so call sites read the same.
+private struct SettingsGroup<Header: View, Content: View>: View {
+    @ViewBuilder var content: Content
+    @ViewBuilder var header: Header
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            header
+            SettingsCard { content }
+        }
+    }
+}
+
+/// A header above bare content with no card chrome — for sections whose content
+/// is already a self-contained surface (the activation / appearance card pickers
+/// bring their own `lift` cards, so wrapping them in another would be lift-on-lift).
+private struct SettingsPlainGroup<Header: View, Content: View>: View {
+    @ViewBuilder var content: Content
+    @ViewBuilder var header: Header
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            header
+            content
+        }
+    }
+}
+
 /// Dictation pane — the core flow: how you trigger dictation (activation mode,
 /// shortcut), what it listens to (microphone), and what powers transcription
 /// (the Cartesia key + language). The settings a user actually configures to
@@ -813,14 +909,14 @@ private struct DictationSettingsPane: View {
     @EnvironmentObject var settings: SettingsStore
 
     var body: some View {
-        Form {
-            Section {
+        SettingsStack {
+            SettingsPlainGroup {
                 ActivationModeCardPicker(mode: $settings.dictationMode)
             } header: {
                 Text("Activation mode").settingsSectionHeader()
             }
 
-            Section {
+            SettingsGroup {
                 HotkeyRecorder()
                     .environmentObject(settings)
                 SettingsToggle("Play sound on press and release", isOn: $settings.playFeedbackSounds)
@@ -830,15 +926,13 @@ private struct DictationSettingsPane: View {
 
             MicrophoneSection()
 
-            Section {
+            SettingsGroup {
                 CartesiaKeyField()
                 LanguageRow()
             } header: {
                 Text("Transcription").settingsSectionHeader()
             }
         }
-        .formStyle(.grouped)
-        .scrollContentBackground(.hidden)
         .navigationTitle("Dictation")
     }
 }
@@ -853,20 +947,20 @@ private struct GeneralSettingsPane: View {
     @StateObject private var permissions = PermissionsService.shared
 
     var body: some View {
-        Form {
-            Section {
+        SettingsStack {
+            SettingsPlainGroup {
                 AppearanceCardPicker(selection: $settings.appearance)
             } header: {
                 Text("Appearance").settingsSectionHeader()
             }
 
-            Section {
+            SettingsGroup {
                 SettingsToggle("Launch InkIt at login", isOn: $settings.launchAtLogin)
             } header: {
                 Text("Behavior").settingsSectionHeader()
             }
 
-            Section {
+            SettingsGroup {
                 PermissionRow(label: "Microphone",
                               subtitle: "So InkIt can hear you",
                               granted: permissions.hasMicrophone) {
@@ -881,7 +975,7 @@ private struct GeneralSettingsPane: View {
                 Text("Permissions").settingsSectionHeader()
             }
 
-            Section {
+            SettingsGroup {
                 SettingsToggle(
                     "Debug logging",
                     caption: "Writes a developer trace to ~/Library/Logs/InkIt-debug.log. Off by default — traces include your transcripts and on-screen context",
@@ -891,8 +985,6 @@ private struct GeneralSettingsPane: View {
                 Text("Advanced").settingsSectionHeader()
             }
         }
-        .formStyle(.grouped)
-        .scrollContentBackground(.hidden)
         .navigationTitle("General")
         .onAppear {
             settings.syncLaunchAtLoginFromSystem()
@@ -949,7 +1041,10 @@ private struct ActivationModeCard: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(
                 RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
-                    .fill(Color.card)
+                    // `lift`, not white `card`, so the activation cards match the
+                    // grouped section surfaces and the whole pane reads as one
+                    // ladder above the canvas (DESIGN_SYSTEM.md › Color).
+                    .fill(Color.lift)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
@@ -1019,7 +1114,7 @@ private struct CartesiaKeyField: View {
 /// (surfaced here as the "unavailable" caption). See AudioCaptureService.
 private struct MicrophoneSection: View {
     var body: some View {
-        Section {
+        SettingsGroup {
             MicrophonePickerRow()
         } header: {
             Text("Microphone").settingsSectionHeader()
@@ -1047,14 +1142,21 @@ private struct MicrophonePickerRow: View {
     }
 
     var body: some View {
-        Group {
-            Picker("Input device", selection: $settings.preferredInputDeviceUID) {
-                Text("System default").tag("")
-                Divider()
-                ForEach(devices.devices) { device in
-                    Text(device.isBluetooth ? "\(device.name) (Bluetooth)" : device.name)
-                        .tag(device.uid)
+        // One row block: label-left / picker-right (spread via LabeledContent,
+        // since we're outside a grouped Form), with the advisory caption tucked
+        // beneath so no hairline divides it from the picker it explains.
+        VStack(alignment: .leading, spacing: 6) {
+            LabeledContent("Input device") {
+                Picker("", selection: $settings.preferredInputDeviceUID) {
+                    Text("System default").tag("")
+                    Divider()
+                    ForEach(devices.devices) { device in
+                        Text(device.isBluetooth ? "\(device.name) (Bluetooth)" : device.name)
+                            .tag(device.uid)
+                    }
                 }
+                .labelsHidden()
+                .modifier(PointingHandCursor())
             }
 
             if let caption {
@@ -1104,7 +1206,7 @@ struct PolishSettingsView: View {
     }
 
     var body: some View {
-        Form {
+        SettingsStack {
             switch settings.polishUIState {
             case .setup:     setupSections
             case .on:        configuredSections(paused: false, broken: false)
@@ -1112,15 +1214,13 @@ struct PolishSettingsView: View {
             case .keyBroken: configuredSections(paused: false, broken: true)
             }
         }
-        .formStyle(.grouped)
-        .scrollContentBackground(.hidden)
         .navigationTitle("Polish")
     }
 
     // MARK: Setup (no key)
 
     @ViewBuilder private var setupSections: some View {
-        Section {
+        SettingsGroup {
             providerPicker
             modelRow
             keyField
@@ -1141,7 +1241,7 @@ struct PolishSettingsView: View {
 
     @ViewBuilder private func configuredSections(paused: Bool, broken: Bool) -> some View {
         if broken {
-            Section {
+            SettingsCard {
                 Label {
                     Text("Polish is paused. Your key stopped working. Transcripts are pasting unchanged. Re-enter a key to resume.")
                 } icon: {
@@ -1151,7 +1251,7 @@ struct PolishSettingsView: View {
             }
         }
 
-        Section {
+        SettingsGroup {
             SettingsToggle(
                 "Polish transcripts",
                 caption: "Cleans up fillers, punctuation, and misheard words",
@@ -1174,7 +1274,7 @@ struct PolishSettingsView: View {
         // Always expanded: the provider dropdown and key field are live at all
         // times, so switching providers or pasting a new key is one click away —
         // no Change/Done round-trip, no collapsed summary to expand first.
-        Section {
+        SettingsGroup {
             providerPicker
             modelRow
             keyField
@@ -1186,10 +1286,16 @@ struct PolishSettingsView: View {
     // MARK: Shared rows
 
     private var providerPicker: some View {
-        Picker("Provider", selection: $settings.rewriteProvider) {
-            ForEach(LLMProvider.allCases) { p in
-                Text(p.isRecommended ? "\(p.displayName) (Recommended)" : p.displayName).tag(p)
+        // Spread label / popup to the row edges (LabeledContent), as we're no
+        // longer inside a grouped Form that would do it automatically.
+        LabeledContent("Provider") {
+            Picker("", selection: $settings.rewriteProvider) {
+                ForEach(LLMProvider.allCases) { p in
+                    Text(p.isRecommended ? "\(p.displayName) (Recommended)" : p.displayName).tag(p)
+                }
             }
+            .labelsHidden()
+            .modifier(PointingHandCursor())
         }
     }
 
