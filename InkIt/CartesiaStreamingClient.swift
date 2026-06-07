@@ -208,6 +208,28 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
         if reportClosed { onClosed?(joinedTranscript()) }
     }
 
+    /// Decide whether a terminal failure is a real error the user should see, or
+    /// a silent / too-short press that just said nothing. A press with no (or
+    /// near-no) audio can make Cartesia reject the session — sometimes as an
+    /// in-stream `error` event, but more often by closing the socket (surfacing
+    /// through `receive()` or `didCompleteWithError`). In every case the signal
+    /// is the same: the failure classifies as `.unknown` (unclassified / 400)
+    /// AND we never received any transcript content. Collapse those to the clean
+    /// empty-transcript path (onClosed → idle, no notch error). Real failures
+    /// (offline, timeout, 401/402/429/5xx, or a 400 after partial content) keep
+    /// their classification and surface via `onError`.
+    private func reportFailureOrCollapse(_ failure: STTFailure, errorReason: CloseReason) {
+        stateLock.lock()
+        let hasContent = !completedTurns.isEmpty || !currentTurn.isEmpty
+        stateLock.unlock()
+        if failure == .unknown && !hasContent {
+            finishClose(reason: .silentNoAudio, reportClosed: true)
+        } else {
+            onError?(failure)
+            finishClose(reason: errorReason, reportClosed: false)
+        }
+    }
+
     // MARK: - Receive loop
 
     private func receive() {
@@ -216,8 +238,10 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
             switch result {
             case .failure(let error):
                 if !self.hasClosed {
-                    self.onError?(STTFailure.classify(transportError: error, response: self.task?.response))
-                    self.finishClose(reason: .receiveFailed, reportClosed: false)
+                    self.reportFailureOrCollapse(
+                        STTFailure.classify(transportError: error, response: self.task?.response),
+                        errorReason: .receiveFailed
+                    )
                 }
             case .success(let message):
                 switch message {
@@ -278,8 +302,18 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
             let code = json["error_code"] as? String
             let msg = (json["message"] as? String) ?? (json["title"] as? String) ?? "Cartesia error"
             NSLog("[InkIt] STT error event: status=\(status.map(String.init) ?? "nil") code=\(code ?? "nil") msg=\(msg)")
-            onError?(STTFailure.classify(statusCode: status, errorCode: code))
-            finishClose(reason: .serverError, reportClosed: false)
+            // A too-short / silent press can make Cartesia reject the session with
+            // a 400 instead of returning an empty turn. That's not a failure the
+            // user should see ("Couldn't transcribe" reads as something broke) —
+            // it just means they said nothing. When the 400 classifies as
+            // `.unknown` AND we never received any transcript content, collapse to
+            // the clean empty-transcript path (onClosed → idle, no notch error)
+            // instead of surfacing an error. Real failures (401/402/429/5xx, or a
+            // 400 after partial content) still report via onError.
+            reportFailureOrCollapse(
+                STTFailure.classify(statusCode: status, errorCode: code),
+                errorReason: .serverError
+            )
 
         default:
             break
@@ -338,11 +372,15 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         guard !hasClosed else { return }
         if let error {
-            onError?(STTFailure.classify(transportError: error, response: task.response))
-            finishClose(reason: .receiveFailed, reportClosed: false)
+            reportFailureOrCollapse(
+                STTFailure.classify(transportError: error, response: task.response),
+                errorReason: .receiveFailed
+            )
         } else if let http = task.response as? HTTPURLResponse, http.statusCode >= 400 {
-            onError?(STTFailure.classify(statusCode: http.statusCode, errorCode: nil))
-            finishClose(reason: .receiveFailed, reportClosed: false)
+            reportFailureOrCollapse(
+                STTFailure.classify(statusCode: http.statusCode, errorCode: nil),
+                errorReason: .receiveFailed
+            )
         }
     }
 }
@@ -354,6 +392,7 @@ enum CloseReason: String, Codable {
     case serverClosed         // server closed the socket before a post-close turn.end (e.g. nothing to flush)
     case graceTimerExpired    // safety timer fired before the server finished
     case serverError          // server sent {"type":"error"}
+    case silentNoAudio        // 400 on a press with no transcript content — treated as "said nothing"
     case receiveFailed        // receive loop errored
     case externalCancel       // cancel() called from outside (e.g. audio start failure, app error)
 }
