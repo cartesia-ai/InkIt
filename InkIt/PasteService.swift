@@ -124,19 +124,44 @@ enum FocusedEditable {
         guard AXIsProcessTrusted() else { return Result(isEditable: false, app: nil) }
 
         let system = AXUIElementCreateSystemWide()
-        var focusedRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focusedRef) == .success,
-              let focused = focusedRef, CFGetTypeID(focused) == AXUIElementGetTypeID() else {
+        guard let focused = copyElement(system, kAXFocusedUIElementAttribute as CFString) else {
             return Result(isEditable: false, app: nil)
         }
-        let element = focused as! AXUIElement
 
         var pid: pid_t = 0
-        let app = AXUIElementGetPid(element, &pid) == .success && pid > 0
+        let app = AXUIElementGetPid(focused, &pid) == .success && pid > 0
             ? NSRunningApplication(processIdentifier: pid)
             : nil
 
-        return Result(isEditable: isEditable(element), app: app)
+        // Fast path: the system-wide focused element is itself editable — true
+        // for native fields and most Electron inputs.
+        if isEditable(focused) {
+            return Result(isEditable: true, app: app)
+        }
+
+        // Chromium/Electron fallback. For web-rendered content the system-wide
+        // query frequently stops at the enclosing web area/group rather than
+        // descending to the focused textbox, so the fast path sees a
+        // non-editable container and we would wrongly hold the transcript in
+        // History (observed with Antigravity, and the same risk for VS Code,
+        // Slack, etc.). Re-resolve through the application element — the path
+        // ContextCaptureService already uses to reach these fields reliably —
+        // then follow kAXFocusedUIElementAttribute down to the focused node.
+        if pid > 0 {
+            let appElement = AXUIElementCreateApplication(pid)
+            if let appFocused = copyElement(appElement, kAXFocusedUIElementAttribute as CFString),
+               descendToEditable(from: appFocused) {
+                DebugLog.info("FocusedEditable: resolved editable via app-element descent (system-wide query saw a container)")
+                return Result(isEditable: true, app: app)
+            }
+        }
+        // Last resort: descend from the system-wide container itself.
+        if descendToEditable(from: focused) {
+            DebugLog.info("FocusedEditable: resolved editable via system-wide container descent")
+            return Result(isEditable: true, app: app)
+        }
+
+        return Result(isEditable: false, app: app)
     }
 
     private static func isEditable(_ element: AXUIElement) -> Bool {
@@ -159,5 +184,31 @@ enum FocusedEditable {
                 || role == kAXComboBoxRole
         }
         return false
+    }
+
+    /// Follows `kAXFocusedUIElementAttribute` from `element` down through web
+    /// container nodes looking for an editable element. Chromium exposes the
+    /// focused web node this way even when the system-wide focus query stops at
+    /// the enclosing web area. Bounded in depth and guarded against self-cycles.
+    private static func descendToEditable(from element: AXUIElement, maxHops: Int = 6) -> Bool {
+        var current = element
+        for _ in 0..<maxHops {
+            if isEditable(current) { return true }
+            guard let next = copyElement(current, kAXFocusedUIElementAttribute as CFString),
+                  !CFEqual(current, next) else { return false }
+            current = next
+        }
+        return isEditable(current)
+    }
+
+    /// Copies an AXUIElement-valued attribute, returning nil unless the value is
+    /// actually an AXUIElement.
+    private static func copyElement(_ element: AXUIElement, _ attribute: CFString) -> AXUIElement? {
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute, &ref) == .success,
+              let value = ref, CFGetTypeID(value) == AXUIElementGetTypeID() else {
+            return nil
+        }
+        return (value as! AXUIElement)
     }
 }
