@@ -29,6 +29,43 @@ extension Color {
     /// Always-dark tooltip / HUD-adjacent pill. Matches the notch HUD; ignores
     /// appearance by design.
     static let hudPill = Color.black
+
+    /// Dimming scrim behind a modal sheet (the delete-all confirm).
+    static let scrim = Color.black.opacity(0.18)
+}
+
+/// Corner-radius scale. Every `RoundedRectangle(cornerRadius:)` / `.hoverBackdrop`
+/// reads from here so the app's curvature stays on one ladder (DESIGN_SYSTEM.md ›
+/// Shape). Named by the role each step plays, smallest to largest.
+enum Radius {
+    static let bar: CGFloat = 2        // thin accent bars
+    static let inset: CGFloat = 5      // small insets inside the appearance preview
+    static let chip: CGFloat = 6       // icon chips, copy glyph
+    static let keycap: CGFloat = 7     // keycap & field chips
+    static let control: CGFloat = 8    // header icons, history row, sidebar, close
+    static let button: CGFloat = 9     // buttons, gear, send, the appearance swatch
+    static let card: CGFloat = 10      // selectable option cards
+    static let well: CGFloat = 12      // the inset result well in the practice card
+    static let tile: CGFloat = 14      // glyph tiles, benefit & permission rows
+    static let key: CGFloat = 15       // the hero push-to-talk keycap
+    static let panel: CGFloat = 16     // modal / large rounded panels
+    static let practice: CGFloat = 18  // the Try-It practice-card container
+    static let ring: CGFloat = 19      // the invite ring around the keycap
+}
+
+/// Drop-shadow inks — the app's elevation palette as neutral black at fixed
+/// opacities, lightest (barely-there contact) to heaviest (modal). One source of
+/// truth so depth reads consistently; the blur/offset stays at the call site
+/// since it varies per surface (DESIGN_SYSTEM.md › Shape).
+enum Elevation {
+    static let ambient = Color.black.opacity(0.04)  // faint contact shadow
+    static let soft    = Color.black.opacity(0.06)  // resting cards (practice card, keycap)
+    static let hover   = Color.black.opacity(0.07)  // an option card lifting on hover
+    static let drop    = Color.black.opacity(0.08)  // onboarding card drop
+    static let card    = Color.black.opacity(0.12)  // appearance swatch at rest
+    static let lifted  = Color.black.opacity(0.18)  // swatch on hover / onboarding hero mark
+    static let chip    = Color.black.opacity(0.22)  // small floating chip
+    static let modal   = Color.black.opacity(0.28)  // modal sheet
 }
 
 extension Font {
@@ -78,6 +115,83 @@ extension Font {
     /// not for general app UI. Brand wordmark and status label.
     static let inkNotchBrand = Font.system(size: 8, weight: .semibold)
     static let inkNotchLabel = Font.system(size: 10, weight: .medium)
+}
+
+// MARK: - Interaction tokens
+//
+// Hover/press affordances are part of the design language too, so the values that
+// drive them live here as named tokens — one source of truth — instead of being
+// re-derived as magic numbers at each call site. See DESIGN_SYSTEM.md ›
+// Interaction. Prefer the `.hoverBackdrop()` modifier below for the common case;
+// reach for these constants only for the bespoke surfaces (the ink button's
+// brightened fill, the progress dots, a full-width row tint).
+
+/// The app's motion timings — one named curve per kind of transition so no view
+/// re-types a raw `.easeOut(duration:)`. See DESIGN_SYSTEM.md › Interaction.
+enum Motion {
+    /// Quick UI transition — hover lifts, popover/panel show-hide, confirm dialogs.
+    static let quick: Animation = .easeOut(duration: 0.12)
+    /// State-change feedback — a control switching look (copied ✓, field focus).
+    static let state: Animation = .easeOut(duration: 0.15)
+    /// Inline expand/collapse — the toolbar search field opening and closing.
+    static let expand: Animation = .easeOut(duration: 0.16)
+}
+
+enum Hover {
+    /// Soft backdrop a *borderless* control lifts on hover (icon chips, nav rows,
+    /// header buttons). Opacity of `.primary` so it adapts to appearance.
+    static let backdropOpacity: Double = 0.08
+    /// How far a solid fill shifts on hover (the ink button brightens by this;
+    /// the progress dots darken by it). Brighten-only, no movement — locked.
+    static let fillShift: Double = 0.07
+    /// Firmed border on a selectable card while hovered, vs the hairline at rest.
+    static let borderOpacity: Double = 0.22
+    /// Warm tint a full-width row lifts on hover (the transcript history rows).
+    static let rowTintOpacity: Double = 0.055
+    /// The one timing for every hover transition.
+    static let animation: Animation = Motion.quick
+
+    /// Stroke for a selectable card: amber when chosen, a firmed neutral on
+    /// hover, the system hairline at rest. Shared by the activation-mode and
+    /// appearance cards so both pick the same way.
+    static func cardBorder(isSelected: Bool, hovering: Bool) -> Color {
+        if isSelected { return .accentColor }
+        return hovering ? Color.primary.opacity(borderOpacity) : Color(nsColor: .separatorColor)
+    }
+}
+
+/// The standard hover affordance for a *borderless* control: a soft rounded
+/// backdrop that fades in under the content on hover, on the shared
+/// `Hover.animation` timing. One definition so every icon chip, nav row, gear,
+/// and header button lifts identically (DESIGN_SYSTEM.md › Interaction) — apply
+/// it with `.hoverBackdrop()` rather than re-writing the `@State`/`onHover`/
+/// `background` block. Pass `isActive` for a selected/current control that should
+/// hold the amber `accentSoft` fill and ignore hover, so selection and hover
+/// never stack.
+struct HoverBackdrop: ViewModifier {
+    var cornerRadius: CGFloat = 8
+    var isActive: Bool = false
+    @State private var hovering = false
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        content
+            .background(
+                shape.fill(isActive
+                           ? Color.accentSoft
+                           : Color.primary.opacity(hovering ? Hover.backdropOpacity : 0))
+            )
+            .contentShape(shape)
+            .onHover { hovering = $0 }
+            .animation(Hover.animation, value: hovering)
+    }
+}
+
+extension View {
+    /// Lift the app's standard soft hover backdrop. See `HoverBackdrop`.
+    func hoverBackdrop(cornerRadius: CGFloat = 8, isActive: Bool = false) -> some View {
+        modifier(HoverBackdrop(cornerRadius: cornerRadius, isActive: isActive))
+    }
 }
 
 /// Swaps the cursor to the pointing-hand while hovering, signalling that a
@@ -133,19 +247,13 @@ struct ExternalLink: View {
 private struct HeaderIconLabel: View {
     let systemName: String
     let hint: String
-    @State private var hovering = false
 
     var body: some View {
         Image(systemName: systemName)
             .font(.system(size: 14, weight: .medium))  // ds-allow: icon
             .foregroundStyle(.secondary)
             .frame(width: 28, height: 28)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.primary.opacity(hovering ? 0.08 : 0))
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .onHover { hovering = $0 }
+            .hoverBackdrop(cornerRadius: Radius.control)
             .modifier(PointingHandCursor())
             .inkHoverHint(hint)
     }
@@ -175,7 +283,6 @@ private struct ManageMenuRow: View {
     var checked: Bool = false
     var destructive: Bool = false
     let action: () -> Void
-    @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
@@ -192,14 +299,9 @@ private struct ManageMenuRow: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Color.primary.opacity(hovering ? 0.08 : 0))
-            )
-            .contentShape(Rectangle())
+            .hoverBackdrop(cornerRadius: Radius.chip)
         }
         .buttonStyle(.plain)
-        .onHover { hovering = $0 }
         .modifier(PointingHandCursor())
     }
 }
@@ -215,17 +317,17 @@ private struct InkModal<Content: View>: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.18)
+            Color.scrim
                 .contentShape(Rectangle())
                 .onTapGesture(perform: onDismiss)
             content
                 .background(Color.canvas)
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: Radius.panel, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    RoundedRectangle(cornerRadius: Radius.panel, style: .continuous)
                         .strokeBorder(Color.primary.opacity(0.08))
                 )
-                .shadow(color: .black.opacity(0.28), radius: 40, y: 18)
+                .shadow(color: Elevation.modal, radius: 40, y: 18)
         }
         .transition(.opacity)
     }
@@ -348,7 +450,6 @@ struct MainWindowView: View {
     @EnvironmentObject var history: TranscriptHistoryStore
     @State private var copiedID: UUID?
     @State private var showSettings = false
-    @State private var gearHovering = false
     @State private var settingsPane: SettingsView.Pane = .dictation
     // History controls. Search collapses to a single icon at rest and expands
     // inline; the field stays open while there's a query and collapses only when
@@ -427,7 +528,7 @@ struct MainWindowView: View {
             .overlay { deleteConfirmModal }
             // The "Settings…" menu item (⌘,) posts this; open the modal in response.
             .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
-                withAnimation(.easeOut(duration: 0.12)) { showSettings = true }
+                withAnimation(Motion.quick) { showSettings = true }
             }
     }
 
@@ -443,24 +544,18 @@ struct MainWindowView: View {
     }
 
     private func dismissSettings() {
-        withAnimation(.easeOut(duration: 0.12)) { showSettings = false }
+        withAnimation(Motion.quick) { showSettings = false }
     }
 
     private var gearButton: some View {
-        Button { withAnimation(.easeOut(duration: 0.12)) { showSettings.toggle() } } label: {
+        Button { withAnimation(Motion.quick) { showSettings.toggle() } } label: {
             Image(systemName: "gearshape")
                 .font(.system(size: 17, weight: .medium))  // ds-allow: icon
                 .foregroundStyle(showSettings ? Color.accentColor : .secondary)
                 .frame(width: 34, height: 34)
-                .background(
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(showSettings ? Color.accentSoft
-                              : Color.primary.opacity(gearHovering ? 0.08 : 0))
-                )
-                .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .hoverBackdrop(cornerRadius: Radius.button, isActive: showSettings)
         }
         .buttonStyle(.plain)
-        .onHover { gearHovering = $0 }
         .modifier(PointingHandCursor())
         .inkHoverHint("Settings")
     }
@@ -558,7 +653,7 @@ struct MainWindowView: View {
         }
         .padding(.horizontal, 4)
         .padding(.bottom, 12)
-        .animation(.easeOut(duration: 0.16), value: searchExpanded)
+        .animation(Motion.expand, value: searchExpanded)
         // ⌘F opens (and focuses) search from anywhere in the window. Zero-opacity
         // so it carries the shortcut without drawing anything.
         .background(
@@ -609,11 +704,11 @@ struct MainWindowView: View {
         .padding(.vertical, 5)
         .frame(width: 230)
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
                 .fill(Color.card)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.08))
         )
         // Click anywhere outside the field collapses it and drops the caret,
@@ -647,7 +742,7 @@ struct MainWindowView: View {
                     .padding(.vertical, 4)
                 ManageMenuRow(title: "Delete All", icon: "trash", destructive: true) {
                     showManageMenu = false
-                    withAnimation(.easeOut(duration: 0.12)) { showDeleteConfirm = true }
+                    withAnimation(Motion.quick) { showDeleteConfirm = true }
                 }
             }
             .padding(5)
@@ -656,7 +751,7 @@ struct MainWindowView: View {
     }
 
     private func expandSearch() {
-        withAnimation(.easeOut(duration: 0.16)) { searchExpanded = true }
+        withAnimation(Motion.expand) { searchExpanded = true }
         // Focus on the next runloop tick so the field exists before we target it.
         DispatchQueue.main.async { searchFocused = true }
     }
@@ -664,7 +759,7 @@ struct MainWindowView: View {
     private func collapseSearch() {
         searchQuery = ""
         searchFocused = false
-        withAnimation(.easeOut(duration: 0.16)) { searchExpanded = false }
+        withAnimation(Motion.expand) { searchExpanded = false }
     }
 
     // Destructive confirm, on the same warm centered-card chrome as the Settings
@@ -708,7 +803,7 @@ struct MainWindowView: View {
     }
 
     private func dismissDeleteConfirm() {
-        withAnimation(.easeOut(duration: 0.12)) { showDeleteConfirm = false }
+        withAnimation(Motion.quick) { showDeleteConfirm = false }
     }
 
     private func confirmDeleteAll() {
@@ -787,12 +882,12 @@ struct MainWindowView: View {
             }
         )
         .background(Color.lift)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: Radius.tile, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.tile, style: .continuous)
                 .stroke(Color.primary.opacity(0.07), lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.04), radius: 6, y: 1)
+        .shadow(color: Elevation.ambient, radius: 6, y: 1)
     }
 
     // Pinned day header. Carries the panel fill so scrolling rows pass cleanly
@@ -829,9 +924,9 @@ struct MainWindowView: View {
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: Radius.tile, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.tile, style: .continuous)
                 .stroke(Color.primary.opacity(0.07), lineWidth: 1)
         )
     }
@@ -867,7 +962,7 @@ struct MainWindowView: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
-                        .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .background(RoundedRectangle(cornerRadius: Radius.button, style: .continuous)
                             .fill(Color.accentColor))
                 }
                 .buttonStyle(.plain)
@@ -876,9 +971,9 @@ struct MainWindowView: View {
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color.accentSoft)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: Radius.tile, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                RoundedRectangle(cornerRadius: Radius.tile, style: .continuous)
                     .stroke(Color.accentColor.opacity(0.28), lineWidth: 1)
             )
             .padding(.horizontal, 18)
@@ -905,7 +1000,7 @@ struct MainWindowView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 11) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    RoundedRectangle(cornerRadius: Radius.button, style: .continuous)
                         .fill(Color.accentSoft)
                     Image(systemName: icon)
                         .font(.system(size: 15, weight: .semibold))  // ds-allow: icon
@@ -938,9 +1033,9 @@ struct MainWindowView: View {
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: Radius.tile, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.tile, style: .continuous)
                 .stroke(Color.primary.opacity(0.07), lineWidth: 1)
         )
     }
@@ -1021,7 +1116,7 @@ struct MainWindowView: View {
     private func statRow(icon: String, value: String, unit: String, label: String) -> some View {
         HStack(spacing: 13) {
             ZStack {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
                     .fill(Color.accentSoft)
                 Image(systemName: icon)
                     .font(.system(size: 15, weight: .medium))  // ds-allow: icon
@@ -1055,7 +1150,7 @@ struct MainWindowView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    RoundedRectangle(cornerRadius: Radius.button, style: .continuous)
                         .fill(Color.accentSoft)
                     Image(systemName: "sparkles")
                         .font(.system(size: 16, weight: .semibold))  // ds-allow: icon
@@ -1107,7 +1202,7 @@ struct MainWindowView: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
                 .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
                         .fill(Color.accentColor)
                 )
             }
@@ -1290,19 +1385,19 @@ private struct TranscriptHistoryRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(hovering ? Color.accentColor.opacity(0.055) : Color.clear)
+            RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                .fill(hovering ? Color.accentColor.opacity(Hover.rowTintOpacity) : Color.clear)
         )
         // Whole row is click-to-copy. The chips swallow their own taps so
         // inspecting the diff/latency never triggers a copy.
         .onTapGesture { copy() }
         .modifier(PointingHandCursor())
         .onHover { isHovering in
-            withAnimation(.easeOut(duration: 0.12)) {
+            withAnimation(Hover.animation) {
                 hovering = isHovering
             }
         }
-        .animation(.easeOut(duration: 0.15), value: copied)
+        .animation(Motion.state, value: copied)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityLabel(copied ? "Copied transcript" : "Copy transcript")
@@ -1496,7 +1591,7 @@ private struct PolishMiniDemo: View {
         }
         .padding(11)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color.primary.opacity(0.04)))
+        .background(RoundedRectangle(cornerRadius: Radius.button, style: .continuous).fill(Color.primary.opacity(0.04)))
         .onAppear {
             // Animate once: hold on the raw line, then reveal the polished one.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
@@ -1812,10 +1907,10 @@ private struct HoverHintLabel: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                RoundedRectangle(cornerRadius: Radius.chip, style: .continuous)
                     .fill(Color.hudPill)
             )
-            .shadow(color: .black.opacity(0.22), radius: 5, y: 1)
+            .shadow(color: Elevation.chip, radius: 5, y: 1)
     }
 }
 
@@ -1946,39 +2041,28 @@ private struct IconChip: View {
     let systemName: String
     let fg: Color
     let help: String
-    @State private var hovering = false
 
     var body: some View {
         Image(systemName: systemName)
             .font(.system(size: 13, weight: .semibold))  // ds-allow: icon
             .foregroundStyle(fg)
             .frame(width: 24, height: 24)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Color.primary.opacity(hovering ? 0.08 : 0))
-            )
-            .contentShape(Rectangle())
-            .onHover { hovering = $0 }
+            .hoverBackdrop(cornerRadius: Radius.chip)
             .inkHoverHint(help)
     }
 }
 
 private struct CopyTranscriptGlyph: View {
     let copied: Bool
-    @State private var hovering = false
 
     var body: some View {
         Image(systemName: copied ? "checkmark" : "doc.on.doc")
             .font(.system(size: 12, weight: .medium))  // ds-allow: icon
             .foregroundStyle(copied ? Color.accentColor : .secondary)
             .frame(width: 24, height: 24)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(copied ? Color.accentSoft : Color.primary.opacity(hovering ? 0.08 : 0))
-            )
-            .contentShape(Rectangle())
-            .onHover { hovering = $0 }
+            // `copied` holds the amber fill; otherwise the standard hover lift.
+            .hoverBackdrop(cornerRadius: Radius.chip, isActive: copied)
             .inkHoverHint("Copy")
-            .animation(.easeOut(duration: 0.15), value: copied)
+            .animation(Motion.state, value: copied)
     }
 }

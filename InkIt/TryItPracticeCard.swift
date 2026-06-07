@@ -63,7 +63,7 @@ struct TryItPracticeCard: View {
                 // Hold the key cap + result box back for a beat so the eye lands on
                 // the line first, then fade them in and drop the cursor into the box.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                    withAnimation(.easeOut(duration: 0.45)) { revealed = true }
+                    withAnimation(.easeOut(duration: 0.45)) { revealed = true }  // ds-allow: bespoke reveal timing
                     boxFocused = true
                 }
             }
@@ -78,7 +78,7 @@ struct TryItPracticeCard: View {
                     hasPressed = true
                     // Safety: if they press before the timed reveal, snap everything
                     // in so their words have somewhere to land — never a blank panel.
-                    if !revealed { withAnimation(.easeOut(duration: 0.3)) { revealed = true } }
+                    if !revealed { withAnimation(.easeOut(duration: 0.3)) { revealed = true } }  // ds-allow: bespoke reveal timing
                 }
             }
             // Drop the final transcript into the editable field once the take closes.
@@ -124,14 +124,14 @@ struct TryItPracticeCard: View {
         .padding(.vertical, 30)
         .frame(maxWidth: 600)
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.practice, style: .continuous)
                 .fill(Color.card)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.practice, style: .continuous)
                 .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.06), radius: 14, y: 6)
+        .shadow(color: Elevation.soft, radius: 14, y: 6)
     }
 
     // MARK: Prompt — the line to read aloud, marked by a quiet left accent bar
@@ -154,7 +154,7 @@ struct TryItPracticeCard: View {
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
         .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 2, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.bar, style: .continuous)
                 .fill(Color.accentColor)
                 .frame(width: 3)
         }
@@ -202,15 +202,15 @@ struct TryItPracticeCard: View {
         .padding(20)
         .frame(maxWidth: .infinity)
         .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.well, style: .continuous)
                 .fill(Color.paper)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.well, style: .continuous)
                 .stroke(boxFocused ? Color.accentColor.opacity(0.5) : Color(nsColor: .separatorColor),
                         lineWidth: boxFocused ? 1.5 : 1)
         )
-        .animation(.easeOut(duration: 0.15), value: boxFocused)
+        .animation(Motion.state, value: boxFocused)
     }
 
     private var sendButton: some View {
@@ -219,7 +219,7 @@ struct TryItPracticeCard: View {
                 .font(.system(size: 15, weight: .semibold))  // ds-allow: icon
                 .foregroundStyle(.white)
                 .frame(width: 34, height: 34)
-                .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color.accentColor))
+                .background(RoundedRectangle(cornerRadius: Radius.button, style: .continuous).fill(Color.accentColor))
         }
         .buttonStyle(.plain)
         .disabled(!isComplete)
@@ -249,7 +249,7 @@ struct TryItPracticeCard: View {
                     .font(.system(size: 14, weight: .bold))  // ds-allow: inline keycap
                     .foregroundStyle(Color.accentColor)
                     .padding(.horizontal, 9).padding(.vertical, 3)
-                    .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.accentSoft))
+                    .background(RoundedRectangle(cornerRadius: Radius.keycap, style: .continuous).fill(Color.accentSoft))
                 Text("to talk")
             }
             .font(.system(size: 17, weight: .bold))  // ds-allow: practice hint
@@ -257,19 +257,19 @@ struct TryItPracticeCard: View {
         }
         .padding(.horizontal, 26).padding(.vertical, 13)
         .background(
-            RoundedRectangle(cornerRadius: 15, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.key, style: .continuous)
                 .fill(isRecording ? Color.accentSoft : Color.paper)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 15, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.key, style: .continuous)
                 .stroke(isRecording ? Color.recordingAmber : Color(nsColor: .separatorColor),
                         lineWidth: 1.5)
         )
         .scaleEffect(isRecording ? 0.97 : 1)
-        .shadow(color: .black.opacity(0.06), radius: 5, y: 2)
+        .shadow(color: Elevation.soft, radius: 5, y: 2)
         .overlay(inviteRing.opacity(showInvite ? 1 : 0))
         .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isRecording)
-        .animation(.easeOut(duration: 0.4), value: showInvite)
+        .animation(.easeOut(duration: 0.4), value: showInvite)  // ds-allow: bespoke invite-fade timing
     }
 
     /// The glow only invites the *first* press — once `hasPressed` flips it never
@@ -277,14 +277,14 @@ struct TryItPracticeCard: View {
     private var showInvite: Bool { revealed && !hasPressed && !isRecording }
 
     private var inviteRing: some View {
-        RoundedRectangle(cornerRadius: 19, style: .continuous)
+        RoundedRectangle(cornerRadius: Radius.ring, style: .continuous)
             .stroke(Color.accentColor, lineWidth: 2)
             .padding(-6)
             .scaleEffect(invite ? 1.09 : 0.97)
             .opacity(invite ? 0 : 0.5)
             .allowsHitTesting(false)
             .onAppear {
-                withAnimation(.easeOut(duration: 2.1).repeatForever(autoreverses: false)) {
+                withAnimation(.easeOut(duration: 2.1).repeatForever(autoreverses: false)) {  // ds-allow: bespoke invite-pulse timing
                     invite = true
                 }
             }

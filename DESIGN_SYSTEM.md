@@ -133,8 +133,12 @@ don't inline the literal. **Display text uses a token, never a raw
 ### Enforcement (the `ds-allow` escape hatch)
 
 `scripts/check-design-tokens.sh` runs in CI and fails any PR that introduces a
-bare `.system(size: N)` for display text or a raw `Color(red:/white:)`. A genuine
-one-off opts out with a trailing comment that names the reason:
+hardcoded design value: a bare `.system(size: N)` for display text, a raw
+`Color(red:/white:)`, a raw `.easeOut(duration:)` (use a `Motion.*` token), or a
+raw `.black.opacity(…)` shadow/scrim ink (use `Elevation.*` / `Color.scrim`).
+Corner radii live in `enum Radius` by convention — not yet lint-enforced, but
+held to the same rule. A genuine one-off opts out with a trailing comment that
+names the reason:
 
 ```swift
 Image(systemName: "gearshape").font(.system(size: 17, weight: .medium))  // ds-allow: icon
@@ -149,16 +153,96 @@ not a one-off. See `AGENTS.md` for the contributor-facing summary.
 
 ## Shape, spacing, depth
 
-| Token | Value |
+**Corner radii are tokens too** — `enum Radius` in `InkItApp.swift`, named by the
+role each step plays. Every `RoundedRectangle(cornerRadius:)` / `.hoverBackdrop()`
+reads from it; never inline a raw radius number.
+
+| Token | Value | Use |
+|---|---|---|
+| `Radius.bar` | 2 | thin accent bars |
+| `Radius.inset` | 5 | small insets inside the appearance preview |
+| `Radius.chip` | 6 | icon chips, copy glyph |
+| `Radius.keycap` | 7 | keycap & field chips (`SettingsMetrics.fieldCornerRadius` aliases this) |
+| `Radius.control` | 8 | header icons, history row, sidebar row, close button |
+| `Radius.button` | 9 | buttons, gear, send, appearance swatch |
+| `Radius.card` | 10 | selectable option cards |
+| `Radius.well` | 12 | the inset result well in the practice card |
+| `Radius.tile` | 14 | glyph tiles, benefit & permission rows |
+| `Radius.key` | 15 | the hero push-to-talk keycap |
+| `Radius.panel` | 16 | modal / large rounded panels |
+| `Radius.practice` | 18 | the Try-It practice-card container |
+| `Radius.ring` | 19 | the invite ring around the keycap |
+
+**Depth is a token** — `enum Elevation` holds the drop-shadow inks (neutral black
+at fixed opacities, `ambient` 0.04 → `modal` 0.28). Use `.shadow(color: Elevation.x, …)`;
+the blur/offset stays at the call site since it varies per surface. A modal's
+dimming backdrop is `Color.scrim`. **Never** write a raw `.black.opacity(…)` — the
+lint rejects it.
+
+| Other | Value |
 |---|---|
-| Radius — window/cards | 10–12 |
-| Radius — controls / keycaps | 6–7 |
-| Radius — HUD pill (bottom corners) | 11 (unchanged) |
 | Hairline border | `separatorColor`, 0.5–1 pt |
 | Spacing scale | 4 · 8 · 12 · 16 · 20 · 24 |
-| Elevation | system shadow + `.regularMaterial` for floating panels |
+| HUD pill radius | 11 (bottom corners, unchanged) |
+
+### Motion
+
+One named curve per kind of transition — `enum Motion` in `InkItApp.swift`. Never
+re-type a raw `.easeOut(duration:)` (the lint rejects it); a genuinely bespoke
+animation (a reveal, a repeating pulse) opts out with `// ds-allow: <reason>`.
+
+| Token | Value | Use |
+|---|---|---|
+| `Motion.quick` | easeOut 0.12 | hover lifts, popover/panel show-hide, confirm dialogs |
+| `Motion.state` | easeOut 0.15 | a control switching look (copied ✓, field focus) |
+| `Motion.expand` | easeOut 0.16 | the toolbar search field opening/closing |
 
 ---
+
+## Interaction (hover / press)
+
+Hover and press feedback is part of the language, not a per-view afterthought.
+Every clickable surface gives the same family of cues, driven by **one source of
+truth** — the `Hover` token enum and the `.hoverBackdrop()` modifier in
+`InkItApp.swift`. Don't re-derive these numbers at a call site.
+
+| Token | Value | Use |
+|---|---|---|
+| `Hover.backdropOpacity` | `.primary` @ 8% | soft backdrop a *borderless* control lifts on hover (icon chips, nav rows, gear, header buttons, close) |
+| `Hover.fillShift` | ±0.07 brightness | solid fills: the ink button brightens on hover; the progress dots darken. Brighten-only, no movement — locked |
+| `Hover.borderOpacity` | `.primary` @ 22% | firmed border on a selectable card while hovered (vs the hairline at rest) |
+| `Hover.rowTintOpacity` | `accent` @ 5.5% | warm tint a full-width row lifts on hover (transcript history) |
+| `Hover.animation` | `.easeOut(0.12)` | the one timing for every hover transition |
+
+**Patterns (use these, don't hand-roll):**
+
+- **Borderless control** (icon button, nav row, menu row): apply
+  `.hoverBackdrop(cornerRadius:)`. It owns the `@State`, the `onHover`, the
+  animated fill, and the hit shape. Pass `isActive:` for a selected/current
+  control — it then holds the amber `accentSoft` fill and ignores hover, so
+  **selection and hover never stack**. Pair with `PointingHandCursor()` (and an
+  `.inkHoverHint()` where a label helps).
+- **Selectable card** (activation mode, appearance swatch): border via
+  `Hover.cardBorder(isSelected:hovering:)` — amber when chosen, firmed neutral on
+  hover, hairline at rest — animated with `Hover.animation`.
+- **Solid CTA fill** (the ink button): brighten by `Hover.fillShift`; the
+  press-dim (`isPressed → 0.82`) stays. No scale, no lift.
+
+Selection is always amber (`accentColor` / `accentSoft`); hover is always the
+neutral lift. Keeping those two channels separate is what stops the chrome from
+reading busy.
+
+**Cursor (locked):** every clickable control gets `PointingHandCursor` — buttons,
+chips, nav, cards, *and toggles*. This is a web idiom, not the macOS default
+(native controls keep the arrow; the hand is reserved for links), but the app
+applies it everywhere on purpose for one consistent "this is clickable" signal.
+Don't "fix" a control back to the arrow — it'd be the odd one out.
+
+**Toggles / native controls:** a `Toggle` gets the hand cursor and nothing else —
+the switch's own built-in knob/track hover is the affordance. We deliberately do
+**not** add a custom row backdrop behind toggles, pickers, or steppers; full-row
+hover behind form controls isn't the macOS norm and would make one row type read
+differently from its neighbors.
 
 ## Appearance (Light / Dark / System)
 

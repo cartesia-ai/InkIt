@@ -125,22 +125,42 @@ private struct StepIndicator: View {
         // tappable area is larger than the 8pt dot without widening the gaps.
         HStack(spacing: 0) {
             ForEach(OnboardingStep.allCases, id: \.self) { s in
-                let tappable = s != step && isReachable(s)
-                Capsule()
-                    .fill(s.rawValue <= step.rawValue
-                          ? Color.accentColor
-                          : Color.secondary.opacity(0.3))
-                    .frame(width: s == step ? 28 : 8, height: 8)
-                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: step)
-                    // Generous invisible hit target so the tiny dots are easy to
-                    // click; visual size is unchanged.
-                    .padding(.vertical, 10)
-                    .padding(.horizontal, 4)
-                    .contentShape(Rectangle())
-                    .onTapGesture { go(s) }
-                    .modifier(ConditionalPointer(active: tappable))
+                StepDot(
+                    isCurrent: s == step,
+                    isFilled: s.rawValue <= step.rawValue,
+                    tappable: s != step && isReachable(s),
+                    animationKey: step
+                ) { go(s) }
             }
         }
+    }
+}
+
+private struct StepDot: View {
+    let isCurrent: Bool
+    let isFilled: Bool
+    let tappable: Bool
+    let animationKey: OnboardingStep
+    let go: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Capsule()
+            .fill(isFilled ? Color.accentColor : Color.secondary.opacity(0.3))
+            // Tappable (already-completed) dots deepen on hover so they read as
+            // a place you can jump back to; the current and unreachable dots don't.
+            .brightness(tappable && hovering ? -Hover.fillShift : 0)
+            .frame(width: isCurrent ? 28 : 8, height: 8)
+            .animation(.spring(response: 0.4, dampingFraction: 0.8), value: animationKey)
+            .animation(Hover.animation, value: hovering)
+            // Generous invisible hit target so the tiny dots are easy to
+            // click; visual size is unchanged.
+            .padding(.vertical, 10)
+            .padding(.horizontal, 4)
+            .contentShape(Rectangle())
+            .onHover { hovering = tappable && $0 }
+            .onTapGesture(perform: go)
+            .modifier(ConditionalPointer(active: tappable))
     }
 }
 
@@ -168,7 +188,7 @@ private struct WelcomeStep: View {
                 .resizable()
                 .interpolation(.high)
                 .frame(width: 112, height: 112)
-                .shadow(color: .black.opacity(0.18), radius: 12, y: 6)
+                .shadow(color: Elevation.lifted, radius: 12, y: 6)
                 .scaleEffect(pulse ? 1.0 : 0.94)
                 .onAppear {
                     withAnimation(.spring(response: 0.6, dampingFraction: 0.6)) {
@@ -229,11 +249,11 @@ private struct BenefitRow: View {
         }
         .padding(16)
         .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.tile, style: .continuous)
                 .fill(Color.card)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.tile, style: .continuous)
                 .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
         )
     }
@@ -323,11 +343,11 @@ private struct PermissionCard: View {
         }
         .padding(14)
         .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.tile, style: .continuous)
                 .fill(manual ? Color.accentSoft : Color.card)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.tile, style: .continuous)
                 .stroke(manual ? Color.accentColor.opacity(0.4) : Color(nsColor: .separatorColor),
                         lineWidth: 1)
         )
@@ -397,7 +417,7 @@ private struct ManualStep: View {
         HStack(alignment: .top, spacing: 10) {
             Text("\(number)")
                 .font(.caption.weight(.bold))
-                .foregroundStyle(.black.opacity(0.85))
+                .foregroundStyle(.black.opacity(0.85))  // ds-allow: legible numeral on the amber badge
                 .frame(width: 18, height: 18)
                 .background(Circle().fill(Color.accentColor))
             Text(prefix + emphasis)
@@ -525,11 +545,11 @@ private struct APIKeyStep: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 15)
         .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.tile, style: .continuous)
                 .fill(Color.card)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.tile, style: .continuous)
                 .stroke(
                     fieldFocused ? Color.accentColor : Color(nsColor: .separatorColor),
                     lineWidth: fieldFocused ? 2 : 1
@@ -537,7 +557,7 @@ private struct APIKeyStep: View {
         )
         // Subtle elevation makes the key field the screen's focal point — it
         // lifts off the paper while the note below stays flat/recessive.
-        .shadow(color: Color.black.opacity(0.08), radius: 12, x: 0, y: 5)
+        .shadow(color: Elevation.drop, radius: 12, x: 0, y: 5)
         .animation(.easeInOut(duration: 0.15), value: fieldFocused)
         .contentShape(Rectangle())
         .onTapGesture { fieldFocused = true }
@@ -696,20 +716,37 @@ private struct PrimaryButton: View {
 /// (selection, links, the waveform), per DESIGN_SYSTEM.md.
 private struct InkButtonStyle: ButtonStyle {
     var compact = false
-    @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: compact ? 13 : 15, weight: .semibold))  // ds-allow: button label scale
-            .foregroundStyle(Color("InkFillText"))
-            .padding(.horizontal, compact ? 14 : 26)
-            .padding(.vertical, compact ? 6 : 11)
-            .background(
-                RoundedRectangle(cornerRadius: compact ? 7 : 9, style: .continuous)
-                    .fill(Color("InkFill"))
-                    .opacity(configuration.isPressed ? 0.82 : 1)
-            )
-            .opacity(isEnabled ? 1 : 0.4)
-            .contentShape(Rectangle())
+        Surface(configuration: configuration, compact: compact)
+    }
+
+    /// Hover needs `@State`, which a `ButtonStyle` can't hold directly, so the
+    /// label is rendered through this small stateful view.
+    private struct Surface: View {
+        let configuration: ButtonStyleConfiguration
+        let compact: Bool
+        @Environment(\.isEnabled) private var isEnabled
+        @State private var hovering = false
+
+        var body: some View {
+            configuration.label
+                .font(.system(size: compact ? 13 : 15, weight: .semibold))  // ds-allow: button label scale
+                .foregroundStyle(Color("InkFillText"))
+                .padding(.horizontal, compact ? 14 : 26)
+                .padding(.vertical, compact ? 6 : 11)
+                .background(
+                    RoundedRectangle(cornerRadius: compact ? 7 : 9, style: .continuous)
+                        .fill(Color("InkFill"))
+                        // Brighten the fill on hover (no movement) so the button
+                        // reads as live before the press-dim takes over.
+                        .brightness(hovering && isEnabled ? Hover.fillShift : 0)
+                        .opacity(configuration.isPressed ? 0.82 : 1)
+                        .animation(Hover.animation, value: hovering)
+                )
+                .opacity(isEnabled ? 1 : 0.4)
+                .contentShape(Rectangle())
+                .onHover { hovering = $0 }
+        }
     }
 }

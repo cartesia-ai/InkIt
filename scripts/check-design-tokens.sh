@@ -22,7 +22,7 @@ scan() {
   local pattern="$1" label="$2" first=1
   while IFS= read -r hit; do
     local content="${hit#*:*:}"                       # strip "file:lineno:"
-    [[ "$content" == *"static let ink"* ]] && continue   # token definitions
+    [[ "$content" == *"static let "* ]] && continue      # token definitions
     [[ "$content" == *"ds-allow"* ]] && continue         # explicit opt-out
     local trimmed="${content#"${content%%[![:space:]]*}"}"
     [[ "$trimmed" == //* ]] && continue                  # comment lines
@@ -34,6 +34,8 @@ scan() {
 
 scan 'system\(size: *[0-9]'  'hardcoded font size — use a Font.ink* token'
 scan 'Color\((red|white):'   'raw color literal — use a Color token'
+scan 'easeOut\(duration:'    'hardcoded animation timing — use a Motion.* token'
+scan '\.black\.opacity\('    'raw shadow/scrim ink — use an Elevation.* / Color token'
 
 if [ "$violations" -gt 0 ]; then
   echo

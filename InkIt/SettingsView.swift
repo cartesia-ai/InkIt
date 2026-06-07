@@ -9,7 +9,7 @@ private enum SettingsMetrics {
     /// Shared height for text-entry controls.
     static let fieldHeight: CGFloat = 30
     /// Corner radius for those fields.
-    static let fieldCornerRadius: CGFloat = 7
+    static let fieldCornerRadius = Radius.keycap
     /// Gap between a control and its caption.
     static let captionSpacing: CGFloat = 3
 
@@ -79,6 +79,8 @@ private struct SettingsToggle: View {
         .toggleStyle(.switch)
         .tint(.accentColor)
         .controlSize(.small)
+        .contentShape(Rectangle())
+        .modifier(PointingHandCursor())
     }
 }
 
@@ -445,7 +447,11 @@ struct SettingsPopover: View {
                 .padding(.bottom, 10)
 
             ForEach(SettingsView.Pane.allCases) { p in
-                sidebarItem(p)
+                // While searching, no pane is "current", so nothing reads as selected.
+                SidebarItem(pane: p, selected: !search.isSearching && pane == p) {
+                    search.query = ""
+                    pane = p
+                }
             }
             Spacer()
             ExternalLink(
@@ -461,34 +467,6 @@ struct SettingsPopover: View {
         .background(Color.canvas)
     }
 
-    private func sidebarItem(_ p: SettingsView.Pane) -> some View {
-        // While searching, no pane is "current", so nothing reads as selected.
-        let selected = !search.isSearching && pane == p
-        return Button {
-            search.query = ""
-            pane = p
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: p.icon)
-                    .font(.inkNav)
-                    .frame(width: 18)
-                Text(p.title)
-                    .font(.inkNav)
-                Spacer(minLength: 0)
-            }
-            .foregroundStyle(selected ? Color.accentColor : .primary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(selected ? Color.accentSoft : Color.clear)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .modifier(PointingHandCursor())
-    }
-
     private var detail: some View {
         VStack(spacing: 0) {
             HStack(alignment: .firstTextBaseline) {
@@ -496,7 +474,7 @@ struct SettingsPopover: View {
                     .foregroundStyle(.primary)
                     .font(.inkSheetTitle)
                 Spacer()
-                closeButton
+                SettingsCloseButton(onClose: onClose)
             }
             .padding(.horizontal, 16)
             .padding(.top, 14)
@@ -524,16 +502,50 @@ struct SettingsPopover: View {
         .padding(.leading, 20)
     }
 
-    private var closeButton: some View {
-        // Visible ✕ in the top-right; also carries the Esc shortcut so the
-        // keyboard path that the old hidden button owned still works.
+}
+
+/// A single Settings sidebar row. Selected rows hold the amber soft-fill and stay
+/// put; unselected rows lift an 8% backdrop on hover — the same quiet treatment as
+/// the header chips elsewhere in the app.
+private struct SidebarItem: View {
+    let pane: SettingsView.Pane
+    let selected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: pane.icon)
+                    .font(.inkNav)
+                    .frame(width: 18)
+                Text(pane.title)
+                    .font(.inkNav)
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(selected ? Color.accentColor : .primary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 10)
+            // Selected row holds the amber fill; others lift the standard backdrop.
+            .hoverBackdrop(cornerRadius: Radius.control, isActive: selected)
+        }
+        .buttonStyle(.plain)
+        .modifier(PointingHandCursor())
+    }
+}
+
+/// The Settings ✕ in the top-right; carries the Esc shortcut so the keyboard path
+/// the old hidden button owned still works, and lifts the same hover backdrop as
+/// the rest of the icon-button family (26pt frame, radius 13 → a circle).
+private struct SettingsCloseButton: View {
+    let onClose: () -> Void
+
+    var body: some View {
         Button(action: onClose) {
             Image(systemName: "xmark")
                 .font(.system(size: 12, weight: .semibold))  // ds-allow: icon
                 .foregroundStyle(.secondary)
                 .frame(width: 26, height: 26)
-                .background(Circle().fill(Color.primary.opacity(0.06)))
-                .contentShape(Circle())
+                .hoverBackdrop(cornerRadius: Radius.control)
         }
         .buttonStyle(.plain)
         .keyboardShortcut(.cancelAction)
@@ -645,11 +657,11 @@ private struct SettingsSearchField: View {
         .padding(.horizontal, 10)
         .frame(height: height)
         .background(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.button, style: .continuous)
                 .fill(SettingsMetrics.fieldBackground)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.button, style: .continuous)
                 .stroke(
                     focused ? Color.accentColor : SettingsMetrics.fieldBorder,
                     lineWidth: focused ? SettingsMetrics.fieldFocusBorderWidth : SettingsMetrics.fieldBorderWidth
@@ -911,6 +923,7 @@ private struct ActivationModeCard: View {
     let mode: DictationMode
     let isSelected: Bool
     let action: () -> Void
+    @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
@@ -935,17 +948,23 @@ private struct ActivationModeCard: View {
             // description wraps to two lines and the other to one.
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
                     .fill(Color.card)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(isSelected ? Color.accentColor : Color(nsColor: .separatorColor),
+                RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
+                    // On hover an unselected card firms its border so it reads as
+                    // pickable; the selected card keeps its amber outline.
+                    .stroke(Hover.cardBorder(isSelected: isSelected, hovering: hovering),
                             lineWidth: isSelected ? 2 : 1)
             )
+            .shadow(color: hovering && !isSelected ? Elevation.hover : .clear,
+                    radius: 5, y: 2)
         }
         .buttonStyle(.plain)
-        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+        .onHover { hovering = $0 }
+        .animation(Hover.animation, value: hovering)
         .modifier(PointingHandCursor())
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
@@ -1262,6 +1281,7 @@ private struct AppearanceCard: View {
     let preference: AppearancePreference
     let isSelected: Bool
     let action: () -> Void
+    @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
@@ -1269,15 +1289,16 @@ private struct AppearanceCard: View {
                 AppearanceThumbnail(style: thumbnailStyle)
                     .frame(height: 64)
                     .frame(maxWidth: .infinity)
-                    .clipShape(RoundedRectangle(cornerRadius: 9))
+                    .clipShape(RoundedRectangle(cornerRadius: Radius.button))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 9)
-                            .stroke(
-                                isSelected ? Color.accentColor : Color(nsColor: .separatorColor),
-                                lineWidth: isSelected ? 2 : 1
-                            )
+                        RoundedRectangle(cornerRadius: Radius.button)
+                            // Firm the border on hover so an unselected swatch
+                            // reads as pickable; selected keeps its amber outline.
+                            .stroke(Hover.cardBorder(isSelected: isSelected, hovering: hovering),
+                                    lineWidth: isSelected ? 2 : 1)
                     )
-                    .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
+                    .shadow(color: hovering && !isSelected ? Elevation.lifted : Elevation.card,
+                            radius: 2, y: 1)
 
                 HStack(spacing: 5) {
                     Circle()
@@ -1298,6 +1319,8 @@ private struct AppearanceCard: View {
         }
         .buttonStyle(.plain)
         .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .animation(Hover.animation, value: hovering)
         .modifier(PointingHandCursor())
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
@@ -1790,11 +1813,11 @@ private struct ShortcutKeycap: View {
             .padding(.horizontal, 7)
             .frame(minWidth: 28, minHeight: 22)
             .background(
-                RoundedRectangle(cornerRadius: 5)
+                RoundedRectangle(cornerRadius: Radius.inset)
                     .fill(Color.canvas)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 5)
+                RoundedRectangle(cornerRadius: Radius.inset)
                     .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
             )
     }
