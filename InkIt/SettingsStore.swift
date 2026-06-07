@@ -148,7 +148,6 @@ final class SettingsStore: ObservableObject {
         static let playFeedbackSounds = "playFeedbackSounds"
         static let correctionEnabled = "correctionEnabled"
         static let polishNudgeDismissed = "polishNudgeDismissed"
-        static let screenContextEnabled = "screenContextEnabled"
         static let preferredInputDeviceUID = "preferredInputDeviceUID"
         static let polishKeyInvalid = "polishKeyInvalid"
         static let polishOutOfCredits = "polishOutOfCredits"
@@ -200,12 +199,6 @@ final class SettingsStore: ObservableObject {
 
     /// Whether AI correction may read on-screen context (the focused app's
     /// visible text via Accessibility) to repair proper nouns and identifiers.
-    /// When off, correction still runs but only cleans up the transcript
-    /// itself — no screen is read.
-    @Published var screenContextEnabled: Bool {
-        didSet { defaults.set(screenContextEnabled, forKey: Keys.screenContextEnabled) }
-    }
-
     /// UID of the input device the user pinned for dictation, or "" to follow
     /// the macOS default. Pinning decouples "what I dictate into" from whatever
     /// macOS routes to (e.g. AirPods hijacking the mic). The capture service
@@ -325,10 +318,6 @@ final class SettingsStore: ObservableObject {
         }
         polishKeyInvalid = false
         polishOutOfCredits = false
-        // Turning Polish on opts you into context awareness by default — it's
-        // what makes Polish spell names right, so the first-run experience
-        // should have it on rather than making the user discover a second toggle.
-        screenContextEnabled = true
         correctionEnabled = true
     }
 
@@ -445,13 +434,6 @@ final class SettingsStore: ObservableObject {
         self.polishOutOfCredits = defaults.bool(forKey: Keys.polishOutOfCredits)
         self.cartesiaKeyInvalid = defaults.bool(forKey: Keys.cartesiaKeyInvalid)
         self.cartesiaOutOfCredits = defaults.bool(forKey: Keys.cartesiaOutOfCredits)
-        // Default on so existing users keep the context-aware behavior they
-        // already had before this toggle existed.
-        if defaults.object(forKey: Keys.screenContextEnabled) == nil {
-            self.screenContextEnabled = true
-        } else {
-            self.screenContextEnabled = defaults.bool(forKey: Keys.screenContextEnabled)
-        }
         self.preferredInputDeviceUID = defaults.string(forKey: Keys.preferredInputDeviceUID) ?? ""
         self.rewriteProvider = defaults.string(forKey: Keys.rewriteProvider)
             .flatMap(LLMProvider.init(rawValue:)) ?? .groq

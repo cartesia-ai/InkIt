@@ -1,106 +1,5 @@
 import Foundation
 
-/// Pulls identifier-like tokens out of a chunk of arbitrary text. We send
-/// these to the LLM as a glossary so it can repair ASR mistakes on proper
-/// nouns (e.g. "flash attention" → "FlashAttention", "kvk function" →
-/// "kVK_Function").
-enum GlossaryExtractor {
-    /// Order is preserved: tokens that appeared first in the source text
-    /// (roughly: closer to the focused element on screen) come first.
-    static func extract(from text: String, limit: Int = 80) -> [String] {
-        guard !text.isEmpty else { return [] }
-
-        var seen = Set<String>()
-        var result: [String] = []
-
-        text.enumerateSubstrings(in: text.startIndex..<text.endIndex,
-                                 options: [.byWords, .localized]) { substring, _, _, stop in
-            guard result.count < limit else {
-                stop = true
-                return
-            }
-            guard let raw = substring else { return }
-            // Word enumeration sometimes splits on internal punctuation; we
-            // also want camelCase whole tokens. The naive word-by-word pass
-            // is good enough for v1 — we re-scan on punctuation below.
-            for token in tokensInWordCandidate(raw) {
-                if seen.insert(token).inserted {
-                    result.append(token)
-                    if result.count >= limit {
-                        stop = true
-                        break
-                    }
-                }
-            }
-        }
-
-        // Second pass for tokens the word-iterator may have missed
-        // (e.g. hyphenated names like "FlashAttention-2", dotted paths
-        // like "App.tsx", snake_case straddling punctuation). Bounded by `limit`.
-        if result.count < limit {
-            let pattern = #"[A-Za-z][A-Za-z0-9]+(?:-[A-Za-z0-9]+)+|[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+|[A-Za-z]+_[A-Za-z0-9_]+|[A-Za-z]+[0-9]+[A-Za-z0-9]*|[a-z]+[A-Z][A-Za-z0-9]*"#
-            if let regex = try? NSRegularExpression(pattern: pattern) {
-                let ns = text as NSString
-                let range = NSRange(location: 0, length: min(ns.length, 20_000))
-                regex.enumerateMatches(in: text, range: range) { match, _, stop in
-                    guard let match else { return }
-                    let token = ns.substring(with: match.range)
-                    if isAcceptable(token), seen.insert(token).inserted {
-                        result.append(token)
-                        if result.count >= limit { stop.pointee = true }
-                    }
-                }
-            }
-        }
-
-        return result
-    }
-
-    private static func tokensInWordCandidate(_ raw: String) -> [String] {
-        guard isAcceptable(raw) else { return [] }
-        return [raw]
-    }
-
-    private static func isAcceptable(_ token: String) -> Bool {
-        let count = token.count
-        guard count >= 3, count <= 40 else { return false }
-
-        var hasUpper = false
-        var hasLower = false
-        var hasDigit = false
-        var hasUnderscore = false
-        var hasDot = false
-        var hasHyphen = false
-        var hasLetter = false
-        for ch in token.unicodeScalars {
-            if CharacterSet.uppercaseLetters.contains(ch) { hasUpper = true; hasLetter = true }
-            else if CharacterSet.lowercaseLetters.contains(ch) { hasLower = true; hasLetter = true }
-            else if CharacterSet.decimalDigits.contains(ch) { hasDigit = true }
-            else if ch == "_" { hasUnderscore = true }
-            else if ch == "." { hasDot = true }
-            else if ch == "-" { hasHyphen = true }
-            else { return false }
-        }
-        guard hasLetter else { return false }
-
-        // Hyphenated identifier (FlashAttention-2, gpt-4, flash-attn)
-        if hasHyphen && (hasUpper || hasDigit) { return true }
-        // camelCase / PascalCase
-        if hasUpper && hasLower { return true }
-        // snake_case / SCREAMING_SNAKE
-        if hasUnderscore && (hasUpper || hasLower) { return true }
-        // letter+digit mix (Mamba2, gpt4, H100)
-        if hasDigit && (hasUpper || hasLower) && count >= 3 { return true }
-        // dotted path (App.tsx)
-        if hasDot && (hasUpper || hasLower) { return true }
-        // All-caps acronym, length ≥ 3 (HTML, GPU, LLM)
-        if hasUpper && !hasLower && !hasDigit && !hasUnderscore && !hasDot && !hasHyphen && count >= 3 && count <= 8 {
-            return true
-        }
-        return false
-    }
-}
-
 /// Why a rewrite attempt failed, so the caller can show a concise, actionable
 /// reason. Distinguishes the cases a user can act on (rate limit, offline, bad
 /// key) from the ones they can only retry.
@@ -152,27 +51,8 @@ final class TranscriptRewriter {
         session.dataTask(with: req) { _, _, _ in }.resume()
     }
 
-    /// Rewrites the transcript using the focused window's on-screen text
-    /// (captured via Accessibility) as context.
-    func rewriteWithRawContext(transcript: String,
-                               context: String,
-                               timeout: TimeInterval? = nil,
-                               runID: String? = nil) async -> Result<String, RewriteFailure> {
-        guard !apiKey.isEmpty else { return .failure(.invalidKey) }
-        guard !transcript.isEmpty, !context.isEmpty else { return .failure(.unknown) }
-
-        DebugLog.info("Rewriter[ax]: context=\(context.count) chars transcript=\"\(transcript)\"")
-
-        let system: [[String: Any]] = [
-            ["type": "text", "text": Self.instructions],
-            ["type": "text", "text": "<context>\n\(context)\n</context>"]
-        ]
-        return await call(system: system, transcript: transcript, model: self.model, timeout: timeout ?? provider.rewriteTimeout, label: "ax", runID: runID)
-    }
-
-    /// Rewrites the transcript with no on-screen context — used when the user
-    /// has opted out of screen-context capture. The model can still strip
-    /// filler and fix obvious slips, just without a glossary of proper nouns.
+    /// Rewrites the transcript: strips filler, fixes homophones and obvious ASR
+    /// slips, and applies light formatting. No on-screen context is used.
     func rewriteWithoutContext(transcript: String,
                                timeout: TimeInterval? = nil,
                                runID: String? = nil) async -> Result<String, RewriteFailure> {
@@ -343,7 +223,6 @@ final class TranscriptRewriter {
     - Preserve the speaker's words, voice, and intent. Never paraphrase, summarize, expand, or add anything not said.
     - Change a word only when confident it's an error; if it could be ordinary English, leave it.
     - If the transcript is already clean, output it unchanged.
-    - The <context> block, if present, is a spelling reference for proper nouns only. Never pull its words, facts, or topics into your output.
 
     Formatting:
     - Keep the speaker's original structure by default.

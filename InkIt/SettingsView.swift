@@ -616,8 +616,6 @@ struct SettingsSearchItem: Identifiable {
               keywords: ["advanced", "log", "trace", "debug", "diagnostics"]),
         .init(title: "Polish transcripts", pane: .polish, anchor: "polish.toggle",
               keywords: ["polish", "rewrite", "clean", "fillers", "punctuation", "ai", "tidy"]),
-        .init(title: "Context Awareness", pane: .polish, anchor: "polish.context",
-              keywords: ["context", "screen", "app", "names", "spelling", "awareness"]),
         .init(title: "AI provider", pane: .polish, anchor: "polish.provider",
               keywords: ["provider", "groq", "openai", "gemini", "anthropic", "model", "ai", "llm"]),
         .init(title: "Polish API key", pane: .polish, anchor: "polish.key",
@@ -763,12 +761,6 @@ private struct SettingsSearchResults: View {
                 "Polish transcripts",
                 caption: "Cleans up fillers, punctuation, and misheard words",
                 isOn: polishMasterBinding
-            )
-        case "polish.context":
-            SettingsToggle(
-                "Context Awareness",
-                caption: "Use limited text content from the app to spell names correctly",
-                isOn: $settings.screenContextEnabled
             )
         case "polish.provider":
             LabeledContent("Provider") {
@@ -1289,15 +1281,6 @@ struct PolishSettingsView: View {
                 isOn: masterBinding
             )
             .disabled(broken)   // in the broken state the fix is re-entering the key below
-
-            // The screen-context option is dependent on polish actually running.
-            if !paused && !broken {
-                SettingsToggle(
-                    "Context Awareness",
-                    caption: "Use limited text content from the app to spell names correctly",
-                    isOn: $settings.screenContextEnabled
-                )
-            }
         } header: {
             Text("Polish").settingsSectionHeader()
         }
