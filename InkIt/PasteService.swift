@@ -144,14 +144,30 @@ enum FocusedEditable {
         // descending to the focused textbox, so the fast path sees a
         // non-editable container and we would wrongly hold the transcript in
         // History (observed with Antigravity, and the same risk for VS Code,
-        // Slack, etc.). Re-resolve through the application element — the path
-        // ContextCaptureService already uses to reach these fields reliably —
-        // then follow kAXFocusedUIElementAttribute down to the focused node.
+        // Slack, etc.). Re-resolve through the application element then follow
+        // kAXFocusedUIElementAttribute down to the focused node.
         if pid > 0 {
             let appElement = AXUIElementCreateApplication(pid)
+            // Chromium builds its accessible tree lazily; until a client marks
+            // the process accessibility-active it exposes only the web-area
+            // shell and the focused textbox is invisible. We normally enable
+            // this at hotkey press (see enableWebAccessibility), but re-assert
+            // here for the focus-moved-mid-dictation case.
+            enableWebAccessibility(appElement)
+
             if let appFocused = copyElement(appElement, kAXFocusedUIElementAttribute as CFString),
                descendToEditable(from: appFocused) {
                 DebugLog.info("FocusedEditable: resolved editable via app-element descent (system-wide query saw a container)")
+                return Result(isEditable: true, app: app)
+            }
+            // The focus chain can dead-end at a web area that never names its
+            // focused child (Slack's Lexical composer does this). Scan the
+            // focused window's subtree for the node Chromium flags AXFocused —
+            // that's the field the caret is actually in — and accept it if it's
+            // editable. Bounded so a deep tree can't stall the paste.
+            if let window = copyElement(appElement, kAXFocusedWindowAttribute as CFString),
+               focusedEditableInSubtree(window) {
+                DebugLog.info("FocusedEditable: resolved editable via AXFocused subtree scan")
                 return Result(isEditable: true, app: app)
             }
         }
@@ -161,7 +177,72 @@ enum FocusedEditable {
             return Result(isEditable: true, app: app)
         }
 
+        DebugLog.info("FocusedEditable: no editable focus — \(describe(focused, label: "system-wide"))")
         return Result(isEditable: false, app: app)
+    }
+
+    /// Marks a Chromium/Electron process as accessibility-active so it builds
+    /// the full accessible tree (exposing focused web textboxes). Setting these
+    /// attributes is idempotent and simply fails — harmlessly — on native apps
+    /// that don't recognize them, so we attempt both unconditionally. Call this
+    /// at hotkey press against the resolved target so the tree is ready by
+    /// release rather than racing it.
+    static func enableWebAccessibility(pid: pid_t) {
+        guard AXIsProcessTrusted(), pid > 0 else { return }
+        enableWebAccessibility(AXUIElementCreateApplication(pid))
+    }
+
+    private static func enableWebAccessibility(_ appElement: AXUIElement) {
+        AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+        AXUIElementSetAttributeValue(appElement, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+    }
+
+    /// Breadth-first scan for the editable element Chromium flags as focused.
+    /// `kAXFocusedAttribute` is the per-element "caret is here" bit, so this
+    /// pinpoints the real input even when no parent names it via
+    /// `kAXFocusedUIElementAttribute`. Bounded in node count against deep DOMs.
+    private static func focusedEditableInSubtree(_ root: AXUIElement, maxNodes: Int = 1500) -> Bool {
+        var queue = [root]
+        var visited = 0
+        while !queue.isEmpty, visited < maxNodes {
+            let element = queue.removeFirst()
+            visited += 1
+            if isFocused(element), isEditable(element) { return true }
+            queue.append(contentsOf: children(of: element))
+        }
+        return false
+    }
+
+    private static func isFocused(_ element: AXUIElement) -> Bool {
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXFocusedAttribute as CFString, &ref) == .success,
+              let value = ref, CFGetTypeID(value) == CFBooleanGetTypeID() else {
+            return false
+        }
+        return CFBooleanGetValue((value as! CFBoolean))
+    }
+
+    private static func children(of element: AXUIElement) -> [AXUIElement] {
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &ref) == .success,
+              let array = ref as? [AXUIElement] else {
+            return []
+        }
+        return array
+    }
+
+    /// One-line role/subrole/settable summary for trace logging when a paste is
+    /// about to be held — so the failing AX shape is visible without a rebuild.
+    private static func describe(_ element: AXUIElement, label: String) -> String {
+        func attr(_ name: CFString) -> String {
+            var ref: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(element, name, &ref) == .success,
+                  let value = ref as? String else { return "nil" }
+            return value
+        }
+        var settable: DarwinBoolean = false
+        AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable)
+        return "\(label) role=\(attr(kAXRoleAttribute as CFString)) subrole=\(attr(kAXSubroleAttribute as CFString)) valueSettable=\(settable.boolValue)"
     }
 
     private static func isEditable(_ element: AXUIElement) -> Bool {

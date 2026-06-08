@@ -355,6 +355,15 @@ final class AppCoordinator: ObservableObject {
         contextTargetSnapshot = TargetAppSnapshot.capture(from: pasteTargetApp)
         DebugLog.info("startDictation: frontmost=\(frontmostApp?.bundleIdentifier ?? "nil") lastExternal=\(lastExternalApp?.bundleIdentifier ?? "nil") resolvedTarget=\(pasteTargetApp?.bundleIdentifier ?? "nil") targetSnapshot=\(contextTargetSnapshot?.logDescription ?? "nil")")
 
+        // Nudge a Chromium/Electron target (Slack, VS Code, etc.) into building
+        // its full accessible tree now, at press, so its focused textbox is
+        // visible by the time we re-check editability at release. Done lazily by
+        // Chromium otherwise, which makes the release-time check race the tree
+        // and wrongly hold the transcript in History. No-op for native apps.
+        if let targetPid = pasteTargetApp?.processIdentifier {
+            FocusedEditable.enableWebAccessibility(pid: targetPid)
+        }
+
         // Capture the resolved target and snapshot into the onClosed closure.
         // Instance state (pasteTargetApp / contextTargetSnapshot) can be wiped
         // mid-flight by setError or a stale paste callback, which would cause
