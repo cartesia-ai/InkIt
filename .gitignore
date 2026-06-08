@@ -17,6 +17,3 @@ injection_probe.py
 
 # Local design prototypes (never committed — OSS repo)
 prototypes/
-
-# Local-only agent/contributor rules — not published
-AGENTS.md

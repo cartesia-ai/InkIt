@@ -11,7 +11,7 @@
 #
 # This runs in CI and fails the build on any unjustified literal. Run it locally
 # anytime:  ./tools/check-design-tokens.sh
-# See DESIGN_SYSTEM.md.
+# See DESIGN_SYSTEM.md and AGENTS.md.
 
 set -euo pipefail
 cd "$(cd "$(dirname "$0")/.." && pwd)"
