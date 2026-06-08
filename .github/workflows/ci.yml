@@ -32,7 +32,7 @@ jobs:
           xcodebuild -version
 
       - name: Check design tokens
-        run: ./scripts/check-design-tokens.sh
+        run: ./tools/check-design-tokens.sh
 
       - name: Install build tools
         run: brew install xcodegen

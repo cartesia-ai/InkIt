@@ -147,7 +147,7 @@ Image(systemName: "gearshape").font(.system(size: 17, weight: .medium))  // ds-a
 Sanctioned one-offs: SF Symbol icon glyphs (sized to their container), the
 always-dark notch HUD micro-type, the dual-appearance `AppearanceThumbnail`, the
 onboarding hero mark. Everything that recurs or is plain running text is a token,
-not a one-off. See `AGENTS.md` for the contributor-facing summary.
+not a one-off.
 
 ---
 

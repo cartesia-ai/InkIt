@@ -37,7 +37,7 @@ Optionally, you can turn on Polish to clean up filler, punctuation, and formatti
 
 InkIt is open source but not open contribution.
 
-Fork and modify it for your own use. Pull requests aren't guaranteed a review: see [CONTRIBUTING.md](CONTRIBUTING.md). Bug reports and feedback go [here](https://forms.gle/jXNtDsTaLt2rKQ8N9).
+Fork and modify it for your own use. Pull requests aren't guaranteed a review: see [CONTRIBUTING.md](.github/CONTRIBUTING.md). Bug reports and feedback go [here](https://forms.gle/jXNtDsTaLt2rKQ8N9).
 
 <details>
 <summary><strong>Build from source</strong> (Xcode 15+ and XcodeGen)</summary>

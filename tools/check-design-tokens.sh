@@ -10,8 +10,8 @@
 # trailing  // ds-allow: <reason>  on the same line.
 #
 # This runs in CI and fails the build on any unjustified literal. Run it locally
-# anytime:  ./scripts/check-design-tokens.sh
-# See DESIGN_SYSTEM.md and AGENTS.md.
+# anytime:  ./tools/check-design-tokens.sh
+# See DESIGN_SYSTEM.md.
 
 set -euo pipefail
 cd "$(cd "$(dirname "$0")/.." && pwd)"
