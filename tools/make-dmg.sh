@@ -60,6 +60,20 @@ step "Verifying signature on .app"
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 codesign -dvv "$APP_PATH" 2>&1 | grep -E "Authority|TeamIdentifier|Runtime" || true
 
+# Fast-fail on ad-hoc nested binaries before paying for a notary round-trip.
+# Sparkle's helpers (Updater.app, Autoupdate, *.xpc) must be Developer ID
+# signed — project.yml's "Deep-sign Sparkle helpers" phase handles this, but
+# catch a regression here in seconds rather than ~5 min later via notarytool.
+# (`codesign --verify --deep` above accepts ad-hoc inner code, so it won't.)
+ADHOC=$(find "$APP_PATH/Contents/Frameworks/Sparkle.framework" \
+    \( -name '*.xpc' -o -name '*.app' -o -name 'Autoupdate' \) -print 2>/dev/null \
+  | while read -r b; do codesign -dvv "$b" 2>&1 | grep -q 'Signature=adhoc' && echo "$b"; done)
+if [ -n "$ADHOC" ]; then
+  fail "Ad-hoc (unsigned) nested binaries found — notarization will reject these:
+$ADHOC
+Check the 'Deep-sign Sparkle helpers' postBuildScript in project.yml."
+fi
+
 step "Staging app for DMG"
 mkdir -p build/dist
 rm -rf "$STAGING_DIR" "$DMG_PATH"

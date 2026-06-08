@@ -65,6 +65,42 @@ targets:
         ENABLE_APP_SANDBOX: NO
         # CODE_SIGN_ENTITLEMENTS is set per-config in Config/*.xcconfig
         # (Debug: get-task-allow=true for tests; Release: =false for notarization).
+    postBuildScripts:
+      # Xcode leaves Sparkle's nested helpers (Updater.app, Autoupdate, the XPC
+      # services) ad-hoc; re-sign them inside-out so notarization accepts the
+      # build. Xcode's final app-signing then re-seals the bundle. No-op for
+      # ad-hoc local builds. (Only matters when shipping a notarized DMG.)
+      - name: Deep-sign Sparkle helpers
+        basedOnDependencyAnalysis: false
+        script: |
+          if [ "${CODE_SIGNING_ALLOWED}" = "NO" ]; then
+            echo "note: code signing disabled — skipping Sparkle helper signing"
+            exit 0
+          fi
+          SPARKLE="${CODESIGNING_FOLDER_PATH}/Contents/Frameworks/Sparkle.framework"
+          if [ ! -d "$SPARKLE" ]; then
+            echo "note: Sparkle.framework not embedded — skipping"
+            exit 0
+          fi
+          # Use the identity Xcode resolved for this build: a Developer ID hash
+          # for notarized maintainer builds, "-" (ad-hoc) for contributor builds.
+          IDENTITY="${EXPANDED_CODE_SIGN_IDENTITY:--}"
+          if [ "$IDENTITY" = "-" ]; then
+            # Ad-hoc: --timestamp/--options runtime require a real identity + network.
+            FLAGS="--force"
+          else
+            FLAGS="--force --timestamp --options runtime"
+          fi
+          V="$SPARKLE/Versions/Current"
+          # Sign innermost-first so each enclosing seal covers valid contents.
+          for item in \
+            "$V/XPCServices/Downloader.xpc" \
+            "$V/XPCServices/Installer.xpc" \
+            "$V/Autoupdate" \
+            "$V/Updater.app" \
+            "$SPARKLE"; do
+            [ -e "$item" ] && codesign $FLAGS --sign "$IDENTITY" "$item"
+          done
 
   InkItTests:
     type: bundle.unit-test
