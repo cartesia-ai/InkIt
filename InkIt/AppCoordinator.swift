@@ -21,6 +21,12 @@ final class AppCoordinator: ObservableObject {
     @Published private(set) var lastError: String?
     @Published private(set) var liveTranscript: String = ""
     @Published private(set) var inputLevel: Float = 0
+    /// Whether the input device is actually capturing yet. False for the brief
+    /// window after the hotkey while the mic comes up (notably the Bluetooth
+    /// A2DP→HFP profile switch, ~200–500ms). The HUD shows a "preparing" cue
+    /// until this flips true, so the user doesn't speak into the dead gap and
+    /// lose their first words. See `AudioCaptureService.onReady`.
+    @Published private(set) var audioReady: Bool = false
 
     private let audio = AudioCaptureService()
     private let paste = PasteService()
@@ -70,6 +76,9 @@ final class AppCoordinator: ObservableObject {
         }
         audio.onLevel = { [weak self] level in
             Task { @MainActor in self?.inputLevel = level }
+        }
+        audio.onReady = { [weak self] in
+            Task { @MainActor in self?.audioReady = true }
         }
         // Show the notch HUD only after the user has completed onboarding,
         // so it doesn't compete with the first-launch window.
@@ -326,6 +335,7 @@ final class AppCoordinator: ObservableObject {
         }
 
         state = .recording
+        audioReady = false
         lastError = nil
         liveTranscript = ""
         if settings.playFeedbackSounds { FeedbackSoundPlayer.shared.playStart() }

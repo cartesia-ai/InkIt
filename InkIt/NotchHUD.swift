@@ -288,10 +288,21 @@ private struct NotchHUDView: View {
             Text("InkIt")
                 .font(.inkNotchBrand)
                 .foregroundStyle(.white.opacity(0.85))
-            HUDWaveform(level: coordinator.inputLevel)
-                .frame(width: 32, height: 9)
+            // Hold a quiet pulsing dot until the mic is actually capturing, then
+            // reveal the live waveform. That still→moving switch is the "start
+            // speaking" cue — it keeps the user from talking into the dead window
+            // while a Bluetooth mic finishes switching into its input profile.
+            Group {
+                if coordinator.audioReady {
+                    HUDWaveform(level: coordinator.inputLevel)
+                } else {
+                    HUDPreparingDot()
+                }
+            }
+            .frame(width: 32, height: 9)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .animation(Motion.state, value: coordinator.audioReady)
     }
 
     private func statusContent(_ label: String) -> some View {
@@ -338,6 +349,27 @@ private struct NotchHUDView: View {
                 .foregroundStyle(.white.opacity(0.85))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    }
+}
+
+// MARK: - Preparing cue
+
+/// A single softly breathing dot shown while the mic is still coming up (before
+/// the first real audio). It deliberately reads as "wait" — the moment it gives
+/// way to the lively waveform is the user's "start speaking" signal.
+private struct HUDPreparingDot: View {
+    @State private var pulsing = false
+
+    var body: some View {
+        Circle()
+            .fill(.white.opacity(pulsing ? 0.85 : 0.35))
+            .frame(width: 5, height: 5)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) {  // ds-allow: bespoke breathing pulse
+                    pulsing = true
+                }
+            }
     }
 }
 
