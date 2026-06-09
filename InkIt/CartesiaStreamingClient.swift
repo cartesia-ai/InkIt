@@ -222,7 +222,9 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
         stateLock.lock()
         let hasContent = !completedTurns.isEmpty || !currentTurn.isEmpty
         stateLock.unlock()
-        if failure == .unknown && !hasContent {
+        let collapsed = failure == .unknown && !hasContent
+        DebugLog.info("reportFailureOrCollapse: failure=\(failure) hasContent=\(hasContent) decision=\(collapsed ? "collapse-silent" : "surface-error")")
+        if collapsed {
             finishClose(reason: .silentNoAudio, reportClosed: true)
         } else {
             onError?(failure)
@@ -238,10 +240,24 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
             switch result {
             case .failure(let error):
                 if !self.hasClosed {
-                    self.reportFailureOrCollapse(
-                        STTFailure.classify(transportError: error, response: self.task?.response),
-                        errorReason: .receiveFailed
-                    )
+                    let ns = error as NSError
+                    let httpStatus = (self.task?.response as? HTTPURLResponse)?.statusCode
+                    DebugLog.info("receive failure: domain=\(ns.domain) code=\(ns.code) http=\(httpStatus.map(String.init) ?? "nil") desc=\(ns.localizedDescription)")
+                    // A *normal* server close (WebSocket code 1000/1001) races the
+                    // pending receive and surfaces here as a benign POSIX ENOTCONN
+                    // (errno 57, "Socket is not connected") rather than a real
+                    // transport error. That is a graceful end, not a failure:
+                    // finalize and deliver whatever transcript we have — exactly
+                    // like a normal release — instead of misclassifying it as
+                    // `.unknown` ("Couldn't transcribe") and discarding the turn.
+                    if ns.domain == NSPOSIXErrorDomain && ns.code == 57 {
+                        self.finishClose(reason: .serverClosed, reportClosed: true)
+                    } else {
+                        self.reportFailureOrCollapse(
+                            STTFailure.classify(transportError: error, response: self.task?.response),
+                            errorReason: .receiveFailed
+                        )
+                    }
                 }
             case .success(let message):
                 switch message {
@@ -301,7 +317,7 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
             let status = json["status_code"] as? Int
             let code = json["error_code"] as? String
             let msg = (json["message"] as? String) ?? (json["title"] as? String) ?? "Cartesia error"
-            NSLog("[InkIt] STT error event: status=\(status.map(String.init) ?? "nil") code=\(code ?? "nil") msg=\(msg)")
+            DebugLog.info("STT error event: status=\(status.map(String.init) ?? "nil") code=\(code ?? "nil") msg=\(msg)")
             // A too-short / silent press can make Cartesia reject the session with
             // a 400 instead of returning an empty turn. That's not a failure the
             // user should see ("Couldn't transcribe" reads as something broke) —
@@ -360,6 +376,8 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
                     didCloseWith closeCode: URLSessionWebSocketTask.CloseCode,
                     reason: Data?) {
+        let reasonStr = reason.flatMap { String(data: $0, encoding: .utf8) } ?? "nil"
+        DebugLog.info("didCloseWith: code=\(closeCode.rawValue) reason=\(reasonStr)")
         finishClose(reason: .serverClosed)
     }
 
@@ -418,7 +436,7 @@ enum SessionMetrics {
             UserDefaults.standard.set(data, forKey: key)
         }
         let elapsedStr = elapsed.map { String(format: "%.3fs", $0) } ?? "n/a"
-        NSLog("[InkIt] WS close: reason=\(reason.rawValue) elapsed=\(elapsedStr)")
+        DebugLog.info("WS close: reason=\(reason.rawValue) elapsed=\(elapsedStr)")
     }
 
     static func load() -> [CloseMetric] {
