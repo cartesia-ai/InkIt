@@ -67,7 +67,7 @@ codesign -dvv "$APP_PATH" 2>&1 | grep -E "Authority|TeamIdentifier|Runtime" || t
 # (`codesign --verify --deep` above accepts ad-hoc inner code, so it won't.)
 ADHOC=$(find "$APP_PATH/Contents/Frameworks/Sparkle.framework" \
     \( -name '*.xpc' -o -name '*.app' -o -name 'Autoupdate' \) -print 2>/dev/null \
-  | while read -r b; do codesign -dvv "$b" 2>&1 | grep -q 'Signature=adhoc' && echo "$b"; done)
+  | while read -r b; do codesign -dvv "$b" 2>&1 | grep -q 'Signature=adhoc' && echo "$b"; done) || true
 if [ -n "$ADHOC" ]; then
   fail "Ad-hoc (unsigned) nested binaries found — notarization will reject these:
 $ADHOC
