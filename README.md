@@ -9,11 +9,7 @@ InkIt catches every word, even over a hissing espresso machine, a chattering ope
 
 Powered by [Ink 2](https://www.cartesia.ai/ink) from Cartesia.
 
-<!-- HERO: replace with a ~6s GIF of the full loop (hold Fn → speak → text pastes).
-     Drop the file at .github/media/demo.gif and uncomment the line below. -->
-<!-- <img src=".github/media/demo.gif" width="720" alt="InkIt in action" /> -->
-
-<br />
+https://github.com/user-attachments/assets/f7a9248b-3971-4770-be05-7003d10a07f9
 
 <a href="https://github.com/cartesia-ai/InkIt/releases/latest/download/InkIt.dmg">
   <img src=".github/media/download-macos.svg" height="48" alt="Download for macOS" />
