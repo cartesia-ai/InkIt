@@ -1445,8 +1445,8 @@ private struct TranscriptHistoryRow: View {
         .accessibilityLabel(copied ? "Copied transcript" : "Copy transcript")
     }
 
-    // Trailing affordances, right-aligned in a fixed-width column. A failed
-    // polish stays visible at rest; everything else fades in on hover.
+    // Trailing affordances, right-aligned in a fixed-width column. All fade in
+    // on hover so resting rows stay just time + words.
     private var trailingControls: some View {
         HStack(spacing: 8) {
             Spacer(minLength: 0)
@@ -1456,7 +1456,7 @@ private struct TranscriptHistoryRow: View {
                 polishPill.opacity(hovering ? 1 : 0)
             }
             if outcome == .failed {
-                failurePill
+                failurePill.opacity(hovering ? 1 : 0)
             }
             if let latency {
                 timePill(latency).opacity(hovering ? 1 : 0)
@@ -1476,10 +1476,12 @@ private struct TranscriptHistoryRow: View {
             .accessibilityLabel("Polished — show changes")
     }
 
-    /// Struck-through sparkle in soft amber — polish failed and raw text was
-    /// pasted. Click for the actionable reason.
+    /// Warning triangle in soft amber — polish failed and raw text was pasted.
+    /// Click for the actionable reason. (The earlier `sparkles.slash` glyph drew
+    /// nothing — SF Symbols has no such symbol — so the row looked iconless
+    /// while the hover hint still fired.)
     private var failurePill: some View {
-        IconChip(systemName: "sparkles.slash", fg: .orange, help: "Polish failed")
+        IconChip(systemName: "exclamationmark.triangle.fill", fg: .orange, help: "Polish failed")
             .onTapGesture { showingFailure.toggle() }
             .inkDetailPopover(isPresented: $showingFailure) {
                 Text(Self.failureMessage(failure))
@@ -1606,21 +1608,25 @@ private struct LatencyPopover: View {
 }
 
 /// The Home nudge's teaching moment: a compact before→after that animates once
-/// on appear (the polished line reveals after a beat), using the app's diff
-/// vocabulary — struck-through filler, accent-green fixes. "Show, don't tell."
+/// on appear. The raw line is shown verbatim; the polished line reveals after a
+/// beat as an inline diff using the app's vocabulary — struck-through removals,
+/// accent-green fixes. "Show, don't tell."
 private struct PolishMiniDemo: View {
     @State private var revealed = false
 
     private var before: Text {
-        Text("um so like ").strikethrough().foregroundColor(.secondary)
-        + Text("can you send me ")
-        + Text("the ").strikethrough().foregroundColor(.secondary)
-        + Text("the report by friday")
+        Text("um hey are you free this this weekend to grab coffee slash lunch")
     }
     private var after: Text {
-        Text("Can").foregroundColor(Color.diffAdd)
-        + Text(" you send me the report by ")
-        + Text("Friday?").foregroundColor(Color.diffAdd)
+        Text("um ").strikethrough().foregroundColor(.secondary)
+        + Text("Hey,").foregroundColor(Color.diffAdd)
+        + Text(" are you free this ")
+        + Text("this ").strikethrough().foregroundColor(.secondary)
+        + Text("weekend to grab coffee")
+        + Text(" slash").strikethrough().foregroundColor(.secondary)
+        + Text("/").foregroundColor(Color.diffAdd)
+        + Text("lunch")
+        + Text("?").foregroundColor(Color.diffAdd)
     }
 
     var body: some View {
