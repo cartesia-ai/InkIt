@@ -64,7 +64,14 @@ final class AppCoordinator: ObservableObject {
     /// every `startDictation`.
     private var warmRewriter: TranscriptRewriter?
 
+    #if DEBUG
+    private let mainThreadWatchdog = MainThreadWatchdog()
+    #endif
+
     init() {
+        #if DEBUG
+        mainThreadWatchdog.start()
+        #endif
         detectDuplicateRunningCopies()
         startTrackingActiveApps()
         seedLastExternalApp()
@@ -470,7 +477,7 @@ final class AppCoordinator: ObservableObject {
                 // during dictation), pasting now would fire Cmd+V into the wrong
                 // app or nowhere. In that case hold the transcript in History —
                 // it's still saved and copyable — rather than guess.
-                let focus = FocusedEditable.current()
+                let focus = await FocusedEditable.current()
                 guard focus.isEditable else {
                     self.pasteTargetApp = nil
                     self.contextTargetSnapshot = nil
@@ -705,3 +712,54 @@ final class AppCoordinator: ObservableObject {
         return Int((end.uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000)
     }
 }
+
+#if DEBUG
+/// Debug-only tripwire for a blocked main run loop. A blocked main thread is the
+/// precondition for the bug class this guards: historically the Fn event tap ran
+/// on the main run loop, so any main-thread stall froze modifier keys; the tap
+/// now runs off-main, but heavy synchronous work on main (a hand-rolled AX walk,
+/// say) is still the thing that reintroduces UI hangs. This pings main on a
+/// cadence and logs loudly when a round-trip exceeds the threshold — coverage
+/// that event taps and AX traversal can't get from unit tests, firing the moment
+/// anyone reintroduces blocking-on-main in *any* module. Never compiled into
+/// release builds.
+final class MainThreadWatchdog {
+    private let queue = DispatchQueue(label: "com.cartesia.InkIt.MainThreadWatchdog", qos: .utility)
+    private let pingInterval: TimeInterval
+    private let stallThreshold: TimeInterval
+    private var running = false
+
+    init(pingInterval: TimeInterval = 0.25, stallThreshold: TimeInterval = 0.2) {
+        self.pingInterval = pingInterval
+        self.stallThreshold = stallThreshold
+    }
+
+    func start() {
+        queue.async { [weak self] in
+            guard let self, !self.running else { return }
+            self.running = true
+            self.scheduleNextPing()
+        }
+    }
+
+    func stop() {
+        queue.async { [weak self] in self?.running = false }
+    }
+
+    private func scheduleNextPing() {
+        queue.asyncAfter(deadline: .now() + pingInterval) { [weak self] in
+            guard let self, self.running else { return }
+            let sent = Date()
+            DispatchQueue.main.async {
+                let waited = Date().timeIntervalSince(sent)
+                if waited > self.stallThreshold {
+                    DebugLog.info(String(format: "MainThreadWatchdog: main run loop blocked %.0fms (threshold %.0fms)",
+                                         waited * 1000, self.stallThreshold * 1000))
+                }
+                // Re-arm from the worker queue regardless of how long main took.
+                self.scheduleNextPing()
+            }
+        }
+    }
+}
+#endif

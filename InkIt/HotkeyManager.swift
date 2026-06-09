@@ -27,6 +27,14 @@ final class HotkeyManager {
     private var fnEventTap: CFMachPort?
     private var fnRunLoopSource: CFRunLoopSource?
     private var fnIsDown = false
+    // The tap callback runs on its own thread/run loop, not the main one. An
+    // *active* `flagsChanged` tap blocks every modifier-key press until its
+    // callback returns; servicing it on the main run loop means any main-thread
+    // stall (a slow AX walk, heavy SwiftUI work) freezes Cmd/Shift/… system-wide
+    // until the tap times out. A dedicated thread decouples modifier delivery
+    // from the main thread entirely.
+    private var fnTapThread: Thread?
+    private var fnTapRunLoop: CFRunLoop?
 
     // Fn path — passive fallback
     private var fnGlobalMonitor: Any?
@@ -58,11 +66,18 @@ final class HotkeyManager {
         }
         if let tap = fnEventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
-            if let src = fnRunLoopSource {
-                CFRunLoopRemoveSource(CFRunLoopGetMain(), src, .commonModes)
+            // Tear the source out of the dedicated tap thread's run loop and stop
+            // that run loop so the thread returns from CFRunLoopRun and exits.
+            if let runLoop = fnTapRunLoop {
+                if let src = fnRunLoopSource {
+                    CFRunLoopRemoveSource(runLoop, src, .commonModes)
+                }
+                CFRunLoopStop(runLoop)
             }
             fnEventTap = nil
             fnRunLoopSource = nil
+            fnTapRunLoop = nil
+            fnTapThread = nil
         }
         if let m = fnGlobalMonitor { NSEvent.removeMonitor(m); fnGlobalMonitor = nil }
         if let m = fnLocalMonitor { NSEvent.removeMonitor(m); fnLocalMonitor = nil }
@@ -154,11 +169,27 @@ final class HotkeyManager {
         }
 
         let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-        CGEvent.tapEnable(tap: tap, enable: true)
-
         fnEventTap = tap
         fnRunLoopSource = source
+
+        // Service the tap on a dedicated thread rather than the main run loop, so
+        // a busy main thread can never stall modifier-key delivery (see the
+        // `fnTapThread` note above). The callback only does a tiny async hop to
+        // main, so this thread stays responsive regardless of app workload. The
+        // source keeps the run loop alive; `unregister()` stops it so the thread
+        // exits. `fnTapRunLoop` is written once here at thread start and read
+        // later on `unregister` (a user action, well separated in time).
+        let thread = Thread { [weak self] in
+            let runLoop = CFRunLoopGetCurrent()
+            self?.fnTapRunLoop = runLoop
+            CFRunLoopAddSource(runLoop, source, .commonModes)
+            CGEvent.tapEnable(tap: tap, enable: true)
+            CFRunLoopRun()
+        }
+        thread.name = "com.cartesia.InkIt.FnEventTap"
+        thread.qualityOfService = .userInteractive
+        fnTapThread = thread
+        thread.start()
         return true
     }
 

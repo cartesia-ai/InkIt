@@ -100,6 +100,25 @@ final class PasteService {
     }
 }
 
+/// Runs a synchronous Accessibility traversal off the main thread, bounded by a
+/// wall-clock deadline the closure must check inside its own loops.
+///
+/// AX attribute reads are blocking IPC into the target app; a huge or slow tree
+/// can take seconds. On the main thread that stalls the UI *and* the Fn event
+/// tap, freezing modifier keys system-wide. And a `Task`/timeout race can't
+/// preempt synchronous AX code already running — so we hand the work a
+/// `deadline` and make it responsible for returning whatever it has when the
+/// clock runs out, on a detached thread. Every AX walk in the app routes through
+/// here; nothing should hand-roll synchronous-AX-on-main again.
+enum AX {
+    static func run<T>(budget: TimeInterval, _ work: @escaping @Sendable (_ deadline: Date) -> T) async -> T {
+        let deadline = Date().addingTimeInterval(budget)
+        return await Task.detached(priority: .userInitiated) {
+            work(deadline)
+        }.value
+    }
+}
+
 /// Answers one question at hotkey *release*: is an editable control focused
 /// right now? InkIt resolves a paste target app at hotkey press, but by the time
 /// the transcript is ready that app may have no focused text field — the user
@@ -116,27 +135,42 @@ enum FocusedEditable {
         let app: NSRunningApplication?
     }
 
-    static func current() -> Result {
+    static func current() async -> Result {
         // No Accessibility → we can't tell where text would land, so treat it as
         // "no editable focus" and hold the transcript in History rather than
         // gamble a Cmd+V. (Dictation already requires AX to start, so this is the
-        // revoked-mid-session edge, not the common path.)
+        // revoked-mid-session edge, not the common path.) Cheap and main-safe, so
+        // it stays here rather than going off-thread.
         guard AXIsProcessTrusted() else { return Result(isEditable: false, app: nil) }
 
+        // The probe is a chain of synchronous AX IPCs plus, for Chromium/Electron,
+        // a bounded subtree scan. Run it off the main thread under a wall-clock
+        // budget so a slow or huge tree can neither hitch the UI nor stall the Fn
+        // event tap (which would freeze modifier keys). The budget is generous —
+        // real apps resolve in well under it — so it never turns a would-be paste
+        // into a held-in-History.
+        let outcome = await AX.run(budget: 1.5) { deadline in resolve(deadline: deadline) }
+        let app = outcome.pid > 0 ? NSRunningApplication(processIdentifier: outcome.pid) : nil
+        return Result(isEditable: outcome.isEditable, app: app)
+    }
+
+    /// The pure, off-main editability probe: returns whether an editable control
+    /// is focused right now and the owning pid (resolved back to an
+    /// `NSRunningApplication` by the caller). Every traversal honors `deadline`
+    /// so an outsized tree returns promptly instead of burning the whole budget.
+    private static func resolve(deadline: Date) -> (isEditable: Bool, pid: pid_t) {
         let system = AXUIElementCreateSystemWide()
         guard let focused = copyElement(system, kAXFocusedUIElementAttribute as CFString) else {
-            return Result(isEditable: false, app: nil)
+            return (false, 0)
         }
 
         var pid: pid_t = 0
-        let app = AXUIElementGetPid(focused, &pid) == .success && pid > 0
-            ? NSRunningApplication(processIdentifier: pid)
-            : nil
+        AXUIElementGetPid(focused, &pid)
 
         // Fast path: the system-wide focused element is itself editable — true
         // for native fields and most Electron inputs.
         if isEditable(focused) {
-            return Result(isEditable: true, app: app)
+            return (true, pid)
         }
 
         // Chromium/Electron fallback. For web-rendered content the system-wide
@@ -156,9 +190,9 @@ enum FocusedEditable {
             enableWebAccessibility(appElement)
 
             if let appFocused = copyElement(appElement, kAXFocusedUIElementAttribute as CFString),
-               descendToEditable(from: appFocused) {
+               descendToEditable(from: appFocused, deadline: deadline) {
                 DebugLog.info("FocusedEditable: resolved editable via app-element descent (system-wide query saw a container)")
-                return Result(isEditable: true, app: app)
+                return (true, pid)
             }
             // The focus chain can dead-end at a web area that never names its
             // focused child (Slack's Lexical composer does this). Scan the
@@ -166,19 +200,19 @@ enum FocusedEditable {
             // that's the field the caret is actually in — and accept it if it's
             // editable. Bounded so a deep tree can't stall the paste.
             if let window = copyElement(appElement, kAXFocusedWindowAttribute as CFString),
-               focusedEditableInSubtree(window) {
+               focusedEditableInSubtree(window, deadline: deadline) {
                 DebugLog.info("FocusedEditable: resolved editable via AXFocused subtree scan")
-                return Result(isEditable: true, app: app)
+                return (true, pid)
             }
         }
         // Last resort: descend from the system-wide container itself.
-        if descendToEditable(from: focused) {
+        if descendToEditable(from: focused, deadline: deadline) {
             DebugLog.info("FocusedEditable: resolved editable via system-wide container descent")
-            return Result(isEditable: true, app: app)
+            return (true, pid)
         }
 
         DebugLog.info("FocusedEditable: no editable focus — \(describe(focused, label: "system-wide"))")
-        return Result(isEditable: false, app: app)
+        return (false, pid)
     }
 
     /// Marks a Chromium/Electron process as accessibility-active so it builds
@@ -189,7 +223,11 @@ enum FocusedEditable {
     /// release rather than racing it.
     static func enableWebAccessibility(pid: pid_t) {
         guard AXIsProcessTrusted(), pid > 0 else { return }
-        enableWebAccessibility(AXUIElementCreateApplication(pid))
+        // Setting these attributes is blocking IPC into the target app; do it off
+        // the main thread so it can't contribute to a main-thread stall.
+        Task.detached(priority: .userInitiated) {
+            enableWebAccessibility(AXUIElementCreateApplication(pid))
+        }
     }
 
     private static func enableWebAccessibility(_ appElement: AXUIElement) {
@@ -201,10 +239,12 @@ enum FocusedEditable {
     /// `kAXFocusedAttribute` is the per-element "caret is here" bit, so this
     /// pinpoints the real input even when no parent names it via
     /// `kAXFocusedUIElementAttribute`. Bounded in node count against deep DOMs.
-    private static func focusedEditableInSubtree(_ root: AXUIElement, maxNodes: Int = 1500) -> Bool {
+    private static func focusedEditableInSubtree(_ root: AXUIElement, deadline: Date, maxNodes: Int = 1500) -> Bool {
         var queue = [root]
         var visited = 0
         while !queue.isEmpty, visited < maxNodes {
+            // Time budget is the primary bound; the node cap is a backstop.
+            if Date() >= deadline { return false }
             let element = queue.removeFirst()
             visited += 1
             if isFocused(element), isEditable(element) { return true }
@@ -271,9 +311,10 @@ enum FocusedEditable {
     /// container nodes looking for an editable element. Chromium exposes the
     /// focused web node this way even when the system-wide focus query stops at
     /// the enclosing web area. Bounded in depth and guarded against self-cycles.
-    private static func descendToEditable(from element: AXUIElement, maxHops: Int = 6) -> Bool {
+    private static func descendToEditable(from element: AXUIElement, deadline: Date, maxHops: Int = 6) -> Bool {
         var current = element
         for _ in 0..<maxHops {
+            if Date() >= deadline { return false }
             if isEditable(current) { return true }
             guard let next = copyElement(current, kAXFocusedUIElementAttribute as CFString),
                   !CFEqual(current, next) else { return false }
