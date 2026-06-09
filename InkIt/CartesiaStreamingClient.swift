@@ -208,28 +208,41 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
         if reportClosed { onClosed?(joinedTranscript()) }
     }
 
-    /// Decide whether a terminal failure is a real error the user should see, or
-    /// a silent / too-short press that just said nothing. A press with no (or
-    /// near-no) audio can make Cartesia reject the session — sometimes as an
-    /// in-stream `error` event, but more often by closing the socket (surfacing
-    /// through `receive()` or `didCompleteWithError`). In every case the signal
-    /// is the same: the failure classifies as `.unknown` (unclassified / 400)
-    /// AND we never received any transcript content. Collapse those to the clean
-    /// empty-transcript path (onClosed → idle, no notch error). Real failures
-    /// (offline, timeout, 401/402/429/5xx, or a 400 after partial content) keep
-    /// their classification and surface via `onError`.
-    private func reportFailureOrCollapse(_ failure: STTFailure, errorReason: CloseReason) {
+    /// Resolve a terminal failure into one of three outcomes, in priority order:
+    ///
+    /// 1. A failure we can *name* (offline, server 5xx, rate-limited, out of
+    ///    credits, invalid key) → surface it via `onError` so the user gets an
+    ///    actionable notch notice.
+    /// 2. An *unexplained* ending (`.unknown`) when we already have transcript
+    ///    content → deliver the words and finish, exactly like a normal release.
+    ///    We don't actually know anything broke, so we don't cry wolf over work
+    ///    that's already done. (the graceful-goodbye case)
+    /// 3. An unexplained ending with no content → the user simply said nothing;
+    ///    collapse to the clean empty-transcript path, no notch error. (the
+    ///    silent / too-short press case)
+    ///
+    /// The key invariant: only a *named* failure ever shows an error. `.unknown`
+    /// never does — it delivers whatever we have, or stays quiet. That covers
+    /// every flavor of benign disconnect uniformly (POSIX ENOTCONN/EPIPE/
+    /// ECONNRESET, a normal WebSocket close 1000/1001 that races the receive
+    /// loop, an unclassified 400) without enumerating each one. The only thing
+    /// that slips through silently is an *unexplained* mid-stream failure with
+    /// partial content — rare, since genuine transport drops classify as
+    /// `.offline`/`.serverError` and still surface.
+    // `internal` (not `private`) so the decision can be unit-tested directly via
+    // `@testable import` without standing up a live WebSocket.
+    func reportFailureOrCollapse(_ failure: STTFailure, errorReason: CloseReason) {
+        if failure != .unknown {
+            DebugLog.info("reportFailureOrCollapse: failure=\(failure) decision=surface-error")
+            onError?(failure)
+            finishClose(reason: errorReason, reportClosed: false)
+            return
+        }
         stateLock.lock()
         let hasContent = !completedTurns.isEmpty || !currentTurn.isEmpty
         stateLock.unlock()
-        let collapsed = failure == .unknown && !hasContent
-        DebugLog.info("reportFailureOrCollapse: failure=\(failure) hasContent=\(hasContent) decision=\(collapsed ? "collapse-silent" : "surface-error")")
-        if collapsed {
-            finishClose(reason: .silentNoAudio, reportClosed: true)
-        } else {
-            onError?(failure)
-            finishClose(reason: errorReason, reportClosed: false)
-        }
+        DebugLog.info("reportFailureOrCollapse: failure=unknown hasContent=\(hasContent) decision=\(hasContent ? "deliver-transcript" : "collapse-silent")")
+        finishClose(reason: hasContent ? .serverClosed : .silentNoAudio, reportClosed: true)
     }
 
     // MARK: - Receive loop
@@ -243,21 +256,17 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
                     let ns = error as NSError
                     let httpStatus = (self.task?.response as? HTTPURLResponse)?.statusCode
                     DebugLog.info("receive failure: domain=\(ns.domain) code=\(ns.code) http=\(httpStatus.map(String.init) ?? "nil") desc=\(ns.localizedDescription)")
-                    // A *normal* server close (WebSocket code 1000/1001) races the
-                    // pending receive and surfaces here as a benign POSIX ENOTCONN
-                    // (errno 57, "Socket is not connected") rather than a real
-                    // transport error. That is a graceful end, not a failure:
-                    // finalize and deliver whatever transcript we have — exactly
-                    // like a normal release — instead of misclassifying it as
-                    // `.unknown` ("Couldn't transcribe") and discarding the turn.
-                    if ns.domain == NSPOSIXErrorDomain && ns.code == 57 {
-                        self.finishClose(reason: .serverClosed, reportClosed: true)
-                    } else {
-                        self.reportFailureOrCollapse(
-                            STTFailure.classify(transportError: error, response: self.task?.response),
-                            errorReason: .receiveFailed
-                        )
-                    }
+                    // A normal server close (WebSocket 1000/1001) races the pending
+                    // receive and surfaces here as a benign POSIX disconnect
+                    // (ENOTCONN/EPIPE/ECONNRESET) rather than a real transport
+                    // error — it classifies as `.unknown`, which reportFailureOrCollapse
+                    // resolves by delivering whatever transcript we have (graceful
+                    // goodbye) or finishing silently (said nothing). Only a *named*
+                    // transport failure ever surfaces as an error.
+                    self.reportFailureOrCollapse(
+                        STTFailure.classify(transportError: error, response: self.task?.response),
+                        errorReason: .receiveFailed
+                    )
                 }
             case .success(let message):
                 switch message {
@@ -271,7 +280,8 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
-    private func handleMessage(_ text: String) {
+    // `internal` so tests can inject transcript content by feeding turn events.
+    func handleMessage(_ text: String) {
         guard let data = text.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let type = json["type"] as? String else {
