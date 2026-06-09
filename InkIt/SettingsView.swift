@@ -1648,7 +1648,7 @@ struct HotkeyRecorder: View {
     }
 
     private var shortcutPlaceholder: String? {
-        if recording { return "press shortcut" }
+        if recording { return "press new shortcut" }
         return nil
     }
 
@@ -1909,7 +1909,12 @@ private struct ShortcutCaptureField: View {
             }
         }
         .padding(.horizontal, 8)
-        .frame(width: 188)
+        // Hug the caps, but never grow past the right column into the "Hotkey"
+        // label/subtext: 188pt floor keeps the common case looking unchanged,
+        // 280pt ceiling stays clear of the caption. The recording placeholder
+        // centers in the field; recorded caps stay trailing-aligned.
+        .frame(minWidth: 188, maxWidth: 280, alignment: placeholder == nil ? .trailing : .center)
+        .fixedSize(horizontal: true, vertical: false)
         .fieldSurface(focused: isActive)
     }
 }
@@ -1921,6 +1926,8 @@ private struct ShortcutKeycap: View {
         Text(text)
             .font(.inkSectionHeader)
             .foregroundStyle(.primary)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .padding(.horizontal, 7)
             .frame(minWidth: 28, minHeight: 22)
             .background(
