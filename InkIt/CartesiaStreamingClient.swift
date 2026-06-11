@@ -105,7 +105,9 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
     // Set once we've requested close. The server then flushes buffered audio
     // into a final `turn.end` (carrying the last word) before disconnecting, so
     // we complete on that event rather than racing the socket close.
-    private var awaitingClose = false
+    // `internal` (not `private`) so tests can simulate the post-release state
+    // without standing up a live WebSocket.
+    var awaitingClose = false
     private let stateLock = NSLock()
 
     init(apiKey: String) {
@@ -229,18 +231,33 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
     /// that slips through silently is an *unexplained* mid-stream failure with
     /// partial content — rare, since genuine transport drops classify as
     /// `.offline`/`.serverError` and still surface.
+    ///
+    /// One carve-out: a `.serverError` after close was already requested, with
+    /// no transcript content. That's the rapid tap-and-release — the server
+    /// answers a ~zero-audio session's close with a 500 instead of an empty
+    /// turn (the 400 flavor of the same press already collapses via the
+    /// `.unknown` path). The user has released and nothing was said, so
+    /// "Server error" is alarming and non-actionable; collapse to the clean
+    /// empty path instead. A 5xx mid-hold, or one with words in hand, still
+    /// surfaces.
     // `internal` (not `private`) so the decision can be unit-tested directly via
     // `@testable import` without standing up a live WebSocket.
     func reportFailureOrCollapse(_ failure: STTFailure, errorReason: CloseReason) {
+        stateLock.lock()
+        let hasContent = !completedTurns.isEmpty || !currentTurn.isEmpty
+        let closing = awaitingClose
+        stateLock.unlock()
+        if failure == .serverError, closing, !hasContent {
+            DebugLog.info("reportFailureOrCollapse: failure=serverError post-close hasContent=false decision=collapse-silent")
+            finishClose(reason: .silentNoAudio, reportClosed: true)
+            return
+        }
         if failure != .unknown {
             DebugLog.info("reportFailureOrCollapse: failure=\(failure) decision=surface-error")
             onError?(failure)
             finishClose(reason: errorReason, reportClosed: false)
             return
         }
-        stateLock.lock()
-        let hasContent = !completedTurns.isEmpty || !currentTurn.isEmpty
-        stateLock.unlock()
         DebugLog.info("reportFailureOrCollapse: failure=unknown hasContent=\(hasContent) decision=\(hasContent ? "deliver-transcript" : "collapse-silent")")
         finishClose(reason: hasContent ? .serverClosed : .silentNoAudio, reportClosed: true)
     }
@@ -329,13 +346,15 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
             let msg = (json["message"] as? String) ?? (json["title"] as? String) ?? "Cartesia error"
             DebugLog.info("STT error event: status=\(status.map(String.init) ?? "nil") code=\(code ?? "nil") msg=\(msg)")
             // A too-short / silent press can make Cartesia reject the session with
-            // a 400 instead of returning an empty turn. That's not a failure the
-            // user should see ("Couldn't transcribe" reads as something broke) —
-            // it just means they said nothing. When the 400 classifies as
-            // `.unknown` AND we never received any transcript content, collapse to
-            // the clean empty-transcript path (onClosed → idle, no notch error)
-            // instead of surfacing an error. Real failures (401/402/429/5xx, or a
-            // 400 after partial content) still report via onError.
+            // a 400 — or, on the ~zero-audio instant-close path, a 500 — instead
+            // of returning an empty turn. That's not a failure the user should
+            // see ("Couldn't transcribe" / "Server error" reads as something
+            // broke) — it just means they said nothing. reportFailureOrCollapse
+            // forgives both flavors when no transcript content ever arrived (the
+            // 400 via `.unknown`, the 500 via the post-close carve-out) and
+            // collapses to the clean empty-transcript path (onClosed → idle, no
+            // notch error). Real failures (401/402/429, a mid-hold 5xx, or any
+            // error after partial content) still report via onError.
             reportFailureOrCollapse(
                 STTFailure.classify(statusCode: status, errorCode: code),
                 errorReason: .serverError
@@ -420,7 +439,7 @@ enum CloseReason: String, Codable {
     case serverClosed         // server closed the socket before a post-close turn.end (e.g. nothing to flush)
     case graceTimerExpired    // safety timer fired before the server finished
     case serverError          // server sent {"type":"error"}
-    case silentNoAudio        // 400 on a press with no transcript content — treated as "said nothing"
+    case silentNoAudio        // 400 (or post-close 500) on a press with no transcript content — treated as "said nothing"
     case receiveFailed        // receive loop errored
     case externalCancel       // cancel() called from outside (e.g. audio start failure, app error)
 }

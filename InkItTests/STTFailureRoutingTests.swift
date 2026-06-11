@@ -67,6 +67,54 @@ final class STTFailureRoutingTests: XCTestCase {
         }
     }
 
+    // MARK: - Post-close 500 on a silent tap → silent, no error
+
+    /// A rapid tap-and-release closes the session with ~zero audio; the server
+    /// answers the close with a 500 instead of an empty turn. The user has
+    /// already released and nothing was transcribed, so "Server error" is
+    /// alarming and non-actionable — it must collapse to the clean empty path,
+    /// exactly like the 400 flavor of the same press.
+    func testServerErrorAfterCloseWithNoContentCollapsesSilently() {
+        let client = CartesiaStreamingClient(apiKey: "test-key")
+        client.awaitingClose = true  // hotkey released, close requested
+        var delivered: String?
+        var erroredWith: STTFailure?
+        client.onClosed = { delivered = $0 }
+        client.onError = { erroredWith = $0 }
+
+        client.reportFailureOrCollapse(.serverError, errorReason: .serverError)
+
+        XCTAssertNil(erroredWith, "a post-close 500 on a silent tap must not surface an error")
+        XCTAssertEqual(delivered, "", "must finish via the clean empty-transcript path")
+    }
+
+    /// The carve-out is narrow: a 5xx while the user is still holding (close
+    /// not yet requested) is a real, actionable failure — they'd otherwise
+    /// speak a whole sentence into a dead session and release to nothing.
+    func testServerErrorMidHoldWithNoContentStillSurfaces() {
+        let client = CartesiaStreamingClient(apiKey: "test-key")
+        var erroredWith: STTFailure?
+        client.onError = { erroredWith = $0 }
+
+        client.reportFailureOrCollapse(.serverError, errorReason: .serverError)
+
+        XCTAssertEqual(erroredWith, .serverError, "a mid-hold 5xx must reach the user")
+    }
+
+    /// And a post-close 500 with words in hand still surfaces (covered by the
+    /// named-failure loop above too, but locked here against the carve-out
+    /// widening to "any post-close server error").
+    func testServerErrorAfterCloseWithContentStillSurfaces() {
+        let client = clientWithTranscript("partial words")
+        client.awaitingClose = true
+        var erroredWith: STTFailure?
+        client.onError = { erroredWith = $0 }
+
+        client.reportFailureOrCollapse(.serverError, errorReason: .serverError)
+
+        XCTAssertEqual(erroredWith, .serverError, "content in hand means a real failure, not a silent tap")
+    }
+
     // MARK: - The classification assumption the invariant rests on
 
     /// Benign POSIX socket disconnects (ENOTCONN/EPIPE/ECONNRESET) are NOT
