@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import SwiftData
 
 @MainActor
 final class TranscriptHistoryStore: ObservableObject {
@@ -74,29 +75,48 @@ final class TranscriptHistoryStore: ObservableObject {
     static let shared = TranscriptHistoryStore()
 
     @Published private(set) var entries: [Entry] = []
-    /// Running total of every word ever dictated — survives the 100-entry history
-    /// cap so the Home stats ("words dictated", "time saved") reflect lifetime
-    /// usage rather than just the last 100 takes. Seeded from existing history on
-    /// first run after this shipped, then incremented per dictation.
+    /// Running total of every word ever dictated. Kept as its own counter so the
+    /// Home stats ("words dictated", "time saved") reflect lifetime usage even
+    /// after the user clears their history — Delete All wipes the rows but not
+    /// this. Seeded once from existing history, then incremented per dictation.
     @Published private(set) var lifetimeWords: Int = 0
-    private let limit = 100
+
+    /// SwiftData container backing the transcript rows. Exposed so the app can
+    /// inject it into the SwiftUI environment (`.modelContainer`), keeping a
+    /// single container available for any future `@Query`-based reads, while the
+    /// store itself drives all writes through `context` below.
+    let modelContainer: ModelContainer
+    private var context: ModelContext { modelContainer.mainContext }
+
     private let defaults = UserDefaults.standard
-    private let storageKey = "transcriptHistory.v1"
+    /// Legacy UserDefaults blob that held the entire `[Entry]` array as one JSON
+    /// value, re-encoded on every write. Migrated into SwiftData once and then
+    /// removed. See `migrateLegacyHistoryIfNeeded`.
+    private let legacyStorageKey = "transcriptHistory.v1"
     private let lifetimeWordsKey = "transcriptHistory.lifetimeWords.v1"
 
     private init() {
-        load()
+        modelContainer = Self.makeContainer()
+        migrateLegacyHistoryIfNeeded()
+        loadEntries()
+        loadLifetimeWords()
     }
+
+    // MARK: - Public API
 
     func add(_ text: String, original: String? = nil, latency: Latency? = nil, polish: PolishOutcome? = nil, failure: PolishFailure? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        entries.insert(Entry(text: trimmed, timestamp: Date(), latency: latency, original: original, polish: polish, failure: failure), at: 0)
-        if entries.count > limit {
-            entries.removeLast(entries.count - limit)
-        }
+        // One row inserted, one row persisted — no cap, and no re-encoding the
+        // whole history on every dictation (the UserDefaults bottleneck this
+        // replaced). The freshly stamped entry is the newest, so it leads.
+        let entry = Entry(text: trimmed, timestamp: Date(), latency: latency,
+                          original: original, polish: polish, failure: failure)
+        context.insert(TranscriptRecord(entry: entry))
+        saveContext()
+        entries.insert(entry, at: 0)
         lifetimeWords += Self.wordCount(trimmed)
-        persist()
+        persistLifetimeWords()
     }
 
     /// Whitespace-delimited word count. Good enough for a usage stat — not a
@@ -106,18 +126,94 @@ final class TranscriptHistoryStore: ObservableObject {
     }
 
     func clear() {
+        do {
+            try context.delete(model: TranscriptRecord.self)
+            saveContext()
+        } catch {
+            DebugLog.error("TranscriptHistoryStore: clear failed — \(error)")
+        }
         entries.removeAll()
-        persist()
+        // `lifetimeWords` intentionally survives Delete All.
     }
 
-    private func load() {
-        if let data = defaults.data(forKey: storageKey),
-           let decoded = try? JSONDecoder().decode([Entry].self, from: data) {
-            entries = decoded
+    // MARK: - SwiftData
+
+    /// Builds the on-disk SwiftData container, falling back to a non-persisting
+    /// in-memory store if the on-disk one can't be opened. The fallback keeps
+    /// dictation working (and gives the SwiftUI environment a valid container)
+    /// for the session rather than crashing or losing the app; an in-memory
+    /// store has no disk dependency that can fail.
+    private static func makeContainer() -> ModelContainer {
+        let schema = Schema([TranscriptRecord.self])
+        do {
+            return try ModelContainer(
+                for: schema,
+                configurations: ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+            )
+        } catch {
+            DebugLog.error("TranscriptHistoryStore: on-disk SwiftData store unavailable (\(error)); using a non-persisting in-memory store for this session")
+            return try! ModelContainer(
+                for: schema,
+                configurations: ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+            )
         }
-        // Seed the lifetime counter once: if it has never been written, estimate
-        // it from whatever history we still have on disk. After that the stored
-        // value is authoritative and only grows via `add`.
+    }
+
+    /// Loads every stored transcript, newest first, into the published mirror
+    /// the UI reads. Sorting in the fetch keeps the in-memory array ordered the
+    /// same way `add` maintains it (newest at index 0).
+    private func loadEntries() {
+        let descriptor = FetchDescriptor<TranscriptRecord>(
+            sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
+        )
+        do {
+            entries = try context.fetch(descriptor).map { $0.toEntry() }
+        } catch {
+            DebugLog.error("TranscriptHistoryStore: loading transcripts failed — \(error)")
+            entries = []
+        }
+    }
+
+    private func saveContext() {
+        guard context.hasChanges else { return }
+        do {
+            try context.save()
+        } catch {
+            DebugLog.error("TranscriptHistoryStore: save failed — \(error)")
+        }
+    }
+
+    /// One-time move of the legacy UserDefaults JSON blob into SwiftData. Runs
+    /// only when SwiftData has no rows yet and the blob is present, so it
+    /// executes exactly once and never overwrites SwiftData-native rows; the
+    /// legacy key is dropped afterward. Deliberately kept for future versions so
+    /// any upgrade path — including jumping straight from a pre-SwiftData build —
+    /// still migrates rather than silently losing history.
+    private func migrateLegacyHistoryIfNeeded() {
+        guard let data = defaults.data(forKey: legacyStorageKey) else { return }
+        let existingCount = (try? context.fetchCount(FetchDescriptor<TranscriptRecord>())) ?? 0
+        guard existingCount == 0 else {
+            // SwiftData already holds rows; the leftover blob is stale.
+            defaults.removeObject(forKey: legacyStorageKey)
+            return
+        }
+        guard let legacy = try? JSONDecoder().decode([Entry].self, from: data) else {
+            // Unreadable blob: leave it in place rather than discard data we
+            // can't parse. Migration simply no-ops until it can be read.
+            DebugLog.error("TranscriptHistoryStore: legacy history present but could not be decoded; left in place")
+            return
+        }
+        for entry in legacy {
+            context.insert(TranscriptRecord(entry: entry))
+        }
+        saveContext()
+        defaults.removeObject(forKey: legacyStorageKey)
+        DebugLog.info("TranscriptHistoryStore: migrated \(legacy.count) transcript(s) from UserDefaults to SwiftData")
+    }
+
+    /// Seeds the lifetime word counter once from existing history (post-migration),
+    /// then treats the stored value as authoritative — it only grows via `add`.
+    private func loadLifetimeWords() {
         if defaults.object(forKey: lifetimeWordsKey) == nil {
             lifetimeWords = entries.reduce(0) { $0 + Self.wordCount($1.text) }
             defaults.set(lifetimeWords, forKey: lifetimeWordsKey)
@@ -126,10 +222,55 @@ final class TranscriptHistoryStore: ObservableObject {
         }
     }
 
-    private func persist() {
-        if let data = try? JSONEncoder().encode(entries) {
-            defaults.set(data, forKey: storageKey)
-        }
+    private func persistLifetimeWords() {
         defaults.set(lifetimeWords, forKey: lifetimeWordsKey)
+    }
+}
+
+/// SwiftData persistence record for a single transcript. Kept distinct from the
+/// `Entry` value type the UI consumes: `Entry` stays a lightweight
+/// `Codable`/`Equatable` struct (so the Home view's grouping/search/sort and the
+/// `history.add(...)` callers are unchanged), while this is the durable on-disk
+/// shape. The two map 1:1, preserving `id`.
+///
+/// The nested value types (`Latency`, `PolishOutcome`, `PolishFailure`) are
+/// `Codable`, which SwiftData stores as composite attributes — so they are
+/// reused verbatim rather than flattened into separate columns.
+@Model
+final class TranscriptRecord {
+    @Attribute(.unique) var id: UUID
+    var text: String
+    var timestamp: Date
+    var latency: TranscriptHistoryStore.Latency?
+    var original: String?
+    var polish: TranscriptHistoryStore.PolishOutcome?
+    var failure: TranscriptHistoryStore.PolishFailure?
+
+    init(id: UUID,
+         text: String,
+         timestamp: Date,
+         latency: TranscriptHistoryStore.Latency?,
+         original: String?,
+         polish: TranscriptHistoryStore.PolishOutcome?,
+         failure: TranscriptHistoryStore.PolishFailure?) {
+        self.id = id
+        self.text = text
+        self.timestamp = timestamp
+        self.latency = latency
+        self.original = original
+        self.polish = polish
+        self.failure = failure
+    }
+
+    convenience init(entry: TranscriptHistoryStore.Entry) {
+        self.init(id: entry.id, text: entry.text, timestamp: entry.timestamp,
+                  latency: entry.latency, original: entry.original,
+                  polish: entry.polish, failure: entry.failure)
+    }
+
+    func toEntry() -> TranscriptHistoryStore.Entry {
+        TranscriptHistoryStore.Entry(id: id, text: text, timestamp: timestamp,
+                                     latency: latency, original: original,
+                                     polish: polish, failure: failure)
     }
 }

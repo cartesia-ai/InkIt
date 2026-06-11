@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import SwiftData
 
 // MARK: - Design tokens
 //
@@ -404,6 +405,10 @@ struct InkItApp: App {
                 .environmentObject(settings)
                 .environmentObject(history)
         }
+        // Share the history store's single SwiftData container with the
+        // environment so any future `@Query`-based read can use it directly,
+        // while the store keeps owning all writes.
+        .modelContainer(history.modelContainer)
         .windowResizability(.contentMinSize)
         // The onboarding view is flexible (maxWidth/maxHeight: .infinity), so its
         // idealWidth/idealHeight never reach the window — SwiftUI falls back to a
