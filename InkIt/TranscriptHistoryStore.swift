@@ -87,6 +87,13 @@ final class TranscriptHistoryStore: ObservableObject {
     /// store itself drives all writes through `context` below.
     let modelContainer: ModelContainer
     private var context: ModelContext { modelContainer.mainContext }
+    /// Whether `modelContainer` writes to disk. `false` means we fell back to a
+    /// non-persisting in-memory store (the on-disk one couldn't be opened), so
+    /// nothing saved this session survives a relaunch. Durable side effects that
+    /// must stay in lockstep with stored rows — dropping the legacy migration
+    /// blob, advancing the persisted lifetime counter — are gated on this so they
+    /// never outrun the transcripts that actually survive a quit.
+    private let isPersistent: Bool
 
     private let defaults = UserDefaults.standard
     /// Legacy UserDefaults blob that held the entire `[Entry]` array as one JSON
@@ -96,7 +103,9 @@ final class TranscriptHistoryStore: ObservableObject {
     private let lifetimeWordsKey = "transcriptHistory.lifetimeWords.v1"
 
     private init() {
-        modelContainer = Self.makeContainer()
+        let store = Self.makeContainer()
+        modelContainer = store.container
+        isPersistent = store.isPersistent
         migrateLegacyHistoryIfNeeded()
         loadEntries()
         loadLifetimeWords()
@@ -113,10 +122,18 @@ final class TranscriptHistoryStore: ObservableObject {
         let entry = Entry(text: trimmed, timestamp: Date(), latency: latency,
                           original: original, polish: polish, failure: failure)
         context.insert(TranscriptRecord(entry: entry))
-        saveContext()
+        let saved = saveContext()
+        // Reflect the entry in the session's published mirror regardless — that
+        // array is rebuilt from storage on every launch, so showing a row that
+        // didn't persist only affects this session. The lifetime counter is
+        // different: it's written to UserDefaults and read back across launches,
+        // so it may only advance when the row durably persisted, otherwise the
+        // Home stats would outgrow the transcripts that survive a relaunch.
         entries.insert(entry, at: 0)
-        lifetimeWords += Self.wordCount(trimmed)
-        persistLifetimeWords()
+        if isPersistent && saved {
+            lifetimeWords += Self.wordCount(trimmed)
+            persistLifetimeWords()
+        }
     }
 
     /// Whitespace-delimited word count. Good enough for a usage stat — not a
@@ -143,19 +160,21 @@ final class TranscriptHistoryStore: ObservableObject {
     /// dictation working (and gives the SwiftUI environment a valid container)
     /// for the session rather than crashing or losing the app; an in-memory
     /// store has no disk dependency that can fail.
-    private static func makeContainer() -> ModelContainer {
+    private static func makeContainer() -> (container: ModelContainer, isPersistent: Bool) {
         let schema = Schema([TranscriptRecord.self])
         do {
-            return try ModelContainer(
+            let container = try ModelContainer(
                 for: schema,
                 configurations: ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
             )
+            return (container, true)
         } catch {
             DebugLog.error("TranscriptHistoryStore: on-disk SwiftData store unavailable (\(error)); using a non-persisting in-memory store for this session")
-            return try! ModelContainer(
+            let container = try! ModelContainer(
                 for: schema,
                 configurations: ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
             )
+            return (container, false)
         }
     }
 
@@ -174,22 +193,37 @@ final class TranscriptHistoryStore: ObservableObject {
         }
     }
 
-    private func saveContext() {
-        guard context.hasChanges else { return }
+    /// Persists pending changes, reporting whether the store is now durable.
+    /// Returns `true` when there was nothing to save or the save succeeded;
+    /// `false` when SwiftData rejected the write (e.g. a unique-`id` collision).
+    /// Callers use the result to gate irreversible follow-ups — dropping the
+    /// legacy blob, advancing the lifetime counter — so those never run against
+    /// rows that didn't actually land on disk.
+    @discardableResult
+    private func saveContext() -> Bool {
+        guard context.hasChanges else { return true }
         do {
             try context.save()
+            return true
         } catch {
             DebugLog.error("TranscriptHistoryStore: save failed — \(error)")
+            return false
         }
     }
 
     /// One-time move of the legacy UserDefaults JSON blob into SwiftData. Runs
     /// only when SwiftData has no rows yet and the blob is present, so it
     /// executes exactly once and never overwrites SwiftData-native rows; the
-    /// legacy key is dropped afterward. Deliberately kept for future versions so
-    /// any upgrade path — including jumping straight from a pre-SwiftData build —
-    /// still migrates rather than silently losing history.
+    /// legacy key is dropped only once the migrated rows are durably saved.
+    /// Deliberately kept for future versions so any upgrade path — including
+    /// jumping straight from a pre-SwiftData build — still migrates rather than
+    /// silently losing history.
     private func migrateLegacyHistoryIfNeeded() {
+        // Never migrate into the non-persisting fallback store: copying the blob
+        // into a session-only store and then dropping the UserDefaults key would
+        // lose the history on quit. Leaving the key untouched lets the next launch
+        // with a healthy on-disk store migrate it for real.
+        guard isPersistent else { return }
         guard let data = defaults.data(forKey: legacyStorageKey) else { return }
         let existingCount = (try? context.fetchCount(FetchDescriptor<TranscriptRecord>())) ?? 0
         guard existingCount == 0 else {
@@ -206,7 +240,13 @@ final class TranscriptHistoryStore: ObservableObject {
         for entry in legacy {
             context.insert(TranscriptRecord(entry: entry))
         }
-        saveContext()
+        // Only drop the source blob once the rows are confirmed on disk. If the
+        // save fails (e.g. a unique-`id` collision), keep the blob so the next
+        // launch can retry rather than losing the history outright.
+        guard saveContext() else {
+            DebugLog.error("TranscriptHistoryStore: legacy migration save failed; leaving the UserDefaults blob in place to retry next launch")
+            return
+        }
         defaults.removeObject(forKey: legacyStorageKey)
         DebugLog.info("TranscriptHistoryStore: migrated \(legacy.count) transcript(s) from UserDefaults to SwiftData")
     }
