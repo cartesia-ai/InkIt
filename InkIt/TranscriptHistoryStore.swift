@@ -269,11 +269,21 @@ final class TranscriptHistoryStore: ObservableObject {
     /// Seeds the lifetime word counter once from existing history (post-migration),
     /// then treats the stored value as authoritative — it only grows via `add`.
     private func loadLifetimeWords() {
-        if defaults.object(forKey: lifetimeWordsKey) == nil {
-            lifetimeWords = entries.reduce(0) { $0 + Self.wordCount($1.text) }
-            defaults.set(lifetimeWords, forKey: lifetimeWordsKey)
-        } else {
+        if defaults.object(forKey: lifetimeWordsKey) != nil {
             lifetimeWords = defaults.integer(forKey: lifetimeWordsKey)
+            return
+        }
+        // Key unset: seed from current history. `entries` only reflects all
+        // history once migration is complete — the legacy blob fully imported and
+        // its UserDefaults key removed. Persisting the seed before then (in-memory
+        // fallback, a failed migration save, or a leftover blob) would pin the
+        // counter at zero while history still lives in `transcriptHistory.v1`, and
+        // it would never recompute. So show the best in-memory estimate this
+        // session but only write the durable seed once migration has settled,
+        // leaving the key unset otherwise so a later healthy launch seeds correctly.
+        lifetimeWords = entries.reduce(0) { $0 + Self.wordCount($1.text) }
+        if isPersistent && defaults.data(forKey: legacyStorageKey) == nil {
+            defaults.set(lifetimeWords, forKey: lifetimeWordsKey)
         }
     }
 
