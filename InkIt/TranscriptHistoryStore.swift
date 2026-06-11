@@ -145,10 +145,16 @@ final class TranscriptHistoryStore: ObservableObject {
     func clear() {
         do {
             try context.delete(model: TranscriptRecord.self)
-            saveContext()
         } catch {
             DebugLog.error("TranscriptHistoryStore: clear failed — \(error)")
+            return
         }
+        // Only mirror the wipe in the published array once the deletion is
+        // durably persisted. If the save fails the rows remain on disk and would
+        // reappear next launch, so leaving the UI populated keeps it honest about
+        // what "Delete All" actually removed rather than implying a wipe that
+        // didn't stick.
+        guard saveContext() else { return }
         entries.removeAll()
         // `lifetimeWords` intentionally survives Delete All.
     }
