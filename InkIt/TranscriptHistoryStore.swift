@@ -217,10 +217,13 @@ final class TranscriptHistoryStore: ObservableObject {
         }
     }
 
-    /// One-time move of the legacy UserDefaults JSON blob into SwiftData. Runs
-    /// only when SwiftData has no rows yet and the blob is present, so it
-    /// executes exactly once and never overwrites SwiftData-native rows; the
-    /// legacy key is dropped only once the migrated rows are durably saved.
+    /// One-time move of the legacy UserDefaults JSON blob into SwiftData. Merges
+    /// by `id` — it imports only the legacy entries SwiftData doesn't already
+    /// hold — rather than assuming an empty store means "not yet migrated". A
+    /// non-empty store does not prove the blob was imported (new dictations can
+    /// persist while an earlier migration save failed), so a blanket "rows exist
+    /// ⇒ blob is stale" deletion would drop unmigrated history. The blob is
+    /// removed only once every entry it holds is confirmed present in SwiftData.
     /// Deliberately kept for future versions so any upgrade path — including
     /// jumping straight from a pre-SwiftData build — still migrates rather than
     /// silently losing history.
@@ -231,30 +234,36 @@ final class TranscriptHistoryStore: ObservableObject {
         // with a healthy on-disk store migrate it for real.
         guard isPersistent else { return }
         guard let data = defaults.data(forKey: legacyStorageKey) else { return }
-        let existingCount = (try? context.fetchCount(FetchDescriptor<TranscriptRecord>())) ?? 0
-        guard existingCount == 0 else {
-            // SwiftData already holds rows; the leftover blob is stale.
-            defaults.removeObject(forKey: legacyStorageKey)
-            return
-        }
         guard let legacy = try? JSONDecoder().decode([Entry].self, from: data) else {
             // Unreadable blob: leave it in place rather than discard data we
             // can't parse. Migration simply no-ops until it can be read.
             DebugLog.error("TranscriptHistoryStore: legacy history present but could not be decoded; left in place")
             return
         }
-        for entry in legacy {
+        let existingIDs: Set<UUID>
+        do {
+            existingIDs = Set(try context.fetch(FetchDescriptor<TranscriptRecord>()).map(\.id))
+        } catch {
+            // Can't tell what's already stored, so importing risks duplicate-`id`
+            // collisions. Leave the blob untouched and retry next launch.
+            DebugLog.error("TranscriptHistoryStore: could not read existing rows for migration (\(error)); leaving legacy blob in place")
+            return
+        }
+        let missing = legacy.filter { !existingIDs.contains($0.id) }
+        for entry in missing {
             context.insert(TranscriptRecord(entry: entry))
         }
-        // Only drop the source blob once the rows are confirmed on disk. If the
-        // save fails (e.g. a unique-`id` collision), keep the blob so the next
-        // launch can retry rather than losing the history outright.
+        // Drop the source blob only once everything it held is confirmed present
+        // in SwiftData (saved). A failed save keeps the blob for a retry next
+        // launch rather than losing the history outright.
         guard saveContext() else {
             DebugLog.error("TranscriptHistoryStore: legacy migration save failed; leaving the UserDefaults blob in place to retry next launch")
             return
         }
         defaults.removeObject(forKey: legacyStorageKey)
-        DebugLog.info("TranscriptHistoryStore: migrated \(legacy.count) transcript(s) from UserDefaults to SwiftData")
+        if !missing.isEmpty {
+            DebugLog.info("TranscriptHistoryStore: migrated \(missing.count) transcript(s) from UserDefaults to SwiftData")
+        }
     }
 
     /// Seeds the lifetime word counter once from existing history (post-migration),
