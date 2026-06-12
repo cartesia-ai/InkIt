@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-build:
+    name: Test and Build
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Show tool versions
+        run: |
+          sw_vers
+          xcodebuild -version
+
+      - name: Check design tokens
+        run: ./tools/check-design-tokens.sh
+
+      - name: Install build tools
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Run unit tests
+        run: |
+          xcodebuild test \
+            -project InkIt.xcodeproj \
+            -scheme InkIt \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath build/ci-debug \
+            -quiet
+
+      - name: Build Release app
+        run: |
+          xcodebuild build \
+            -project InkIt.xcodeproj \
+            -scheme InkIt \
+            -configuration Release \
+            -destination 'platform=macOS' \
+            -derivedDataPath build/ci-release \
+            -quiet

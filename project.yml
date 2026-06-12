@@ -1,0 +1,124 @@
+name: InkIt
+options:
+  bundleIdPrefix: ai.cartesia
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: 2.9.2
+
+targets:
+  InkIt:
+    type: application
+    platform: macOS
+    # Signing is config-specific (set in these xcconfigs, incl. per-config
+    # entitlements). Debug is ad-hoc + debuggable so tests run; Release is
+    # ad-hoc by default with an optional gitignored Config/Signing.local.xcconfig
+    # supplying a Developer ID + Team ID for notarized builds.
+    configFiles:
+      Debug: Config/Debug.xcconfig
+      Release: Config/Signing.xcconfig
+    sources:
+      - path: InkIt
+        excludes:
+          - Info.plist
+    resources:
+      - path: InkIt/Assets.xcassets
+      - path: InkIt/Sounds
+    dependencies:
+      - package: Sparkle
+    info:
+      path: InkIt/Info.plist
+      properties:
+        CFBundleDisplayName: InkIt
+        CFBundleName: InkIt
+        CFBundlePackageType: APPL
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "2"
+        LSMinimumSystemVersion: "14.0"
+        # Show in Dock so users can always click the icon to bring up the
+        # control window. (Was LSUIElement=true earlier; reverted because some
+        # systems don't render the menu bar item reliably.)
+        LSUIElement: false
+        NSHighResolutionCapable: true
+        NSMicrophoneUsageDescription: "InkIt records your voice while you hold the dictation hotkey and streams it to Cartesia STT for transcription."
+        NSAppleEventsUsageDescription: "InkIt pastes the transcribed text into the focused app."
+        SUFeedURL: "https://github.com/cartesia-ai/InkIt/releases/latest/download/appcast.xml"
+        SUPublicEDKey: "$(SPARKLE_PUBLIC_ED_KEY)"
+        SUEnableAutomaticChecks: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.cartesia.InkIt
+        # Drives Color.accentColor / system control tints from the
+        # AccentColor asset (indigo, light + dark) — see DESIGN_SYSTEM.md.
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        # No App Sandbox: synthesized Cmd+V via Accessibility requires an
+        # unsandboxed binary.
+        ENABLE_APP_SANDBOX: NO
+        # CODE_SIGN_ENTITLEMENTS is set per-config in Config/*.xcconfig
+        # (Debug: get-task-allow=true for tests; Release: =false for notarization).
+    postBuildScripts:
+      # Xcode leaves Sparkle's nested helpers (Updater.app, Autoupdate, the XPC
+      # services) ad-hoc; re-sign them inside-out so notarization accepts the
+      # build. Xcode's final app-signing then re-seals the bundle. No-op for
+      # ad-hoc local builds. (Only matters when shipping a notarized DMG.)
+      - name: Deep-sign Sparkle helpers
+        basedOnDependencyAnalysis: false
+        script: |
+          if [ "${CODE_SIGNING_ALLOWED}" = "NO" ]; then
+            echo "note: code signing disabled — skipping Sparkle helper signing"
+            exit 0
+          fi
+          SPARKLE="${CODESIGNING_FOLDER_PATH}/Contents/Frameworks/Sparkle.framework"
+          if [ ! -d "$SPARKLE" ]; then
+            echo "note: Sparkle.framework not embedded — skipping"
+            exit 0
+          fi
+          # Use the identity Xcode resolved for this build: a Developer ID hash
+          # for notarized maintainer builds, "-" (ad-hoc) for contributor builds.
+          IDENTITY="${EXPANDED_CODE_SIGN_IDENTITY:--}"
+          if [ "$IDENTITY" = "-" ]; then
+            # Ad-hoc: --timestamp/--options runtime require a real identity + network.
+            FLAGS="--force"
+          else
+            FLAGS="--force --timestamp --options runtime"
+          fi
+          V="$SPARKLE/Versions/Current"
+          # Sign innermost-first so each enclosing seal covers valid contents.
+          for item in \
+            "$V/XPCServices/Downloader.xpc" \
+            "$V/XPCServices/Installer.xpc" \
+            "$V/Autoupdate" \
+            "$V/Updater.app" \
+            "$SPARKLE"; do
+            [ -e "$item" ] && codesign $FLAGS --sign "$IDENTITY" "$item"
+          done
+
+  InkItTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: InkItTests
+    dependencies:
+      - target: InkIt
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.cartesia.InkItTests
+        # The test bundle uses the main app as its host so it can link
+        # against the app's compiled sources.
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/InkIt.app/Contents/MacOS/InkIt"
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_ALLOWED: NO
+        SWIFT_VERSION: "5.0"
+        GENERATE_INFOPLIST_FILE: YES
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
