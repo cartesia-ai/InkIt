@@ -15,7 +15,7 @@ https://github.com/user-attachments/assets/3dc54345-87e4-47fe-a28f-cb33d7dc98df
   <img src=".github/media/download-macos.svg" height="48" alt="Download for macOS" />
 </a>
 
-<sub>Requires macOS 14+ · Apple silicon & Intel</sub>
+<sub>Requires macOS 14+ · Apple silicon</sub>
 
 </div>
 
