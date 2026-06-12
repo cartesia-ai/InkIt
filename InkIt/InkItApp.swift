@@ -141,6 +141,9 @@ enum Motion {
     static let expand: Animation = .easeOut(duration: 0.16)
     /// Onboarding step change — slide + dots, critically damped (no bounce).
     static let step: Animation = .spring(response: 0.45, dampingFraction: 1)
+    /// Fade-and-drift between rotating content (the Home "dictate anywhere"
+    /// header) — eased and unhurried so the swap reads as a settle, not a cut.
+    static let rotate: Animation = .easeInOut(duration: 0.5)
 }
 
 enum Hover {
@@ -560,6 +563,9 @@ struct MainWindowView: View {
             .background(WindowChrome())
             .overlay { settingsModal }
             .overlay { deleteConfirmModal }
+            // Toasts live on the main window's lower-right, above any modal, so a
+            // confirmation/error stays put rather than riding the Settings card.
+            .overlay(alignment: .bottomTrailing) { ToastOverlay() }
             // The "Settings…" menu item (⌘,) posts this; open the modal in response.
             .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
                 settingsPane = .general
@@ -606,34 +612,43 @@ struct MainWindowView: View {
             Circle()
                 .fill(coordinator.statusColor)
                 .frame(width: 7, height: 7)
-            Text(statusLine)
-                .font(.inkCaption)
-                .foregroundStyle(.secondary)
+            // Keycaps set the shortcut apart from the surrounding prose; the live
+            // state appends only while something is happening, so it stays quiet
+            // when idle.
+            HStack(spacing: 5) {
+                Text(settings.dictationMode == .toggle ? "Press" : "Hold")
+                HotkeyCaps(tokens: HotkeyConversion.displayTokens(for: settings.hotkey))
+                Text(settings.dictationMode == .toggle ? "to start and stop" : "to dictate")
+                if coordinator.statusText != "Idle" {
+                    Text("· \(coordinator.statusText)")
+                }
+            }
+            .font(.inkCaption)
+            .foregroundStyle(.secondary)
         }
         .padding(.trailing, 6)
     }
 
-    // Hotkey hint at rest; appends the live state only while something is
-    // actually happening, so the bar stays quiet when idle.
-    private var statusLine: String {
-        let hint = settings.dictationMode == .toggle
-            ? "Press \(settings.hotkeyDisplayString) to start and stop"
-            : "Hold \(settings.hotkeyDisplayString) to dictate"
-        let status = coordinator.statusText
-        return status == "Idle" ? hint : "\(hint) · \(status)"
-    }
-
 
     @ViewBuilder private var homeView: some View {
-        if history.entries.isEmpty {
-            // A completed onboarding trial seeds the very first transcript (see
-            // AppCoordinator's trial logging), so most users never see this.
-            // It's reached only when they skipped Try-it — so rather than a
-            // dead-end "nothing here," offer a live try box that turns the first
-            // take into a real history row, closing the activation loop in place.
-            HomeTryItPanel()
-        } else {
-            transcriptList
+        VStack(spacing: 0) {
+            // While the user is still finding their feet (under two transcripts),
+            // a rotating header spells out that dictation works in any app —
+            // the post-onboarding "can I use this elsewhere?" gap. It self-
+            // retires once they've dictated a couple of times.
+            if history.entries.count < 2 {
+                RotatingDictateHeader(tokens: HotkeyConversion.displayTokens(for: settings.hotkey))
+            }
+            if history.entries.isEmpty {
+                // A completed onboarding trial seeds the very first transcript (see
+                // AppCoordinator's trial logging), so most users never see this.
+                // It's reached only when they skipped Try-it — so rather than a
+                // dead-end "nothing here," offer a live try box that turns the first
+                // take into a real history row, closing the activation loop in place.
+                HomeTryItPanel()
+            } else {
+                transcriptList
+            }
         }
     }
 
@@ -688,7 +703,12 @@ struct MainWindowView: View {
             searchControl
             manageMenu
             Spacer(minLength: 0)
-            statusHint
+            // Suppressed while the rotating "dictate anywhere" header is up
+            // (under two transcripts) — it already carries the hotkey cue, so
+            // the hint would just be duplicated.
+            if history.entries.count >= 2 {
+                statusHint
+            }
         }
         .padding(.horizontal, 4)
         .padding(.bottom, 12)
@@ -1342,6 +1362,131 @@ struct MainWindowView: View {
         }
 
         return Self.dayFmt.string(from: day)
+    }
+}
+
+/// The current hotkey as one amber highlight, tokens joined by "+", e.g.
+/// "⌃ Ctrl + s". Sets the shortcut apart from surrounding prose. Inherits the
+/// ambient font and adds no vertical padding, so its text and highlight match
+/// the line it sits in.
+private struct HotkeyCaps: View {
+    let tokens: [String]
+
+    var body: some View {
+        Text(tokens.joined(separator: " + "))
+            .foregroundStyle(Color.accentColor)
+            .padding(.horizontal, 6)
+            .background(
+                RoundedRectangle(cornerRadius: Radius.keycap, style: .continuous)
+                    .fill(Color.accentSoft)
+            )
+    }
+}
+
+/// The Home "you can dictate anywhere" header. Sits above the Home content while
+/// the user has fewer than two transcripts (see `homeView`), then retires. The
+/// category word + its three app logos swap together on a soft cross-fade so the
+/// line reads as one alive cue rather than a static banner. Pauses on hover so a
+/// bucket is readable; honors Reduce Motion by holding the first bucket still.
+private struct RotatingDictateHeader: View {
+    let tokens: [String]
+
+    @EnvironmentObject var settings: SettingsStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var index = 0
+    @State private var hovering = false
+    @State private var timer: Timer?
+
+    /// Seconds each bucket holds before the next swaps in.
+    private static let dwell: TimeInterval = 2.4
+
+    private struct Bucket { let category: String; let logos: [String] }
+
+    // Asset names live in Assets.xcassets (Logo*). AI leads; the rest are the
+    // everyday surfaces a dictation user lands in.
+    private let buckets: [Bucket] = [
+        .init(category: "AI",       logos: ["LogoClaude", "LogoChatgpt", "LogoGemini"]),
+        .init(category: "email",    logos: ["LogoGmail", "LogoMail", "LogoOutlook"]),
+        .init(category: "messages", logos: ["LogoMessages", "LogoSlack", "LogoWhatsapp"]),
+        .init(category: "your editor", logos: ["LogoVscode", "LogoTerminal", "LogoXcode"]),
+        .init(category: "your notes", logos: ["LogoNotion", "LogoObsidian", "LogoNotes"]),
+        .init(category: "the browser", logos: ["LogoChrome", "LogoSafari", "LogoFirefox"]),
+    ]
+
+    // Hands-free (toggle) mode taps to start/stop, so "Hold" would be wrong —
+    // mirror the verb the status line and Settings already use per mode.
+    private var verb: String { settings.dictationMode == .toggle ? "Press" : "Hold" }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(verb)
+                .fontWeight(.regular)
+                .foregroundStyle(.primary)
+            HotkeyCaps(tokens: tokens)
+                .fontWeight(.regular)  // match the sentence: same size + weight, so the highlight sits at the line height
+            Text("to dictate in")
+                .fontWeight(.regular)
+                .foregroundStyle(.primary)
+            bucketView
+                .id(index)
+                .transition(.asymmetric(
+                    insertion: .opacity.combined(with: .offset(y: 6)),
+                    removal: .opacity.combined(with: .offset(y: -6))
+                ))
+            Spacer(minLength: 0)
+        }
+        // Largest type on the page — it's the top-of-Home title, so it outranks
+        // the History / Your-stats column headers (inkTitle) below it.
+        .font(.inkLargeTitle)
+        .padding(.horizontal, 22)
+        .padding(.top, 20)
+        .padding(.bottom, 8)
+        .onHover { hovering = $0 }
+        .onAppear(perform: startRotating)
+        .onDisappear { timer?.invalidate() }
+    }
+
+    private var bucketView: some View {
+        let bucket = buckets[index]
+        return HStack(spacing: 11) {
+            Text(bucket.category)
+                .fontWeight(.regular)
+                .foregroundStyle(.primary)
+            HStack(spacing: 7) {
+                ForEach(bucket.logos, id: \.self) { logoTile($0) }
+            }
+        }
+    }
+
+    private func logoTile(_ name: String) -> some View {
+        // The image already carries its own optical padding (normalized to ~80%
+        // of a square), so it fills the tile directly.
+        Image(name)
+            .resizable()
+            .interpolation(.high)
+            .scaledToFit()
+            .frame(width: 38, height: 38)
+            .background(
+                RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
+                    .fill(Color.card)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
+                    .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+            .shadow(color: Elevation.soft, radius: 2, y: 1)
+    }
+
+    private func startRotating() {
+        guard !reduceMotion else { return }  // hold the first bucket still
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: Self.dwell, repeats: true) { _ in
+            guard !hovering else { return }   // let a reader linger
+            withAnimation(Motion.rotate) {
+                index = (index + 1) % buckets.count
+            }
+        }
     }
 }
 

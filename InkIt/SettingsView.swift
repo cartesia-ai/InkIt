@@ -1563,74 +1563,48 @@ struct HotkeyRecorder: View {
     @EnvironmentObject var coordinator: AppCoordinator
     @State private var isEditing = false
     @State private var recording = false
-    @State private var recorderMessage: String?
-    @State private var toastMessage: String?
-    @State private var toastTask: Task<Void, Never>?
     @State private var keyMonitor: Any?
     @State private var flagsMonitor: Any?
     @State private var fnCapture = FnKeyCapture()
+    // A lone modifier is recorded on release, but only if it was pressed by
+    // itself — this holds that pending key until release confirms it.
+    @State private var modifierCandidate: UInt32?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            LabeledContent {
-                Button {
-                    if isEditing {
-                        cancelEditing()
-                    } else {
-                        beginEditing()
-                    }
-                } label: {
-                    ShortcutCaptureField(
-                        tokens: shortcutTokens,
-                        placeholder: shortcutPlaceholder,
-                        isActive: isEditing,
-                        showsPencil: !isEditing
-                    )
+        LabeledContent {
+            Button {
+                if isEditing {
+                    cancelEditing()
+                } else {
+                    beginEditing()
                 }
-                .buttonStyle(.plain)
-                .contentShape(Rectangle())
-                .help(isEditing ? "Press a new shortcut" : "Change dictation shortcut")
-                .modifier(PointingHandCursor())
-                // Click outside while recording → cancel back to the pencil button.
-                .dismissOnClickOutside(isActive: isEditing) { cancelEditing() }
             } label: {
-                VStack(alignment: .leading, spacing: SettingsMetrics.captionSpacing) {
-                    Text("Hotkey")
-                    Text(shortcutDescription)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                ShortcutCaptureField(
+                    tokens: shortcutTokens,
+                    placeholder: shortcutPlaceholder,
+                    isActive: isEditing,
+                    showsPencil: !isEditing
+                )
             }
-
-            if let recorderMessage {
-                Text(recorderMessage)
+            .buttonStyle(.plain)
+            .contentShape(Rectangle())
+            .help(isEditing ? "Press a new shortcut" : "Change dictation shortcut")
+            .modifier(PointingHandCursor())
+            // Click outside while recording → cancel back to the pencil button.
+            .dismissOnClickOutside(isActive: isEditing) { cancelEditing() }
+        } label: {
+            VStack(alignment: .leading, spacing: SettingsMetrics.captionSpacing) {
+                Text("Hotkey")
+                Text(shortcutDescription)
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 4)
-        .overlay(alignment: .topTrailing) {
-            if let toastMessage {
-                Text(toastMessage)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.primary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(.regularMaterial, in: Capsule())
-                    .overlay(
-                        Capsule()
-                            .stroke(Color.secondary.opacity(0.16), lineWidth: 1)
-                    )
-                    .offset(y: -36)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-        }
-        .animation(.easeInOut(duration: 0.16), value: toastMessage)
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { _ in
             cancelEditing()
         }
         .onDisappear {
-            toastTask?.cancel()
             cancelEditing()
         }
     }
@@ -1655,13 +1629,11 @@ struct HotkeyRecorder: View {
     private func beginEditing() {
         coordinator.unregisterHotkey()
         isEditing = true
-        recorderMessage = nil
         startRecording()
     }
 
     private func cancelEditing() {
         stopRecording()
-        recorderMessage = nil
         isEditing = false
         coordinator.registerHotkey()
     }
@@ -1670,22 +1642,12 @@ struct HotkeyRecorder: View {
         stopRecording()
         settings.hotkey = hotkey
         coordinator.registerHotkey()
-        recorderMessage = nil
         isEditing = false
-        showToast("Shortcut saved")
+        ToastCenter.shared.show("Shortcut saved", style: .success)
     }
 
-    private func showToast(_ message: String) {
-        toastTask?.cancel()
-        toastMessage = message
-        toastTask = Task {
-            try? await Task.sleep(nanoseconds: 1_600_000_000)
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                toastMessage = nil
-                toastTask = nil
-            }
-        }
+    private func rejectShortcut(_ keys: String) {
+        ToastCenter.shared.show("\(keys) is invalid. Please try another.", style: .error)
     }
 
     private func startRecording() {
@@ -1706,18 +1668,21 @@ struct HotkeyRecorder: View {
                 return nil
             }
 
+            // A real key press cancels any pending lone-modifier capture: this is
+            // either a combo (handled below) or a bare key (rejected below).
+            modifierCandidate = nil
+
             let carbonMods = HotkeyConversion.carbonModifiers(from: event.modifierFlags)
             if carbonMods == 0 {
-                recorderMessage = "That key needs a modifier. Hold Control or Option, then press a key."
+                rejectShortcut(HotkeyConversion.keyName(for: UInt32(event.keyCode)))
                 return nil
             }
 
             let captured = HotkeyBinding.carbon(keyCode: UInt32(event.keyCode), modifiers: carbonMods)
-            if let validationMessage = captured.validationMessage {
-                recorderMessage = validationMessage
-                return nil
-            } else {
+            if captured.isValidShortcut {
                 saveHotkey(captured)
+            } else {
+                rejectShortcut(HotkeyConversion.displayString(keyCode: UInt32(event.keyCode), modifiers: carbonMods))
             }
             return nil
         }
@@ -1728,6 +1693,25 @@ struct HotkeyRecorder: View {
                 saveHotkey(.fn)
                 return nil
             }
+
+            let keyCode = UInt32(event.keyCode)
+            guard HotkeyConversion.isModifierKeyCode(keyCode) else { return event }
+
+            // Capture a lone modifier on release, and only if it was held by
+            // itself — pressing a key while it's down clears the candidate (see
+            // the keyDown monitor) so ⌘+E still records as a combo.
+            let mask = HotkeyConversion.nsModifierFlag(for: keyCode)
+            let isDown = flags.contains(mask)
+            let activeCount = (flags.contains(.command) ? 1 : 0)
+                + (flags.contains(.option) ? 1 : 0)
+                + (flags.contains(.control) ? 1 : 0)
+                + (flags.contains(.shift) ? 1 : 0)
+            if isDown {
+                modifierCandidate = activeCount == 1 ? keyCode : nil
+            } else if modifierCandidate == keyCode {
+                modifierCandidate = nil
+                saveHotkey(.modifierKey(keyCode: keyCode))
+            }
             return event
         }
     }
@@ -1736,6 +1720,7 @@ struct HotkeyRecorder: View {
         fnCapture.stop()
         if let m = keyMonitor { NSEvent.removeMonitor(m); keyMonitor = nil }
         if let m = flagsMonitor { NSEvent.removeMonitor(m); flagsMonitor = nil }
+        modifierCandidate = nil
         recording = false
     }
 
@@ -1745,30 +1730,13 @@ struct HotkeyRecorder: View {
             return HotkeyConversion.displayString(keyCode: keyCode, modifiers: modifiers)
         case .fn:
             return "fn"
+        case .modifierKey(let keyCode):
+            return HotkeyConversion.modifierLabel(for: keyCode)
         }
     }
 
     private static func keyTokens(for binding: HotkeyBinding) -> [String] {
-        switch binding {
-        case .fn:
-            return ["fn"]
-        case .carbon(let keyCode, let modifiers):
-            var tokens: [String] = []
-            if modifiers & UInt32(controlKey) != 0 { tokens.append("⌃ Ctrl") }
-            if modifiers & UInt32(optionKey) != 0 { tokens.append("⌥ Opt") }
-            if modifiers & UInt32(shiftKey) != 0 { tokens.append("⇧ Shift") }
-            if modifiers & UInt32(cmdKey) != 0 { tokens.append("⌘ Cmd") }
-            tokens.append(keyTokenName(for: keyCode))
-            return tokens
-        }
-    }
-
-    private static func keyTokenName(for keyCode: UInt32) -> String {
-        let name = HotkeyConversion.keyName(for: keyCode)
-        if name.count == 1, name.rangeOfCharacter(from: .letters) != nil {
-            return name.lowercased()
-        }
-        return name
+        HotkeyConversion.displayTokens(for: binding)
     }
 }
 

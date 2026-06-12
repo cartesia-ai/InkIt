@@ -40,6 +40,21 @@ final class HotkeyManager {
     private var fnGlobalMonitor: Any?
     private var fnLocalMonitor: Any?
 
+    // Modifier path — a bare ⌘/⌥/⌃/⇧ (left or right) used on its own. Same
+    // dedicated-thread tap as Fn, but listen-only: the modifier must keep
+    // working for normal combos, so we observe its press/release and never
+    // suppress it. `modKeyCode` is the physical key we react to; `modMask` is
+    // the device-independent flag that tells press from release.
+    private var modEventTap: CFMachPort?
+    private var modRunLoopSource: CFRunLoopSource?
+    private var modTapThread: Thread?
+    private var modTapRunLoop: CFRunLoop?
+    private var modGlobalMonitor: Any?
+    private var modLocalMonitor: Any?
+    private var modIsDown = false
+    private var modKeyCode: Int64 = 0
+    private var modMask: CGEventFlags = []
+
     init() {
         installCarbonHandler()
     }
@@ -56,6 +71,8 @@ final class HotkeyManager {
             registerCarbon(keyCode: keyCode, modifiers: modifiers)
         case .fn:
             registerFn()
+        case .modifierKey(let keyCode):
+            registerModifier(keyCode: keyCode)
         }
     }
 
@@ -82,6 +99,20 @@ final class HotkeyManager {
         if let m = fnGlobalMonitor { NSEvent.removeMonitor(m); fnGlobalMonitor = nil }
         if let m = fnLocalMonitor { NSEvent.removeMonitor(m); fnLocalMonitor = nil }
         fnIsDown = false
+        if let tap = modEventTap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+            if let runLoop = modTapRunLoop {
+                if let src = modRunLoopSource { CFRunLoopRemoveSource(runLoop, src, .commonModes) }
+                CFRunLoopStop(runLoop)
+            }
+            modEventTap = nil
+            modRunLoopSource = nil
+            modTapRunLoop = nil
+            modTapThread = nil
+        }
+        if let m = modGlobalMonitor { NSEvent.removeMonitor(m); modGlobalMonitor = nil }
+        if let m = modLocalMonitor { NSEvent.removeMonitor(m); modLocalMonitor = nil }
+        modIsDown = false
     }
 
     // MARK: - Carbon path
@@ -211,6 +242,109 @@ final class HotkeyManager {
             return event
         }
     }
+
+    // MARK: - Modifier path
+
+    private func registerModifier(keyCode: UInt32) {
+        modKeyCode = Int64(keyCode)
+        modMask = Self.cgFlag(forModifierKeyCode: keyCode)
+        modIsDown = false
+        if installModifierEventTap() { return }
+        installModifierPassiveMonitor()
+    }
+
+    private func installModifierEventTap() -> Bool {
+        let mask: CGEventMask = (1 << CGEventType.flagsChanged.rawValue)
+        let selfPtr = Unmanaged.passUnretained(self).toOpaque()
+
+        let callback: CGEventTapCallBack = { _, type, event, userInfo in
+            guard let userInfo else { return Unmanaged.passUnretained(event) }
+            let manager = Unmanaged<HotkeyManager>.fromOpaque(userInfo).takeUnretainedValue()
+
+            if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                if let tap = manager.modEventTap { CGEvent.tapEnable(tap: tap, enable: true) }
+                return Unmanaged.passUnretained(event)
+            }
+
+            guard type == .flagsChanged else { return Unmanaged.passUnretained(event) }
+
+            // React only to our specific physical key; the mask tells down from
+            // up. Everything passes through untouched.
+            if event.getIntegerValueField(.keyboardEventKeycode) == manager.modKeyCode {
+                let isDown = event.flags.contains(manager.modMask)
+                if isDown != manager.modIsDown {
+                    manager.modIsDown = isDown
+                    if isDown {
+                        DispatchQueue.main.async { manager.onPress?() }
+                    } else {
+                        DispatchQueue.main.async { manager.onRelease?() }
+                    }
+                }
+            }
+            return Unmanaged.passUnretained(event)
+        }
+
+        // Listen-only: a bare modifier must keep functioning for normal combos,
+        // so unlike the Fn tap we never return nil to swallow the event.
+        guard let tap = CGEvent.tapCreate(
+            tap: .cghidEventTap,
+            place: .headInsertEventTap,
+            options: .listenOnly,
+            eventsOfInterest: mask,
+            callback: callback,
+            userInfo: selfPtr
+        ) else {
+            return false
+        }
+
+        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        modEventTap = tap
+        modRunLoopSource = source
+
+        let thread = Thread { [weak self] in
+            let runLoop = CFRunLoopGetCurrent()
+            self?.modTapRunLoop = runLoop
+            CFRunLoopAddSource(runLoop, source, .commonModes)
+            CGEvent.tapEnable(tap: tap, enable: true)
+            CFRunLoopRun()
+        }
+        thread.name = "com.cartesia.InkIt.ModifierEventTap"
+        thread.qualityOfService = .userInteractive
+        modTapThread = thread
+        thread.start()
+        return true
+    }
+
+    private func installModifierPassiveMonitor() {
+        let nsMask = HotkeyConversion.nsModifierFlag(for: UInt32(modKeyCode))
+        let handler: (NSEvent) -> Void = { [weak self] event in
+            guard let self, event.keyCode == UInt16(self.modKeyCode) else { return }
+            let isDown = event.modifierFlags.contains(nsMask)
+            if isDown != self.modIsDown {
+                self.modIsDown = isDown
+                if isDown {
+                    DispatchQueue.main.async { self.onPress?() }
+                } else {
+                    DispatchQueue.main.async { self.onRelease?() }
+                }
+            }
+        }
+        modGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { handler($0) }
+        modLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
+            handler(event)
+            return event
+        }
+    }
+
+    private static func cgFlag(forModifierKeyCode keyCode: UInt32) -> CGEventFlags {
+        switch Int(keyCode) {
+        case kVK_Command, kVK_RightCommand: return .maskCommand
+        case kVK_Option, kVK_RightOption:   return .maskAlternate
+        case kVK_Control, kVK_RightControl: return .maskControl
+        case kVK_Shift, kVK_RightShift:     return .maskShift
+        default:                            return []
+        }
+    }
 }
 
 /// Helpers for converting between AppKit modifier flags and Carbon modifier masks.
@@ -232,6 +366,87 @@ enum HotkeyConversion {
         if modifiers & UInt32(cmdKey) != 0 { s += "⌘" }
         s += keyName(for: keyCode)
         return s
+    }
+
+    /// The eight bare modifier keys allowed as standalone hotkeys, by physical
+    /// keyCode. Left and right are distinct so the recorder can show the side.
+    static let modifierKeyCodes: Set<UInt32> = [
+        UInt32(kVK_Command), UInt32(kVK_RightCommand),
+        UInt32(kVK_Option),  UInt32(kVK_RightOption),
+        UInt32(kVK_Control), UInt32(kVK_RightControl),
+        UInt32(kVK_Shift),   UInt32(kVK_RightShift)
+    ]
+
+    static func isModifierKeyCode(_ keyCode: UInt32) -> Bool {
+        modifierKeyCodes.contains(keyCode)
+    }
+
+    /// The AppKit flag a given modifier keyCode toggles — lets the recorder tell
+    /// a press from a release on a flagsChanged event.
+    static func nsModifierFlag(for keyCode: UInt32) -> NSEvent.ModifierFlags {
+        switch Int(keyCode) {
+        case kVK_Command, kVK_RightCommand: return .command
+        case kVK_Option, kVK_RightOption:   return .option
+        case kVK_Control, kVK_RightControl: return .control
+        case kVK_Shift, kVK_RightShift:     return .shift
+        default:                            return []
+        }
+    }
+
+    /// Glyph + label for a bare modifier hotkey, e.g. "⌥ Opt →". Right-hand keys
+    /// get a trailing arrow; left-hand keys are shown plain.
+    static func modifierLabel(for keyCode: UInt32) -> String {
+        switch Int(keyCode) {
+        case kVK_Command:      return "⌘ Cmd"
+        case kVK_RightCommand: return "⌘ Cmd →"
+        case kVK_Option:       return "⌥ Opt"
+        case kVK_RightOption:  return "⌥ Opt →"
+        case kVK_Control:      return "⌃ Ctrl"
+        case kVK_RightControl: return "⌃ Ctrl →"
+        case kVK_Shift:        return "⇧ Shift"
+        case kVK_RightShift:   return "⇧ Shift →"
+        default:               return "Key \(keyCode)"
+        }
+    }
+
+    private static let functionKeyCodes: Set<UInt32> = [
+        UInt32(kVK_F1), UInt32(kVK_F2), UInt32(kVK_F3), UInt32(kVK_F4),
+        UInt32(kVK_F5), UInt32(kVK_F6), UInt32(kVK_F7), UInt32(kVK_F8),
+        UInt32(kVK_F9), UInt32(kVK_F10), UInt32(kVK_F11), UInt32(kVK_F12),
+        UInt32(kVK_F13), UInt32(kVK_F14), UInt32(kVK_F15), UInt32(kVK_F16),
+        UInt32(kVK_F17), UInt32(kVK_F18), UInt32(kVK_F19)
+    ]
+
+    static func isFunctionKey(_ keyCode: UInt16) -> Bool {
+        functionKeyCodes.contains(UInt32(keyCode))
+    }
+
+    /// One display token per key, e.g. ["⌃ Ctrl", "⌥ Opt", "S"] — rendered as a
+    /// keycap each, joined by "+". A single letter is uppercased to match how
+    /// keys are labelled on a physical keyboard.
+    static func displayTokens(for binding: HotkeyBinding) -> [String] {
+        switch binding {
+        case .fn:
+            return ["🌐 fn"]
+        case .modifierKey(let keyCode):
+            return [modifierLabel(for: keyCode)]
+        case .carbon(let keyCode, let modifiers):
+            var tokens: [String] = []
+            if modifiers & UInt32(controlKey) != 0 { tokens.append("⌃ Ctrl") }
+            if modifiers & UInt32(optionKey) != 0 { tokens.append("⌥ Opt") }
+            if modifiers & UInt32(shiftKey) != 0 { tokens.append("⇧ Shift") }
+            if modifiers & UInt32(cmdKey) != 0 { tokens.append("⌘ Cmd") }
+            tokens.append(tokenName(for: keyCode))
+            return tokens
+        }
+    }
+
+    private static func tokenName(for keyCode: UInt32) -> String {
+        let name = keyName(for: keyCode)
+        if name.count == 1, name.rangeOfCharacter(from: .letters) != nil {
+            return name.uppercased()
+        }
+        return name
     }
 
     static func keyName(for keyCode: UInt32) -> String {

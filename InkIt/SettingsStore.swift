@@ -12,48 +12,36 @@ import ServiceManagement
 enum HotkeyBinding: Equatable {
     case carbon(keyCode: UInt32, modifiers: UInt32)
     case fn
+    /// A bare modifier key (⌘/⌥/⌃/⇧) used on its own, identified by physical
+    /// keyCode so left and right are distinct. Carbon can't bind a lone
+    /// modifier, so HotkeyManager observes it via a flagsChanged event tap.
+    case modifierKey(keyCode: UInt32)
 
-    var validationMessage: String? {
-        guard case .carbon(let keyCode, let modifiers) = self else { return nil }
+    /// Bare modifiers and Fn are always valid; only keyed combos can clash with a
+    /// system-wide shortcut macOS won't let us override (or shouldn't). The
+    /// recorder shows a single "{keys} is invalid" toast, so this is just a Bool.
+    var isValidShortcut: Bool {
+        guard case .carbon(let keyCode, let modifiers) = self else { return true }
         let usesCommand = modifiers & UInt32(cmdKey) != 0
         let usesControl = modifiers & UInt32(controlKey) != 0
         let usesOption = modifiers & UInt32(optionKey) != 0
         let usesShift = modifiers & UInt32(shiftKey) != 0
         let nonCommandModifiers = modifiers & ~UInt32(cmdKey)
+        let onlyCommand = usesCommand && !usesControl && !usesOption && !usesShift
 
-        if usesCommand && !usesControl && !usesOption && !usesShift && Self.commonCommandKeys.contains(keyCode) {
-            let name = HotkeyConversion.displayString(keyCode: keyCode, modifiers: modifiers)
-            return "\(name) is a common app shortcut. Choose a shortcut with Control or Option."
-        }
-
-        if usesCommand && !usesControl && !usesOption && !usesShift && keyCode == UInt32(kVK_Space) {
-            return "Command-Space is reserved for Spotlight. Choose a different shortcut."
-        }
-
-        if usesControl && !usesCommand && !usesOption && !usesShift && keyCode == UInt32(kVK_Space) {
-            return "Control-Space is commonly used by input methods and editors. Choose a different shortcut."
-        }
-
-        if usesCommand && usesOption && !usesControl && !usesShift && keyCode == UInt32(kVK_Escape) {
-            return "Command-Option-Escape is reserved for Force Quit. Choose a different shortcut."
-        }
-
-        if usesCommand && usesControl && !usesOption && !usesShift && keyCode == UInt32(kVK_ANSI_Q) {
-            return "Control-Command-Q is reserved for Lock Screen. Choose a different shortcut."
-        }
-
-        if usesCommand && usesShift && !usesControl && !usesOption && Self.screenshotKeys.contains(keyCode) {
-            return "Command-Shift-\(HotkeyConversion.keyName(for: keyCode)) is reserved for screenshots. Choose a different shortcut."
-        }
-
-        if usesCommand && nonCommandModifiers == 0 && keyCode == UInt32(kVK_Tab) {
-            return "Command-Tab is reserved for switching apps. Choose a different shortcut."
-        }
-
-        return nil
+        if onlyCommand && Self.commonCommandKeys.contains(keyCode) { return false }
+        if onlyCommand && keyCode == UInt32(kVK_Space) { return false }            // Spotlight
+        if usesControl && !usesCommand && !usesOption && !usesShift
+            && keyCode == UInt32(kVK_Space) { return false }                        // input methods
+        if usesCommand && usesOption && !usesControl && !usesShift
+            && keyCode == UInt32(kVK_Escape) { return false }                       // Force Quit
+        if usesCommand && usesControl && !usesOption && !usesShift
+            && keyCode == UInt32(kVK_ANSI_Q) { return false }                       // Lock Screen
+        if usesCommand && usesShift && !usesControl && !usesOption
+            && Self.screenshotKeys.contains(keyCode) { return false }               // screenshots
+        if usesCommand && nonCommandModifiers == 0 && keyCode == UInt32(kVK_Tab) { return false } // app switch
+        return true
     }
-
-    var isValidShortcut: Bool { validationMessage == nil }
 
     private static let commonCommandKeys: Set<UInt32> = [
         UInt32(kVK_ANSI_A),
@@ -410,6 +398,8 @@ final class SettingsStore: ObservableObject {
             return HotkeyConversion.displayString(keyCode: kc, modifiers: mods)
         case .fn:
             return "🌐 fn"
+        case .modifierKey(let kc):
+            return HotkeyConversion.modifierLabel(for: kc)
         }
     }
 
@@ -485,6 +475,9 @@ final class SettingsStore: ObservableObject {
                 modifiers: UInt32(storedMods ?? (controlKey | optionKey))
             )
             self.hotkey = storedHotkey.isValidShortcut ? storedHotkey : .fn
+        case "modifier":
+            let storedKey = defaults.object(forKey: Keys.hotkeyKeyCode) as? Int
+            self.hotkey = .modifierKey(keyCode: UInt32(storedKey ?? kVK_Control))
         default:
             // Default to the Fn / 🌐 key — claimed via a CGEventTap that
             // suppresses the system Globe action while InkIt is running.
@@ -505,6 +498,9 @@ final class SettingsStore: ObservableObject {
             defaults.set("carbon", forKey: Keys.hotkeyKind)
             defaults.set(Int(kc), forKey: Keys.hotkeyKeyCode)
             defaults.set(Int(mods), forKey: Keys.hotkeyModifiers)
+        case .modifierKey(let kc):
+            defaults.set("modifier", forKey: Keys.hotkeyKind)
+            defaults.set(Int(kc), forKey: Keys.hotkeyKeyCode)
         }
     }
 

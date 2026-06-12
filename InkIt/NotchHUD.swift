@@ -404,3 +404,93 @@ private struct HUDWaveform: View {
         }
     }
 }
+
+// MARK: - In-window toast
+
+enum ScreenToastStyle: Equatable {
+    case success, error
+}
+
+private struct ToastItem: Equatable {
+    let message: String
+    let style: ScreenToastStyle
+}
+
+/// Drives a brief, self-dismissing toast. The host view (`ToastOverlay`) pins it
+/// to a window's lower-right; callers just `show(_:style:)`. A new toast replaces
+/// whatever's showing. Shared so any view in the tree can post without plumbing.
+@MainActor
+final class ToastCenter: ObservableObject {
+    static let shared = ToastCenter()
+
+    @Published fileprivate var item: ToastItem?
+    private var clearWork: DispatchWorkItem?
+
+    private init() {}
+
+    func show(_ message: String, style: ScreenToastStyle) {
+        withAnimation(Motion.state) {
+            item = ToastItem(message: message, style: style)
+        }
+        // Cancelling the prior dismissal makes a stale one a non-issue, so this
+        // just clears the current toast after its time is up.
+        clearWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            withAnimation(Motion.state) { self?.item = nil }
+        }
+        clearWork = work
+        // Errors carry more to read; give them longer on screen.
+        let seconds: TimeInterval = style == .error ? 4.0 : 2.0
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
+    }
+}
+
+/// Pins the current toast to the bottom-trailing corner of whatever view it
+/// overlays (the main window). Renders nothing when there's no toast.
+struct ToastOverlay: View {
+    @ObservedObject private var center = ToastCenter.shared
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            if let item = center.item {
+                ToastCard(item: item)
+                    .padding(16)
+                    .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .bottomTrailing)))
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+        .allowsHitTesting(false)
+    }
+}
+
+private struct ToastCard: View {
+    let item: ToastItem
+
+    private var icon: String {
+        item.style == .success ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+    }
+    private var tint: Color {
+        item.style == .success ? .green : Color(nsColor: .systemRed)
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 9) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .semibold))  // ds-allow: icon
+                .foregroundStyle(tint)
+            Text(item.message)
+                .font(.inkCallout)
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 13)
+        .padding(.vertical, 11)
+        .frame(maxWidth: 300, alignment: .leading)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
+                .stroke(Color.secondary.opacity(0.16), lineWidth: 1)
+        )
+        .shadow(color: Elevation.chip, radius: 5, y: 2)
+    }
+}
