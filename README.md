@@ -7,7 +7,7 @@
 Type at the speed of talking.<br>
 InkIt catches every word, even over a hissing espresso machine, a chattering open office, or a rumbling train.
 
-https://github.com/user-attachments/assets/3dc54345-87e4-47fe-a28f-cb33d7dc98df
+https://github.com/user-attachments/assets/0b10a071-c07c-466d-b1ee-ce993f581722
 
 <a href="https://github.com/cartesia-ai/InkIt/releases/latest/download/InkIt.dmg">
   <img src=".github/media/download-macos.svg" height="48" alt="Download for macOS" />
@@ -18,7 +18,6 @@ https://github.com/user-attachments/assets/3dc54345-87e4-47fe-a28f-cb33d7dc98df
 <sub>Powered by [Ink-2](https://www.cartesia.ai/ink) Speech to Text from Cartesia.</sub>
 </div>
 
----
 
 ## Setup
 
