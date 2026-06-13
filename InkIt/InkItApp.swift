@@ -80,7 +80,10 @@ extension Font {
     /// Onboarding hero title.
     static let inkLargeTitle = Font.system(size: 28, weight: .bold)
     /// Screen / pane / column title (History, Your stats, Settings pane).
-    static let inkTitle = Font.system(size: 18, weight: .semibold)
+    static let inkTitle = Font.system(size: 18, weight: .regular)
+    /// Top-of-Home banner (the "dictate anywhere" cue) — a step above the column
+    /// titles so it leads, without the weight of the onboarding hero.
+    static let inkBanner = Font.system(size: 22, weight: .regular)
     /// Compact sheet / popover header title — smaller than a full-window pane
     /// title (the Settings popover header).
     static let inkSheetTitle = Font.system(size: 16, weight: .medium)
@@ -616,7 +619,7 @@ struct MainWindowView: View {
             // state appends only while something is happening, so it stays quiet
             // when idle.
             HStack(spacing: 5) {
-                Text(settings.dictationMode == .toggle ? "Press" : "Hold")
+                Text(settings.dictationModeVerb)
                 HotkeyCaps(tokens: HotkeyConversion.displayTokens(for: settings.hotkey))
                 Text(settings.dictationMode == .toggle ? "to start and stop" : "to dictate")
                 if coordinator.statusText != "Idle" {
@@ -1404,7 +1407,7 @@ private struct RotatingDictateHeader: View {
 
     // Asset names live in Assets.xcassets (Logo*). AI leads; the rest are the
     // everyday surfaces a dictation user lands in.
-    private let buckets: [Bucket] = [
+    private static let buckets: [Bucket] = [
         .init(category: "AI",       logos: ["LogoClaude", "LogoChatgpt", "LogoGemini"]),
         .init(category: "email",    logos: ["LogoGmail", "LogoMail", "LogoOutlook"]),
         .init(category: "messages", logos: ["LogoMessages", "LogoSlack", "LogoWhatsapp"]),
@@ -1413,19 +1416,14 @@ private struct RotatingDictateHeader: View {
         .init(category: "the browser", logos: ["LogoChrome", "LogoSafari", "LogoFirefox"]),
     ]
 
-    // Hands-free (toggle) mode taps to start/stop, so "Hold" would be wrong —
-    // mirror the verb the status line and Settings already use per mode.
-    private var verb: String { settings.dictationMode == .toggle ? "Press" : "Hold" }
-
     var body: some View {
         HStack(spacing: 10) {
-            Text(verb)
-                .fontWeight(.regular)
+            // Hands-free (toggle) taps to start/stop, so the verb flips per mode
+            // (shared with the status line + Settings via `dictationModeVerb`).
+            Text(settings.dictationModeVerb)
                 .foregroundStyle(.primary)
-            HotkeyCaps(tokens: tokens)
-                .fontWeight(.regular)  // match the sentence: same size + weight, so the highlight sits at the line height
+            HotkeyCaps(tokens: tokens)  // inherits the .inkBanner weight, matching the sentence
             Text("to dictate in")
-                .fontWeight(.regular)
                 .foregroundStyle(.primary)
             bucketView
                 .id(index)
@@ -1435,9 +1433,9 @@ private struct RotatingDictateHeader: View {
                 ))
             Spacer(minLength: 0)
         }
-        // Largest type on the page — it's the top-of-Home title, so it outranks
-        // the History / Your-stats column headers (inkTitle) below it.
-        .font(.inkLargeTitle)
+        // Leads the page — a step above the History / Your-stats column titles
+        // (inkTitle), without the bulk of the onboarding hero.
+        .font(.inkBanner)
         .padding(.horizontal, 22)
         .padding(.top, 20)
         .padding(.bottom, 8)
@@ -1447,10 +1445,9 @@ private struct RotatingDictateHeader: View {
     }
 
     private var bucketView: some View {
-        let bucket = buckets[index]
+        let bucket = Self.buckets[index]
         return HStack(spacing: 11) {
             Text(bucket.category)
-                .fontWeight(.regular)
                 .foregroundStyle(.primary)
             HStack(spacing: 7) {
                 ForEach(bucket.logos, id: \.self) { logoTile($0) }
@@ -1465,7 +1462,7 @@ private struct RotatingDictateHeader: View {
             .resizable()
             .interpolation(.high)
             .scaledToFit()
-            .frame(width: 38, height: 38)
+            .frame(width: 32, height: 32)
             .background(
                 RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
                     .fill(Color.card)
@@ -1484,7 +1481,7 @@ private struct RotatingDictateHeader: View {
         timer = Timer.scheduledTimer(withTimeInterval: Self.dwell, repeats: true) { _ in
             guard !hovering else { return }   // let a reader linger
             withAnimation(Motion.rotate) {
-                index = (index + 1) % buckets.count
+                index = (index + 1) % Self.buckets.count
             }
         }
     }
@@ -1510,7 +1507,7 @@ private struct HomeTryItPanel: View {
 
             TryItPracticeCard()
 
-            Text("Or \(settings.dictationMode == .toggle ? "press" : "hold") \(settings.hotkeyDisplayString) in any app and start talking.")
+            Text("Or \(settings.dictationModeVerb.lowercased()) \(settings.hotkeyDisplayString) in any app and start talking.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }

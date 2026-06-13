@@ -403,6 +403,12 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    /// The verb for the active dictation mode — hands-free taps to start/stop,
+    /// push-to-talk holds. One source of truth for every "Press/Hold" cue.
+    var dictationModeVerb: String {
+        dictationMode == .toggle ? "Press" : "Hold"
+    }
+
     private init() {
         // --- Secrets live in the Keychain. Read them there, migrating any
         // plaintext keys written by older builds, then scrub the plaintext. ---
