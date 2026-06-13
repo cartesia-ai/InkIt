@@ -564,6 +564,9 @@ struct MainWindowView: View {
             }
             .background(Color.canvas)
             .background(WindowChrome())
+            // Floating update pill, bottom-center, over the content but below the
+            // settings modal's dimmed backdrop (added after this overlay).
+            .overlay(alignment: .bottom) { UpdatePill() }
             .overlay { settingsModal }
             .overlay { deleteConfirmModal }
             // Toasts live on the main window's lower-right, above any modal, so a
