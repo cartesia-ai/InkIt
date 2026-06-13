@@ -78,6 +78,16 @@ VDMG="build/dist/InkIt_${VER}_arm64.dmg"
 cp "$DMG" "$VDMG"
 ASSETS=("$VDMG" "$DMG")
 if [ -f "$APPCAST" ]; then
+  # Guard against a malformed enclosure URL (e.g. a missing trailing slash on the
+  # generate_appcast prefix collapsing ".../latest/download/InkIt.dmg" down to
+  # ".../latest/InkIt.dmg", which 404s and silently breaks auto-update).
+  ENCLOSURE="$(grep -o 'url="[^"]*"' "$APPCAST" | grep -i '\.dmg' | head -1 | sed 's/^url="//;s/"$//')"
+  [ -n "$ENCLOSURE" ] || fail "$APPCAST has no DMG enclosure URL — regenerate with ./tools/make-appcast.sh."
+  case "$ENCLOSURE" in
+    */releases/latest/download/InkIt.dmg) ;;  # correct: tracks the stable latest asset
+    *) fail "appcast enclosure URL is wrong: $ENCLOSURE
+   expected it to end in /releases/latest/download/InkIt.dmg — regenerate with ./tools/make-appcast.sh." ;;
+  esac
   ASSETS+=("$APPCAST")
 else
   echo "No $APPCAST — publishing without an auto-update feed."
