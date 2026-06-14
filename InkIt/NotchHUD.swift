@@ -14,11 +14,18 @@ private enum HUDMetrics {
     /// row, then padding beneath it so the text/waveform aren't jammed against
     /// the notch's bottom edge.
     static let contentTopGap: CGFloat = 0
-    static let contentRowHeight: CGFloat = 9
+    static let contentRowHeight: CGFloat = 12
     static let contentBottomPad: CGFloat = 4
     static let pillContentHeight: CGFloat = contentTopGap + contentRowHeight + contentBottomPad
     static let pillOverhang: CGFloat = 14
     static let minPillWidth: CGFloat = 150
+
+    // Floating fallback (displays without a physical notch): a detached,
+    // content-sized capsule below the menu bar instead of a fake notch.
+    static let floatingTopGap: CGFloat = 3
+    static let floatingHeight: CGFloat = 22
+    static let floatingHPad: CGFloat = 12
+    static let floatingShadowPad: CGFloat = 16
 }
 
 // MARK: - Notch geometry
@@ -50,13 +57,23 @@ struct NotchGeometry: Equatable {
                 hasPhysicalNotch: true
             )
         }
-        // No physical notch: simulate one centered at the top.
+        // No physical notch: simulate one centered at the top. `notchWidth` is
+        // unused on this path — the floating capsule is content-sized.
         return NotchGeometry(
             centerX: frame.midX,
             notchWidth: 180,
             menuBarHeight: 24,
             hasPhysicalNotch: false
         )
+    }
+
+    /// Height of the HUD window (and the SwiftUI content frame). Notched displays
+    /// size to the notch strip + pill; non-notch displays add the gap below the
+    /// menu bar, the floating capsule, and room for its shadow.
+    var hudWindowHeight: CGFloat {
+        hasPhysicalNotch
+            ? menuBarHeight + HUDMetrics.pillContentHeight
+            : menuBarHeight + HUDMetrics.floatingTopGap + HUDMetrics.floatingHeight + HUDMetrics.floatingShadowPad
     }
 }
 
@@ -134,8 +151,7 @@ final class NotchHUDController: NSObject {
     }
 
     private func windowSize() -> NSSize {
-        NSSize(width: HUDMetrics.windowWidth,
-               height: layout.geometry.menuBarHeight + HUDMetrics.pillContentHeight)
+        NSSize(width: HUDMetrics.windowWidth, height: layout.geometry.hudWindowHeight)
     }
 
     private func reposition() {
@@ -188,7 +204,7 @@ private struct NotchHUDView: View {
 
     private var menuBar: CGFloat { layout.geometry.menuBarHeight }
     private var W: CGFloat { HUDMetrics.windowWidth }
-    private var H: CGFloat { menuBar + HUDMetrics.pillContentHeight }
+    private var H: CGFloat { layout.geometry.hudWindowHeight }
 
     /// Live/status pill: centered under the notch, wide enough to overhang it
     /// on both sides so the two black shapes merge into one island.
@@ -213,9 +229,48 @@ private struct NotchHUDView: View {
     }
 
     var body: some View {
-        pill(content: islandContent)
-            .frame(width: W, height: H, alignment: .top)
-            .animation(.spring(response: 0.32, dampingFraction: 0.9), value: isVisible)
+        Group {
+            // On a notched Mac the island merges with the physical notch; without
+            // one, that shape reads as a black blob pasted onto the menu bar, so we
+            // fall back to a detached floating capsule instead.
+            if layout.geometry.hasPhysicalNotch {
+                pill(content: islandContent)
+            } else {
+                floatingIsland
+            }
+        }
+        .frame(width: W, height: H, alignment: .top)
+        .animation(.spring(response: 0.32, dampingFraction: 0.9), value: isVisible)
+    }
+
+    /// Non-notch fallback: a detached, content-sized capsule floating just below
+    /// the menu bar. All corners rounded, soft shadow, and it scales/fades in and
+    /// out (there's no notch to retract into). Same content as the notch island;
+    /// the window stays click-through, so it never gets in the way.
+    @ViewBuilder
+    private var floatingIsland: some View {
+        Group {
+            if isVisible {
+                islandContent
+                    .fixedSize(horizontal: true, vertical: false)
+                    .padding(.horizontal, HUDMetrics.floatingHPad)
+                    .frame(height: HUDMetrics.floatingHeight)
+                    .background(
+                        // Shadow rides the static capsule (not the animating
+                        // content) so the waveform doesn't re-rasterize the blur.
+                        Capsule(style: .continuous)
+                            .fill(.black)
+                            .overlay(
+                                Capsule(style: .continuous)
+                                    .stroke(.white.opacity(0.08), lineWidth: 0.5)
+                            )
+                            .shadow(color: Elevation.modal, radius: 9, y: 4)
+                    )
+                    .transition(.scale(scale: 0.85).combined(with: .opacity))
+            }
+        }
+        .padding(.top, menuBar + HUDMetrics.floatingTopGap)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     @ViewBuilder

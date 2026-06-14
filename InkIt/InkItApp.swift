@@ -120,7 +120,7 @@ extension Font {
     /// Always-dark notch HUD micro-type — the fixed-size strip by the camera
     /// notch (DESIGN_SYSTEM.md principle 4). Off the content scale by design;
     /// not for general app UI. Brand wordmark and status label.
-    static let inkNotchBrand = Font.system(size: 8, weight: .semibold)
+    static let inkNotchBrand = Font.system(size: 10, weight: .semibold)
     static let inkNotchLabel = Font.system(size: 10, weight: .medium)
 }
 
