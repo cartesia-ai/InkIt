@@ -2,10 +2,7 @@
 
 <img src=".github/media/icon.png" width="88" height="88" alt="InkIt icon" />
 
-# Just ink it.
-
-Type at the speed of talking.<br>
-InkIt catches every word, even over a hissing espresso machine, a chattering open office, or a rumbling train.
+### Just ink it.
 
 https://github.com/user-attachments/assets/a9bce14a-5294-48fc-ba1c-19f3eaef378e
 
@@ -19,20 +16,20 @@ https://github.com/user-attachments/assets/a9bce14a-5294-48fc-ba1c-19f3eaef378e
 </div>
 
 ## Features
-* **Works everywhere you type.** Any app on your Mac — editor, browser, chat, terminal. Text lands right at your cursor.
-* **Catches every word.** InkIt stays accurate even when you are whispering or talking in noisy public spaces.
-* **Hold, or go hands-free.** Hold your key to talk, release to drop the text. Or go hands-free with one tap to start, and another to stop.
-* **Set your own shortcut.** Use the default `fn` key, or set any key combination you like.
-* **Polish.** Cleans up filler, punctuation, and formatting without rewriting your words.
-* **Searchable history.** Every dictation is saved locally on your Mac, so nothing you said is lost.
-* **Make it yours.** Switch between light and dark mode, pick your input mic, and tune the app to fit how you work.
+* **Get hours back every week.** You talk 3× faster than you type. Start talking, stop typing.
+* **Heard right the first time.** Stays accurate when you're whispering or talking over background noise, so there's less to fix.
+* **Use it in every app you already live in.** Editor, browser, chat, terminal: your words land right at the cursor, no copy-paste.
+* **Talk your way.** Hold a key to dictate, or go fully hands-free. Set whatever shortcut feels natural.
+* **No ums, no filler.** Polish tidies your speech and punctuation automatically, without rewriting your words.
+* **Never lose a thought.** Every dictation is saved and searchable, right on your Mac.
+* **Make it yours.** Light or dark, your mic, your shortcut. Tune it to how you work.
 
 ## Setup
 
-1. Download the app via the button above. Install the app in your Applications folder.
-2. Launch InkIt. Go through a quick onboarding to set up Microphone and Accessibility access. 
-3. Grab a free [Cartesia API key](https://play.cartesia.ai) — good for about 15,000 words a month.
-4. (Optional) Turn on Polish, and bring your own key from Groq, Google Gemini, OpenAI, or Anthropic.
+1. Download via the button above and move InkIt to your Applications folder.
+2. Launch InkIt. Go through a quick onboarding to set up Microphone and Accessibility access.
+3. Grab a free [Cartesia API key](https://play.cartesia.ai), good for about 15,000 words a month.
+4. (Optional) Turn on Polish with your own key from Groq, Google Gemini, OpenAI, or Anthropic.
 
 ## For developers
 
