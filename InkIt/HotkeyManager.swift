@@ -172,9 +172,12 @@ final class HotkeyManager {
 
             guard type == .flagsChanged else { return Unmanaged.passUnretained(event) }
 
+            guard event.getIntegerValueField(.keyboardEventKeycode) == Int64(kVK_Function) else {
+                return Unmanaged.passUnretained(event)
+            }
+
             let fnDown = event.flags.contains(.maskSecondaryFn)
-            // Only react (and consume) when this event actually toggles Fn —
-            // other flag-change events (Cmd, Shift, …) must pass through.
+            // Only react (and consume) when this event actually toggles Fn.
             if fnDown != manager.fnIsDown {
                 manager.fnIsDown = fnDown
                 if fnDown {
@@ -226,7 +229,7 @@ final class HotkeyManager {
 
     private func installFnPassiveMonitor() {
         let handler: (NSEvent) -> Void = { [weak self] event in
-            guard let self else { return }
+            guard let self, event.keyCode == UInt16(kVK_Function) else { return }
             let fnDown = event.modifierFlags.contains(.function)
             if fnDown && !self.fnIsDown {
                 self.fnIsDown = true
