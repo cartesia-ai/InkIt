@@ -217,7 +217,7 @@ final class TranscriptRewriter {
     Fix:
     - Misheard proper nouns and identifiers the speaker meant — names, brands, jargon, and (when technical) library/model/API names and file paths, e.g. "v lol m" → "vLLM".
     - Homophones and ASR slips that change the meaning.
-    - Filler ("uh", "um", vacuous "you know"/"like") and repeats ("the the" → "the"). Keep meaningful hedges ("maybe", "I think"). On self-correction ("scratch that", "I mean"), keep only the corrected version.
+    - Filler ("uh", "um", vacuous "you know"/"like") and repeats ("the the" → "the"). Keep meaningful hedges ("maybe", "I think"). On self-correction ("scratch that", "I mean"), keep only the corrected version. Removing filler must always leave at least the speaker's remaining words; if every word is filler, then those words are all the speaker said, so return them exactly as given.
 
     Rules:
     - Preserve the speaker's words, voice, and intent. Never paraphrase, summarize, expand, or add anything not said.
