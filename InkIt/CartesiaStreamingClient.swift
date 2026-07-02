@@ -87,7 +87,7 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
     private let cartesiaVersion = "2026-03-01"
     private let sampleRate = 16_000
 
-    private var cartesiaClient: String {
+    private var userAgent: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
         return "cartesia-inkit/\(version)"
     }
@@ -136,7 +136,7 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
         var req = URLRequest(url: url)
         req.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
         req.setValue(cartesiaVersion, forHTTPHeaderField: "Cartesia-Version")
-        req.setValue(cartesiaClient, forHTTPHeaderField: "X-Cartesia-Client")
+        req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         task = session.webSocketTask(with: req)
         task?.resume()
         receive()
