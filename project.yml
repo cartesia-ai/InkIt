@@ -41,8 +41,8 @@ targets:
         CFBundleDisplayName: InkIt
         CFBundleName: InkIt
         CFBundlePackageType: APPL
-        CFBundleShortVersionString: "0.1.3"
-        CFBundleVersion: "5"
+        CFBundleShortVersionString: "0.1.4"
+        CFBundleVersion: "6"
         LSMinimumSystemVersion: "14.0"
         # Show in Dock so users can always click the icon to bring up the
         # control window. (Was LSUIElement=true earlier; reverted because some
