@@ -55,9 +55,17 @@ final class AppCoordinator: ObservableObject {
     /// onboarding Try-it step can persist it alongside the saved transcript,
     /// letting Home's "avg time to text" show a real number on first landing.
     private(set) var lastTrialLatency: TranscriptHistoryStore.Latency?
+    /// Speech duration of the most recent trial take (press → release), the
+    /// trial-path counterpart of the `recordingMs` captured for normal
+    /// dictations, so practice rows carry the same usage metadata.
+    private(set) var lastTrialRecordingMs: Int?
     /// Monotonic timestamp of the most recent hotkey release, used as the
     /// anchor for per-dictation latency measurements.
     private var releaseTime: DispatchTime?
+    /// Monotonic timestamp of the most recent hotkey press (recording start),
+    /// paired with `releaseTime` to measure how long the user spoke
+    /// (`recordingMs` on the history entry).
+    private var recordingStartTime: DispatchTime?
     /// LLM session connection-warmed at key-press so its TLS/TCP setup overlaps
     /// the time the user spends speaking, instead of landing on the critical
     /// path after release. Consumed once in `correctedTranscript` and reset on
@@ -249,6 +257,7 @@ final class AppCoordinator: ObservableObject {
     func beginOnboardingTrial() {
         routesFinalTranscriptToOnboarding = true
         lastTrialLatency = nil
+        lastTrialRecordingMs = nil
         liveTranscript = ""
         ensureHotkeyRegistration()
         // Surface the real Notch HUD during the trial so the "Try it" step
@@ -342,6 +351,7 @@ final class AppCoordinator: ObservableObject {
         }
 
         state = .recording
+        recordingStartTime = .now()
         audioReady = false
         lastError = nil
         liveTranscript = ""
@@ -388,6 +398,9 @@ final class AppCoordinator: ObservableObject {
         // perfectly good target at recording start.
         let capturedTargetApp = pasteTargetApp
         let capturedSnapshot = contextTargetSnapshot
+        // Same wipe-proofing for the press timestamp — it anchors the entry's
+        // `recordingMs` (press → release, how long the user spoke).
+        let capturedRecordingStart = recordingStartTime
 
         // Pre-warm the polish LLM connection (DNS+TCP+TLS) at key-press so its
         // setup overlaps the time the user is still speaking rather than landing
@@ -417,11 +430,17 @@ final class AppCoordinator: ObservableObject {
         client.onError = { [weak self] failure in
             Task { @MainActor in self?.handleSTTFailure(failure) }
         }
-        client.onClosed = { [weak self, capturedTargetApp, capturedSnapshot, routeToOnboardingBox] finalText in
+        client.onClosed = { [weak self, capturedTargetApp, capturedSnapshot, capturedRecordingStart, routeToOnboardingBox] finalText in
             Task { @MainActor in
                 guard let self else { return }
                 let transcriptArrived = DispatchTime.now()
                 let release = self.releaseTime
+                // How long the user actually spoke (press → release); nil if
+                // either anchor is missing (e.g. an error wiped the flow).
+                let recordingMs: Int? = {
+                    guard let start = capturedRecordingStart, let end = release else { return nil }
+                    return Self.elapsedMs(start, end)
+                }()
                 let raw = finalText.trimmingCharacters(in: .whitespacesAndNewlines)
                 if raw.isEmpty {
                     self.pasteTargetApp = nil
@@ -450,6 +469,7 @@ final class AppCoordinator: ObservableObject {
                             pasteMs: 0
                         )
                     }
+                    self.lastTrialRecordingMs = recordingMs
                     self.state = .idle
                     return
                 }
@@ -493,7 +513,10 @@ final class AppCoordinator: ObservableObject {
                         original: correction.original,
                         latency: latency,
                         polish: correction.outcome,
-                        failure: correction.failure
+                        failure: correction.failure,
+                        appName: capturedSnapshot?.localizedName,
+                        appBundleID: capturedSnapshot?.bundleIdentifier,
+                        recordingMs: recordingMs
                     )
                     DebugLog.info("onClosed: no editable field focused at release — held in History instead of pasting")
                     self.showHeldInHistoryNotice()
@@ -523,7 +546,10 @@ final class AppCoordinator: ObservableObject {
                                 original: correction.original,
                                 latency: latency,
                                 polish: correction.outcome,
-                                failure: correction.failure
+                                failure: correction.failure,
+                                appName: capturedSnapshot?.localizedName,
+                                appBundleID: capturedSnapshot?.bundleIdentifier,
+                                recordingMs: recordingMs
                             )
                             self.state = .idle
                         }

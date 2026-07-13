@@ -96,7 +96,10 @@ struct TryItPracticeCard: View {
         let final = editedText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !final.isEmpty, !hasLogged else { return }
         hasLogged = true
-        TranscriptHistoryStore.shared.add(final, latency: coordinator.lastTrialLatency, polish: .off)
+        // No app fields on purpose: a practice take isn't "where you dictate"
+        // (Insights would otherwise count InkIt itself). Duration still applies.
+        TranscriptHistoryStore.shared.add(final, latency: coordinator.lastTrialLatency, polish: .off,
+                                          recordingMs: coordinator.lastTrialRecordingMs)
     }
 
     private func send() {
@@ -140,7 +143,7 @@ struct TryItPracticeCard: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("READ THIS ALOUD")
                 .font(.inkEyebrow)
-                .tracking(0.8)
+                .tracking(1.1)
                 .foregroundStyle(Color.accentColor)
             // Wrapped in curly quotes so it reads as a spoken line, with a larger
             // size and looser leading to give the prompt room to breathe.
@@ -246,13 +249,13 @@ struct TryItPracticeCard: View {
             HStack(spacing: 7) {
                 Text("Hold")
                 Text(settings.hotkeyDisplayString)
-                    .font(.system(size: 14, weight: .bold))  // ds-allow: inline keycap
+                    .font(.system(size: 14, weight: .medium))  // ds-allow: inline keycap
                     .foregroundStyle(Color.accentColor)
                     .padding(.horizontal, 9).padding(.vertical, 3)
                     .background(RoundedRectangle(cornerRadius: Radius.keycap, style: .continuous).fill(Color.accentSoft))
                 Text("to talk")
             }
-            .font(.system(size: 17, weight: .bold))  // ds-allow: practice hint
+            .font(.inkReadingEmphasized)
             .foregroundStyle(.primary)
         }
         .padding(.horizontal, 26).padding(.vertical, 13)

@@ -33,6 +33,9 @@ targets:
     resources:
       - path: InkIt/Assets.xcassets
       - path: InkIt/Sounds
+      # Insights analytics data: stopword filter + English word-frequency
+      # table (see InsightsMath). Plain text, loaded once and cached.
+      - path: InkIt/Resources
     dependencies:
       - package: Sparkle
     info:
@@ -49,7 +52,7 @@ targets:
         # systems don't render the menu bar item reliably.)
         LSUIElement: false
         NSHighResolutionCapable: true
-        NSMicrophoneUsageDescription: "InkIt records your voice while you hold the dictation hotkey and streams it to Cartesia STT for transcription."
+        NSMicrophoneUsageDescription: "InkIt needs microphone access to transcribe your speech to text while you hold the dictation hotkey."
         NSAppleEventsUsageDescription: "InkIt pastes the transcribed text into the focused app."
         SUFeedURL: "https://github.com/cartesia-ai/InkIt/releases/latest/download/appcast.xml"
         SUPublicEDKey: "$(SPARKLE_PUBLIC_ED_KEY)"
@@ -58,7 +61,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.cartesia.InkIt
         # Drives Color.accentColor / system control tints from the
-        # AccentColor asset (indigo, light + dark) — see DESIGN_SYSTEM.md.
+        # AccentColor asset (Ink amber: #D97A0D light / #FFB454 dark) — see DESIGN_SYSTEM.md.
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         # No App Sandbox: synthesized Cmd+V via Accessibility requires an
         # unsandboxed binary.

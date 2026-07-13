@@ -21,3 +21,6 @@ prototypes/
 
 # Local scratch media (demo clips, audio beds — never committed)
 local-media/
+
+# Local-only demo/debug seeding utility (launch-arg gated; not shipped).
+InkIt/DebugSeed.swift

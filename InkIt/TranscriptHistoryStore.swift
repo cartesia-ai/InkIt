@@ -70,6 +70,20 @@ final class TranscriptHistoryStore: ObservableObject {
         // Why polish failed, when `polish == .failed`. `nil` for success/off and
         // for entries written before failure reasons were tracked.
         var failure: PolishFailure?
+        // Usage metadata for Insights, captured from dictation onward (all `nil`
+        // on rows written before it was tracked — those are simply excluded from
+        // the per-app / duration stats rather than guessed at).
+        /// Display name of the app the dictation pasted into (press-time target).
+        /// `nil` for the onboarding/Home try box — practice takes aren't "where
+        /// you dictate".
+        var appName: String?
+        /// Bundle identifier of the paste target, for stable per-app grouping.
+        var appBundleID: String?
+        /// Whitespace word count of `text`, frozen at save so aggregates and
+        /// per-entry stats agree even if counting rules ever change.
+        var wordCount: Int?
+        /// Hotkey press → release: how long the user actually spoke.
+        var recordingMs: Int?
     }
 
     static let shared = TranscriptHistoryStore()
@@ -91,9 +105,10 @@ final class TranscriptHistoryStore: ObservableObject {
     /// non-persisting in-memory store (the on-disk one couldn't be opened), so
     /// nothing saved this session survives a relaunch. Durable side effects that
     /// must stay in lockstep with stored rows — dropping the legacy migration
-    /// blob, advancing the persisted lifetime counter — are gated on this so they
-    /// never outrun the transcripts that actually survive a quit.
-    private let isPersistent: Bool
+    /// blob, advancing the persisted lifetime counter, seeding the usage
+    /// aggregates — are gated on this so they never outrun the transcripts that
+    /// actually survive a quit. Read by `UsageAggregateStore` for its own gating.
+    let isPersistent: Bool
 
     private let defaults = UserDefaults.standard
     /// Legacy UserDefaults blob that held the entire `[Entry]` array as one JSON
@@ -113,14 +128,20 @@ final class TranscriptHistoryStore: ObservableObject {
 
     // MARK: - Public API
 
-    func add(_ text: String, original: String? = nil, latency: Latency? = nil, polish: PolishOutcome? = nil, failure: PolishFailure? = nil) {
+    func add(_ text: String, original: String? = nil, latency: Latency? = nil,
+             polish: PolishOutcome? = nil, failure: PolishFailure? = nil,
+             appName: String? = nil, appBundleID: String? = nil,
+             recordingMs: Int? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         // One row inserted, one row persisted — no cap, and no re-encoding the
         // whole history on every dictation (the UserDefaults bottleneck this
         // replaced). The freshly stamped entry is the newest, so it leads.
+        // `wordCount` is frozen here — the store is the single place that counts.
         let entry = Entry(text: trimmed, timestamp: Date(), latency: latency,
-                          original: original, polish: polish, failure: failure)
+                          original: original, polish: polish, failure: failure,
+                          appName: appName, appBundleID: appBundleID,
+                          wordCount: Self.wordCount(trimmed), recordingMs: recordingMs)
         context.insert(TranscriptRecord(entry: entry))
         let saved = saveContext()
         // Reflect the entry in the session's published mirror regardless — that
@@ -133,17 +154,31 @@ final class TranscriptHistoryStore: ObservableObject {
         if isPersistent && saved {
             lifetimeWords += Self.wordCount(trimmed)
             persistLifetimeWords()
+            // Fold the dictation into its day aggregate behind the same gate,
+            // so the durable counters never outrun the rows they summarize.
+            let fillers = (polish == .polished && original != nil)
+                ? InsightsMath.fillersRemoved(original: original ?? "", polished: trimmed)
+                : 0
+            UsageAggregateStore.shared.record(words: entry.wordCount ?? 0,
+                                              recordingMs: recordingMs,
+                                              fillersRemoved: fillers,
+                                              on: entry.timestamp)
         }
     }
 
     /// Whitespace-delimited word count. Good enough for a usage stat — not a
-    /// linguistic tokenizer.
-    static func wordCount(_ text: String) -> Int {
+    /// linguistic tokenizer. Nonisolated: it's pure, and nonisolated callers
+    /// (analytics) count words too.
+    nonisolated static func wordCount(_ text: String) -> Int {
         text.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
     }
 
     func clear() {
         do {
+            // Typed delete: only the transcript rows. `DailyUsageRecord` (the
+            // Insights aggregates) and `lifetimeWords` intentionally survive
+            // Delete All — the wipe removes what the user *said*, not the
+            // content-free usage counters.
             try context.delete(model: TranscriptRecord.self)
         } catch {
             DebugLog.error("TranscriptHistoryStore: clear failed — \(error)")
@@ -167,7 +202,10 @@ final class TranscriptHistoryStore: ObservableObject {
     /// for the session rather than crashing or losing the app; an in-memory
     /// store has no disk dependency that can fail.
     private static func makeContainer() -> (container: ModelContainer, isPersistent: Bool) {
-        let schema = Schema([TranscriptRecord.self])
+        // One container for both models: the transcript rows and the durable
+        // per-day usage aggregates (`UsageAggregateStore`) share migration,
+        // fallback, and durability behavior by construction.
+        let schema = Schema([TranscriptRecord.self, DailyUsageRecord.self])
         do {
             let container = try ModelContainer(
                 for: schema,
@@ -310,6 +348,13 @@ final class TranscriptRecord {
     var original: String?
     var polish: TranscriptHistoryStore.PolishOutcome?
     var failure: TranscriptHistoryStore.PolishFailure?
+    // Usage metadata for Insights (see Entry). All optional with no unique
+    // constraints, so adding them is a SwiftData *lightweight* migration —
+    // rows written by earlier builds read back `nil` here.
+    var appName: String?
+    var appBundleID: String?
+    var wordCount: Int?
+    var recordingMs: Int?
 
     init(id: UUID,
          text: String,
@@ -317,7 +362,11 @@ final class TranscriptRecord {
          latency: TranscriptHistoryStore.Latency?,
          original: String?,
          polish: TranscriptHistoryStore.PolishOutcome?,
-         failure: TranscriptHistoryStore.PolishFailure?) {
+         failure: TranscriptHistoryStore.PolishFailure?,
+         appName: String? = nil,
+         appBundleID: String? = nil,
+         wordCount: Int? = nil,
+         recordingMs: Int? = nil) {
         self.id = id
         self.text = text
         self.timestamp = timestamp
@@ -325,17 +374,25 @@ final class TranscriptRecord {
         self.original = original
         self.polish = polish
         self.failure = failure
+        self.appName = appName
+        self.appBundleID = appBundleID
+        self.wordCount = wordCount
+        self.recordingMs = recordingMs
     }
 
     convenience init(entry: TranscriptHistoryStore.Entry) {
         self.init(id: entry.id, text: entry.text, timestamp: entry.timestamp,
                   latency: entry.latency, original: entry.original,
-                  polish: entry.polish, failure: entry.failure)
+                  polish: entry.polish, failure: entry.failure,
+                  appName: entry.appName, appBundleID: entry.appBundleID,
+                  wordCount: entry.wordCount, recordingMs: entry.recordingMs)
     }
 
     func toEntry() -> TranscriptHistoryStore.Entry {
         TranscriptHistoryStore.Entry(id: id, text: text, timestamp: timestamp,
                                      latency: latency, original: original,
-                                     polish: polish, failure: failure)
+                                     polish: polish, failure: failure,
+                                     appName: appName, appBundleID: appBundleID,
+                                     wordCount: wordCount, recordingMs: recordingMs)
     }
 }

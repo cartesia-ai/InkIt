@@ -33,6 +33,7 @@ scan() {
 }
 
 scan 'system\(size: *[0-9]'  'hardcoded font size — use a Font.ink* token'
+scan '\.ink[A-Za-z]+\.weight\(\.(semibold|bold|heavy|black)' 'heavy weight escalation on a Font.ink* token — bold is retired, semibold is display-only; add a token instead'
 scan 'Color\((red|white):'   'raw color literal — use a Color token'
 scan 'easeOut\(duration:'    'hardcoded animation timing — use a Motion.* token'
 scan '\.black\.opacity\('    'raw shadow/scrim ink — use an Elevation.* / Color token'

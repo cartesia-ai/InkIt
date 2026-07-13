@@ -75,6 +75,50 @@ final class TranscriptRecordTests: XCTestCase {
         XCTAssertEqual(try context.fetch(FetchDescriptor<TranscriptRecord>()).first?.toEntry(), entry)
     }
 
+    /// The Insights usage fields (app identity, frozen word count, speech
+    /// duration) added in the round-10 release must round-trip — and stay
+    /// `nil` for rows written before they existed (the lightweight-migration
+    /// read path).
+    func testUsageMetadataRoundTrips() throws {
+        let context = try makeInMemoryContext()
+        let entry = TranscriptHistoryStore.Entry(
+            text: "ship it thursday",
+            timestamp: Date(timeIntervalSince1970: 1_700_100_000),
+            latency: .init(transcribeMs: 90, polishMs: 40, pasteMs: 20),
+            original: "um ship it thursday",
+            polish: .polished,
+            failure: nil,
+            appName: "Slack",
+            appBundleID: "com.tinyspeck.slackmacgap",
+            wordCount: 3,
+            recordingMs: 4_200
+        )
+        context.insert(TranscriptRecord(entry: entry))
+        try context.save()
+
+        let fetched = try context.fetch(FetchDescriptor<TranscriptRecord>()).first
+        XCTAssertEqual(fetched?.toEntry(), entry)
+        XCTAssertEqual(fetched?.appBundleID, "com.tinyspeck.slackmacgap")
+        XCTAssertEqual(fetched?.recordingMs, 4_200)
+    }
+
+    func testLegacyShapedEntryKeepsNilUsageMetadata() throws {
+        let context = try makeInMemoryContext()
+        let entry = TranscriptHistoryStore.Entry(
+            text: "pre-upgrade row",
+            timestamp: Date(timeIntervalSince1970: 1_690_000_000),
+            latency: nil, original: nil, polish: nil, failure: nil
+        )
+        context.insert(TranscriptRecord(entry: entry))
+        try context.save()
+
+        let fetched = try context.fetch(FetchDescriptor<TranscriptRecord>()).first
+        XCTAssertEqual(fetched?.toEntry(), entry)
+        XCTAssertNil(fetched?.appName)
+        XCTAssertNil(fetched?.wordCount)
+        XCTAssertNil(fetched?.recordingMs)
+    }
+
     func testIDIsPreservedThroughMapping() {
         let entry = TranscriptHistoryStore.Entry(
             text: "keep my id",

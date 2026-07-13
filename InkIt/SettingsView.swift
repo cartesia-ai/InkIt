@@ -431,6 +431,14 @@ struct SettingsView: View {
 /// as editable controls in the detail. Reuses the existing panes so there's one
 /// source of truth for each.
 struct SettingsPopover: View {
+    /// The modal card's fixed size. Shared so the main window's minimum size can
+    /// be derived from it — the window must never shrink below the modal plus a
+    /// little breathing room on every side (see `MainWindowView`).
+    static let size = CGSize(width: 840, height: 600)
+    /// Breathing room between the modal card and the window edge at the minimum
+    /// window size — just enough padding above/below and left/right.
+    static let breathingRoom: CGFloat = 28
+
     @EnvironmentObject var settings: SettingsStore
     @Binding var pane: SettingsView.Pane
     let onClose: () -> Void
@@ -442,7 +450,7 @@ struct SettingsPopover: View {
             sidebar
             detail
         }
-        .frame(width: 840, height: 600)
+        .frame(width: Self.size.width, height: Self.size.height)
     }
 
     private var sidebar: some View {
@@ -519,17 +527,20 @@ private struct SidebarItem: View {
 
     var body: some View {
         Button(action: action) {
+            // Same type as the main window's sidebar rows (15pt body, medium
+            // when selected) so the two navs read at one scale — the Settings
+            // rail was a step smaller and harder to scan.
             HStack(spacing: 10) {
                 Image(systemName: pane.icon)
-                    .font(.inkNav)
-                    .frame(width: 18)
+                    .font(.inkBody)
+                    .frame(width: 20)
                 Text(pane.title)
-                    .font(.inkNav)
+                    .font(selected ? .inkBodyEmphasized : .inkBody)
                 Spacer(minLength: 0)
             }
             .foregroundStyle(selected ? Color.accentColor : .primary)
             .padding(.horizontal, 10)
-            .padding(.vertical, 10)
+            .padding(.vertical, 9)
             // Selected row holds the amber fill; others lift the standard backdrop.
             .hoverBackdrop(cornerRadius: Radius.control, isActive: selected)
         }
@@ -761,6 +772,7 @@ private struct SettingsSearchResults: View {
                     }
                 }
                 .labelsHidden()
+                .fixedSize()
                 .modifier(PointingHandCursor())
             }
             LabeledContent("Model", value: settings.rewriteModel)
@@ -845,6 +857,11 @@ private struct SettingsStack<Content: View>: View {
             // Restore the label-left / control-right row the grouped Form gave us;
             // every LabeledContent in the panes and search inherits it from here.
             .labeledContentStyle(.settingsRow)
+            // Base Settings text at the app's 15pt body scale, matching Home and
+            // Insights. Without this, row labels fall back to macOS's ~13pt
+            // system default and read noticeably smaller than the rest of the app.
+            // Explicit .caption / section-header fonts still win where set.
+            .font(.inkBody)
         }
         .background(Color.canvas)
     }
@@ -1170,6 +1187,10 @@ private struct MicrophonePickerRow: View {
                     }
                 }
                 .labelsHidden()
+                // Hug the menu's natural width — the native pop-up button — rather
+                // than stretch across the whole row, which reads as an unbalanced
+                // slab.
+                .fixedSize()
                 .modifier(PointingHandCursor())
             }
 
@@ -1220,72 +1241,51 @@ struct PolishSettingsView: View {
     }
 
     var body: some View {
+        let state = settings.polishUIState
+        let setup = state == .setup
+        let broken = state == .keyBroken
+
         SettingsStack {
-            switch settings.polishUIState {
-            case .setup:     setupSections
-            case .on:        configuredSections(paused: false, broken: false)
-            case .paused:    configuredSections(paused: true, broken: false)
-            case .keyBroken: configuredSections(paused: false, broken: true)
+            if broken {
+                SettingsCard {
+                    Label {
+                        Text("Polish is paused. Your key stopped working. Transcripts are pasting unchanged. Re-enter a key to resume.")
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    }
+                    .font(.callout)
+                }
+            }
+
+            // Polish always leads with its master toggle so turning it on is the
+            // first thing on the page. It's disabled until there's a working key
+            // (setup / key-broken) — the fix in those states is the AI section
+            // below, and the design never lets the switch read "on" while it
+            // would silently paste raw transcripts.
+            SettingsGroup {
+                SettingsToggle(
+                    "Polish transcripts",
+                    caption: "Cleans up fillers, punctuation, and misheard words",
+                    isOn: masterBinding
+                )
+                .disabled(setup || broken)
+            } header: {
+                Text("Polish").settingsSectionHeader()
+            }
+
+            // Always expanded: the provider dropdown and key field are live at all
+            // times, so switching providers or pasting a new key is one click away —
+            // no Change/Done round-trip, no collapsed summary to expand first.
+            SettingsGroup {
+                providerPicker
+                modelRow
+                keyField
+            } header: {
+                Text(setup ? "Choose your AI to turn Polish on" : "Choose your AI")
+                    .settingsSectionHeader()
             }
         }
         .navigationTitle("Polish")
-    }
-
-    // MARK: Setup (no key)
-
-    @ViewBuilder private var setupSections: some View {
-        SettingsGroup {
-            providerPicker
-            modelRow
-            keyField
-        } header: {
-            // Same muted section-header treatment as every other pane, with the
-            // one-line explainer beneath it — so the setup header doesn't read as
-            // a heavier, different-scale title than the rest of Settings.
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Turn on Polish").settingsSectionHeader()
-                Text("Cleans up fillers, punctuation, and misheard words")
-                    .font(.caption).foregroundStyle(.secondary).textCase(nil)
-            }
-            .padding(.bottom, 2)
-        }
-    }
-
-    // MARK: Configured (on / paused / key-broken)
-
-    @ViewBuilder private func configuredSections(paused: Bool, broken: Bool) -> some View {
-        if broken {
-            SettingsCard {
-                Label {
-                    Text("Polish is paused. Your key stopped working. Transcripts are pasting unchanged. Re-enter a key to resume.")
-                } icon: {
-                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                }
-                .font(.callout)
-            }
-        }
-
-        SettingsGroup {
-            SettingsToggle(
-                "Polish transcripts",
-                caption: "Cleans up fillers, punctuation, and misheard words",
-                isOn: masterBinding
-            )
-            .disabled(broken)   // in the broken state the fix is re-entering the key below
-        } header: {
-            Text("Polish").settingsSectionHeader()
-        }
-
-        // Always expanded: the provider dropdown and key field are live at all
-        // times, so switching providers or pasting a new key is one click away —
-        // no Change/Done round-trip, no collapsed summary to expand first.
-        SettingsGroup {
-            providerPicker
-            modelRow
-            keyField
-        } header: {
-            Text("Choose your AI").settingsSectionHeader()
-        }
     }
 
     // MARK: Shared rows
@@ -1300,6 +1300,8 @@ struct PolishSettingsView: View {
                 }
             }
             .labelsHidden()
+            // Hug the native pop-up's width instead of stretching the whole row.
+            .fixedSize()
             .modifier(PointingHandCursor())
         }
     }

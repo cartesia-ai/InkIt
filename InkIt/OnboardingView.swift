@@ -208,10 +208,10 @@ private struct WelcomeStep: View {
             VStack(spacing: 8) {
                 Text("Welcome to InkIt")
                     .font(.inkLargeTitle)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(Color.inkText)
                 Text("Think out loud. Ink it.")
                     .font(.title3)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.inkSub)
                     .multilineTextAlignment(.center)
             }
 
@@ -250,8 +250,8 @@ private struct BenefitRow: View {
         HStack(spacing: 14) {
             GlyphTile(icon: icon, size: 48, corner: 13, iconSize: 22)
             VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.title3.weight(.semibold)).foregroundStyle(.primary)
-                Text(subtitle).font(.body).foregroundStyle(.secondary)
+                Text(title).font(.title3.weight(.semibold)).foregroundStyle(Color.inkText)
+                Text(subtitle).font(.body).foregroundStyle(Color.inkSub)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
@@ -263,7 +263,7 @@ private struct BenefitRow: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: Radius.tile, style: .continuous)
-                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+                .stroke(Color.line, lineWidth: 1)
         )
     }
 }
@@ -357,7 +357,7 @@ private struct PermissionCard: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: Radius.tile, style: .continuous)
-                .stroke(manual ? Color.accentColor.opacity(0.4) : Color(nsColor: .separatorColor),
+                .stroke(manual ? Color.accentColor.opacity(0.4) : Color.line,
                         lineWidth: 1)
         )
     }
@@ -366,8 +366,8 @@ private struct PermissionCard: View {
         HStack(spacing: 14) {
             GlyphTile(icon: icon, size: 48, corner: 13, iconSize: 22)
             VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.title3.weight(.semibold)).foregroundStyle(.primary)
-                Text(subtitle).font(.body).foregroundStyle(.secondary)
+                Text(title).font(.title3.weight(.semibold)).foregroundStyle(Color.inkText)
+                Text(subtitle).font(.body).foregroundStyle(Color.inkSub)
             }
             Spacer()
             if state == .granted {
@@ -389,17 +389,17 @@ private struct PermissionCard: View {
                 GlyphTile(icon: icon, size: 48, corner: 13, iconSize: 22,
                           fill: Color.accentColor.opacity(0.22))
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(title).font(.title3.weight(.semibold)).foregroundStyle(.primary)
+                    Text(title).font(.title3.weight(.semibold)).foregroundStyle(Color.inkText)
                     Text("Finish in System Settings")
                         .font(.callout.weight(.medium))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.inkSub)
                 }
                 Spacer()
             }
 
             Text(manualWhy)
                 .font(.body)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.inkSub)
                 .fixedSize(horizontal: false, vertical: true)
 
             VStack(alignment: .leading, spacing: 8) {
@@ -425,13 +425,13 @@ private struct ManualStep: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Text("\(number)")
-                .font(.caption.weight(.bold))
+                .font(.inkEyebrow)
                 .foregroundStyle(.black.opacity(0.85))  // ds-allow: legible numeral on the amber badge
                 .frame(width: 18, height: 18)
                 .background(Circle().fill(Color.accentColor))
             Text(prefix + emphasis)
                 .font(.body)
-                .foregroundStyle(.primary)
+                .foregroundStyle(Color.inkText)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -458,7 +458,7 @@ private struct KeyValidationLabel: View {
             label("xmark.circle.fill", "Invalid key", .red)
         case .couldNotVerify:
             label("exclamationmark.circle", "Couldn’t verify",
-                  Color(nsColor: .secondaryLabelColor))
+                  Color.inkSub)
         }
     }
 
@@ -511,10 +511,10 @@ private struct APIKeyStep: View {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "gift")
                     .font(.system(size: 13))  // ds-allow: icon
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(Color.inkFaint)
                 Text("About 15,000 words of dictation a month, free with your Cartesia key. Powered by Cartesia Ink-2.")
                     .font(.inkCallout)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.inkSub)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: 460, alignment: .leading)
@@ -540,7 +540,7 @@ private struct APIKeyStep: View {
         HStack(spacing: 12) {
             Image(systemName: "key.fill")
                 .font(.system(size: 15))  // ds-allow: icon
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.inkSub)
 
             SecureField("sk_car_…", text: $settings.cartesiaAPIKey)
                 .textFieldStyle(.plain)
@@ -560,7 +560,7 @@ private struct APIKeyStep: View {
         .overlay(
             RoundedRectangle(cornerRadius: Radius.tile, style: .continuous)
                 .stroke(
-                    fieldFocused ? Color.accentColor : Color(nsColor: .separatorColor),
+                    fieldFocused ? Color.accentColor : Color.line,
                     lineWidth: fieldFocused ? 2 : 1
                 )
         )
@@ -584,10 +584,10 @@ private struct TryItStep: View {
             VStack(spacing: 8) {
                 Text("Try it")
                     .font(.inkLargeTitle)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(Color.inkText)
                 Text("Hold the key, read the line aloud, then let go.")
                     .font(.title3)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.inkSub)
                     .multilineTextAlignment(.center)
             }
 
@@ -599,7 +599,7 @@ private struct TryItStep: View {
             Button("Skip for now") { next() }
                 .buttonStyle(.plain)
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.inkSub)
                 .padding(.top, 2)
                 .modifier(PointingHandCursor())
         }
@@ -630,10 +630,10 @@ private struct DoneStep: View {
             VStack(spacing: 10) {
                 Text("You're ready!")
                     .font(.inkLargeTitle)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(Color.inkText)
                 Text("Type with your voice. Hold Fn and go.")
                     .font(.title3)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.inkSub)
                     .multilineTextAlignment(.center)
             }
 
@@ -678,7 +678,7 @@ private struct HeaderBlock: View {
         self.subtitle = AnyView(
             Text(subtitle)
                 .font(.title3)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.inkSub)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 560)
         )
@@ -698,7 +698,7 @@ private struct HeaderBlock: View {
             GlyphTile(icon: icon)
             Text(title)
                 .font(.inkLargeTitle)
-                .foregroundStyle(.primary)
+                .foregroundStyle(Color.inkText)
             subtitle
         }
     }
@@ -764,7 +764,7 @@ struct InkButtonStyle: ButtonStyle {
 
         var body: some View {
             configuration.label
-                .font(.system(size: compact ? 13 : 15, weight: .semibold))  // ds-allow: button label scale
+                .font(compact ? .inkCalloutEmphasized : .inkBodyEmphasized)
                 .foregroundStyle(textColor)
                 .padding(.horizontal, compact ? 14 : 26)
                 .padding(.vertical, compact ? 6 : 11)
@@ -802,8 +802,8 @@ struct InkSecondaryButtonStyle: ButtonStyle {
 
         var body: some View {
             configuration.label
-                .font(.system(size: compact ? 13 : 15, weight: .semibold))  // ds-allow: button label scale
-                .foregroundStyle(.secondary)
+                .font(compact ? .inkCalloutEmphasized : .inkBodyEmphasized)
+                .foregroundStyle(Color.inkSub)
                 .padding(.horizontal, compact ? 14 : 26)
                 .padding(.vertical, compact ? 6 : 11)
                 .opacity(configuration.isPressed ? 0.55 : (hovering ? 0.75 : 1))
