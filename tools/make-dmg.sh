@@ -116,7 +116,7 @@ codesign --sign "Developer ID Application" \
 step "Submitting DMG to notarization (this takes 1-5 min)"
 NOTARY_OUTPUT=$(xcrun notarytool submit "$DMG_PATH" \
   --keychain-profile "$KEYCHAIN_PROFILE" \
-  --wait 2>&1 | tee /dev/tty)
+  --wait 2>&1 | tee /dev/stderr)  # stderr, not /dev/tty: works in non-interactive shells too
 NOTARY_ID=$(echo "$NOTARY_OUTPUT" | awk '/id:/{print $2; exit}')
 if ! echo "$NOTARY_OUTPUT" | grep -q "status: Accepted"; then
   printf "\n\033[1;31mNotarization failed.\033[0m Fetching log for id %s:\n\n" "$NOTARY_ID"
