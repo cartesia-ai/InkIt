@@ -86,7 +86,7 @@ final class TranscriptRewriter {
             req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
             // Flatten the Anthropic-style system blocks into one system message.
             let systemText = system.compactMap { $0["text"] as? String }.joined(separator: "\n\n")
-            body = [
+            var openAIBody: [String: Any] = [
                 "model": model,
                 "max_tokens": maxTokens,
                 "temperature": 0,
@@ -95,6 +95,14 @@ final class TranscriptRewriter {
                     ["role": "user", "content": userContent],
                 ],
             ]
+            if provider == .groq {
+                // gpt-oss is a reasoning model: minimal effort, and keep the
+                // thinking text out of the response content. Groq-only — other
+                // providers reject unknown params.
+                openAIBody["reasoning_effort"] = "low"
+                openAIBody["reasoning_format"] = "hidden"
+            }
+            body = openAIBody
             extract = { json in
                 guard let choices = json["choices"] as? [[String: Any]],
                       let message = choices.first?["message"] as? [String: Any],
@@ -146,7 +154,12 @@ final class TranscriptRewriter {
                 DebugLog.error("Rewriter[\(label)] response parse failed elapsed=\(elapsed)")
                 return .failure(.unknown)
             }
-            let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            // gpt-oss likes U+202F/U+00A0 no-break spaces ("3 pm") — invisible
+            // in pasted text and unsearchable; normalize to plain spaces.
+            let cleaned = text
+                .replacingOccurrences(of: "\u{202F}", with: " ")
+                .replacingOccurrences(of: "\u{00A0}", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             DebugLog.info("Rewriter[\(label)] response (\(elapsed)): \(cleaned)")
             guard !cleaned.isEmpty else { return .failure(.unknown) }
             if cleaned.count > max(120, Int(Double(transcript.count) * 2.5) + 40) {

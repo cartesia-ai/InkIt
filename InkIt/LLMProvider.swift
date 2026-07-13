@@ -49,11 +49,12 @@ enum LLMProvider: String, CaseIterable, Identifiable, Hashable {
 
     /// Curated, latency-friendly models for the rewrite task (filler removal,
     /// punctuation, proper-noun repair). Ordered with the recommended default
-    /// first. Benchmarked 2026-05: Groq Llama 3.3 70B ≈ 280ms, Gemini Flash-Lite
-    /// ≈ 510ms — both fast enough for the push-to-talk hot path.
+    /// first. Groq's Llama models retire 2026-08-16; gpt-oss-20b is the
+    /// production-tier successor (benchmarked 2026-07: mean ≈ 385ms, max 749ms
+    /// across 87 rewrite-shaped requests). Gemini Flash-Lite ≈ 510ms.
     var models: [String] {
         switch self {
-        case .groq:      return ["llama-3.3-70b-versatile"]
+        case .groq:      return ["openai/gpt-oss-20b"]
         case .gemini:    return ["gemini-2.5-flash-lite"]
         case .openai:    return ["gpt-4.1-nano"]
         case .anthropic: return ["claude-haiku-4-5-20251001"]
@@ -66,8 +67,8 @@ enum LLMProvider: String, CaseIterable, Identifiable, Hashable {
     /// the raw transcript. Sized just above each model's observed p99 so it only
     /// fires on a genuinely hung request, never a healthy-but-slow one — cutting
     /// a tighter ceiling would silently downgrade good rewrites to raw text.
-    /// Groq Llama 3.3 70B (the default) never crossed 0.9s across hundreds of
-    /// dictations, so 1.0s is ample; the other small models get more headroom
+    /// Groq gpt-oss-20b (the default) maxed at 749ms across 87 rewrite-shaped
+    /// requests, so 1.0s is ample; the other small models get more headroom
     /// since we haven't measured their tails.
     var rewriteTimeout: TimeInterval {
         switch self {
