@@ -805,15 +805,16 @@ struct MainWindowView: View {
 
 /// The current hotkey as one amber highlight, tokens joined by "+", e.g.
 /// "⌃ Ctrl + s". Sets the shortcut apart from surrounding prose. Inherits the
-/// ambient font and adds no vertical padding, so its text and highlight match
-/// the line it sits in.
+/// ambient font; the vertical padding gives the highlight breathing room so it
+/// reads as a proper keycap against the hero line rather than a thin band.
 struct HotkeyCaps: View {
     let tokens: [String]
 
     var body: some View {
         Text(tokens.joined(separator: " + "))
             .foregroundStyle(Color.accentColor)
-            .padding(.horizontal, 6)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
             .background(
                 RoundedRectangle(cornerRadius: Radius.keycap, style: .continuous)
                     .fill(Color.accentSoft)

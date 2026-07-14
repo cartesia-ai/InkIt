@@ -14,7 +14,9 @@ final class InsightsModel: ObservableObject {
     struct Snapshot: Equatable {
         var totalWords = 0
         var totalFixes = 0
-        var averageWpm: Int?
+        var bestDayWords: Int?
+        var longestDictationMs: Int?
+        var fastestWpm: Int?
         var heatmapWeeks: [[InsightsMath.HeatCell]] = []
         var currentStreak = 0
         var longestStreak = 0
@@ -25,10 +27,13 @@ final class InsightsModel: ObservableObject {
         var appShare: [InsightsMath.AppShare] = []
         var hourBins: [Int] = Array(repeating: 0, count: 12)
         var windowDictations = 0
-        var bestDayWords: Int?
-        var longestDictationMs: Int?
-        var fastestWordsPerMinute: Int?
         var hasAnyActivity = false
+        /// Activity heatmap paging — nonzero only when history runs deeper than
+        /// the visible window (so `canPageBack || canPageForward` gates the
+        /// control). `windowRange` labels the months on screen.
+        var canPageBack = false
+        var canPageForward = false
+        var windowRange = ""
     }
 
     @Published private(set) var snapshot = Snapshot()
@@ -37,6 +42,12 @@ final class InsightsModel: ObservableObject {
     /// adaptive so it always fills its row without overflowing (risk: 40 weeks
     /// doesn't fit at the window's minimum width).
     private(set) var weekCount = 40
+
+    /// Days the heatmap window is slid back from today (0 = ends today).
+    /// Paged a full window at a time; re-clamped whenever the width (and so
+    /// `weekCount`) changes so a wider window can't strand the offset past the
+    /// oldest activity.
+    private(set) var dayOffset = 0
 
     private let history: TranscriptHistoryStore
     private let aggregates: UsageAggregateStore
@@ -56,6 +67,43 @@ final class InsightsModel: ObservableObject {
         refresh()
     }
 
+    /// Slide the window one full window older / newer. `refresh` clamps the
+    /// new offset to the available history, so calling at an edge is a no-op.
+    func pageBack() {
+        dayOffset += weekCount * 7
+        refresh()
+    }
+
+    func pageForward() {
+        dayOffset = max(0, dayOffset - weekCount * 7)
+        refresh()
+    }
+
+    /// Farthest the window can slide back: the span from the first active day
+    /// to today, less one window, so the oldest page lands the first day at the
+    /// left edge (never scrolling into all-empty prehistory). 0 when history
+    /// fits in a single window.
+    private static func maxDayOffset(days: [UsageAggregateStore.Day], weekCount: Int,
+                                     today: Date, calendar: Calendar) -> Int {
+        guard let first = days.lazy.filter({ $0.words > 0 }).map(\.day).min() else { return 0 }
+        let span = calendar.dateComponents([.day],
+                                           from: calendar.startOfDay(for: first),
+                                           to: calendar.startOfDay(for: today)).day ?? 0
+        return max(0, span - (weekCount * 7 - 1))
+    }
+
+    /// "Sep 2025 – Apr 2026" for the paging control — collapses the year when
+    /// the window sits within one.
+    private static func rangeLabel(weeks: [[InsightsMath.HeatCell]], calendar: Calendar) -> String {
+        guard let start = weeks.first?.first?.date, let end = weeks.last?.last?.date else { return "" }
+        let endLabel = end.formatted(.dateTime.month(.abbreviated).year())
+        let sameYear = calendar.component(.year, from: start) == calendar.component(.year, from: end)
+        let startLabel = sameYear
+            ? start.formatted(.dateTime.month(.abbreviated))
+            : start.formatted(.dateTime.month(.abbreviated).year())
+        return "\(startLabel) – \(endLabel)"
+    }
+
     func refresh(now: Date = Date()) {
         let days = aggregates.days
         let entries = history.entries
@@ -63,21 +111,34 @@ final class InsightsModel: ObservableObject {
 
         var s = Snapshot()
 
-        // Headline totals + Activity + records — from the durable aggregates
-        // (these survive Delete All; the hero always has its numbers).
-        s.totalWords = InsightsMath.totalWords(days: days)
+        // Headline totals + Activity + records — from durable counters that
+        // survive Delete All, so the hero always has its numbers. "Words
+        // dictated" reads the monotonic lifetime counter (not the seeded day
+        // aggregates): it's the number the user watched climb before this
+        // release, it counts every word ever dictated — including takes since
+        // deleted — and it never dips on upgrade.
+        s.totalWords = history.lifetimeWords
         s.totalFixes = InsightsMath.totalFillersRemoved(days: days)
-        s.averageWpm = InsightsMath.averageWordsPerMinute(days: days)
-        s.heatmapWeeks = InsightsMath.heatmapWeeks(days: days, now: now,
-                                                   weekCount: weekCount, calendar: calendar)
+        s.bestDayWords = InsightsMath.bestDayWords(days: days)
+        s.longestDictationMs = InsightsMath.longestDictationMs(days: days)
+        s.fastestWpm = InsightsMath.fastestDayWordsPerMinute(days: days)
+        // Paging window. The oldest day the user can reach is their first
+        // active day; from there the offset can slide back until that day sits
+        // at the window's left edge. Re-clamp here so a resize (new weekCount)
+        // never leaves the offset pointing past the oldest activity.
+        let maxOffset = Self.maxDayOffset(days: days, weekCount: weekCount,
+                                          today: now, calendar: calendar)
+        dayOffset = min(dayOffset, maxOffset)
+        s.heatmapWeeks = InsightsMath.heatmapWeeks(days: days, now: now, weekCount: weekCount,
+                                                   dayOffset: dayOffset, calendar: calendar)
+        s.canPageBack = dayOffset < maxOffset
+        s.canPageForward = dayOffset > 0
+        s.windowRange = Self.rangeLabel(weeks: s.heatmapWeeks, calendar: calendar)
         s.currentStreak = InsightsMath.currentStreak(days: days, today: now, calendar: calendar)
         s.longestStreak = InsightsMath.longestStreak(days: days, calendar: calendar)
         let summary = InsightsMath.activeDaysSummary(days: days, today: now, calendar: calendar)
         s.activeDays = summary.active
         s.activeDaysSpan = summary.of
-        s.bestDayWords = InsightsMath.bestDayWords(days: days)
-        s.longestDictationMs = InsightsMath.longestDictationMs(days: days)
-        s.fastestWordsPerMinute = InsightsMath.fastestDayWordsPerMinute(days: days)
         s.hasAnyActivity = days.contains { $0.words > 0 }
 
         // Word cards — from transcript text, this calendar month (these do
@@ -88,12 +149,10 @@ final class InsightsModel: ObservableObject {
         s.topWords = InsightsMath.topWords(texts: monthTexts,
                                            stopwords: InsightsResources.stopwords, limit: 5)
 
-        // App + hour cards — last 30 days of entries.
-        let windowStart = calendar.date(byAdding: .day, value: -30, to: now) ?? now
-        let windowEntries = entries.filter { $0.timestamp >= windowStart }
-        s.windowDictations = windowEntries.count
-        s.appShare = InsightsMath.appShare(entries: windowEntries, limit: 4)
-        s.hourBins = InsightsMath.hourHistogram(entries: windowEntries, calendar: calendar)
+        // App + hour cards — all-time, like the hero stats above.
+        s.windowDictations = entries.count
+        s.appShare = InsightsMath.appShare(entries: entries, limit: 4)
+        s.hourBins = InsightsMath.hourHistogram(entries: entries, calendar: calendar)
 
         snapshot = s
     }

@@ -29,9 +29,16 @@ final class DailyUsageRecord {
     /// words-per-minute. Optional: added after the first aggregate release,
     /// so pre-existing rows read back `nil` (treated as 0 / unknown).
     var speakingMs: Int?
+    /// Words from dictations that recorded a duration — the numerator that
+    /// pairs with `speakingMs`. Distinct from `words`: seeded and pre-timing
+    /// rows add to `words` but not here, so words-per-minute never divides a
+    /// day's full (partly untimed) word count by a partial speaking time.
+    /// Optional for the same lightweight-migration reason as `speakingMs`.
+    var spokenWords: Int?
 
     init(dayKey: String, day: Date, words: Int = 0, dictations: Int = 0,
-         longestDictationMs: Int = 0, fillerWordsRemoved: Int = 0, speakingMs: Int = 0) {
+         longestDictationMs: Int = 0, fillerWordsRemoved: Int = 0,
+         speakingMs: Int = 0, spokenWords: Int = 0) {
         self.dayKey = dayKey
         self.day = day
         self.words = words
@@ -39,6 +46,7 @@ final class DailyUsageRecord {
         self.longestDictationMs = longestDictationMs
         self.fillerWordsRemoved = fillerWordsRemoved
         self.speakingMs = speakingMs
+        self.spokenWords = spokenWords
     }
 }
 
@@ -58,6 +66,7 @@ final class UsageAggregateStore: ObservableObject {
         var longestDictationMs: Int
         var fillerWordsRemoved: Int
         var speakingMs: Int
+        var spokenWords: Int
     }
 
     /// Instantiated at app launch (InkItApp holds it), *before* any dictation
@@ -105,12 +114,17 @@ final class UsageAggregateStore: ObservableObject {
         record.longestDictationMs = max(record.longestDictationMs, recordingMs ?? 0)
         record.fillerWordsRemoved += fillersRemoved
         record.speakingMs = (record.speakingMs ?? 0) + (recordingMs ?? 0)
+        // Only words we actually timed feed words-per-minute (see `spokenWords`).
+        if let ms = recordingMs, ms > 0 {
+            record.spokenWords = (record.spokenWords ?? 0) + words
+        }
         guard saveContext() else { return }
         upsertMirror(Day(dayKey: record.dayKey, day: record.day, words: record.words,
                          dictations: record.dictations,
                          longestDictationMs: record.longestDictationMs,
                          fillerWordsRemoved: record.fillerWordsRemoved,
-                         speakingMs: record.speakingMs ?? 0))
+                         speakingMs: record.speakingMs ?? 0,
+                         spokenWords: record.spokenWords ?? 0))
     }
 
     // MARK: - Seeding
@@ -136,10 +150,16 @@ final class UsageAggregateStore: ObservableObject {
 
         for entry in entries {
             let record = fetchOrCreate(for: entry.timestamp)
-            record.words += entry.wordCount ?? TranscriptHistoryStore.wordCount(entry.text)
+            let words = entry.wordCount ?? TranscriptHistoryStore.wordCount(entry.text)
+            record.words += words
             record.dictations += 1
             record.longestDictationMs = max(record.longestDictationMs, entry.recordingMs ?? 0)
             record.speakingMs = (record.speakingMs ?? 0) + (entry.recordingMs ?? 0)
+            // Almost always 0 for seeded rows — pre-timing history has no
+            // `recordingMs` — but a recent build's rows can carry it.
+            if let ms = entry.recordingMs, ms > 0 {
+                record.spokenWords = (record.spokenWords ?? 0) + words
+            }
             // Retroactive filler credit where a before→after pair survives.
             if entry.polish == .polished, let original = entry.original {
                 record.fillerWordsRemoved += InsightsMath.fillersRemoved(original: original,
@@ -182,7 +202,8 @@ final class UsageAggregateStore: ObservableObject {
                     dictations: $0.dictations,
                     longestDictationMs: $0.longestDictationMs,
                     fillerWordsRemoved: $0.fillerWordsRemoved,
-                    speakingMs: $0.speakingMs ?? 0)
+                    speakingMs: $0.speakingMs ?? 0,
+                    spokenWords: $0.spokenWords ?? 0)
             }
         } catch {
             DebugLog.error("UsageAggregateStore: loading day aggregates failed — \(error)")

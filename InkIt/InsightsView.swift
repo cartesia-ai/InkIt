@@ -3,10 +3,10 @@ import SwiftUI
 /// The Insights section — the user's dictation quantified, all of it computed
 /// on-device by `InsightsMath` over the durable day aggregates and the
 /// transcript history. The page is composed to a single feeling: *be proud of
-/// this, and keep going.* A hero trio leads (what you've said, what Polish
-/// cleaned up for you, how fast you move), the Activity chain is the habit
-/// hook, and every card keeps a quiet empty state so the grid never collapses
-/// while data accrues.
+/// this, and keep going.* A hero trio of personal records leads — deliberately
+/// distinct from Home's lifetime totals, and independent of Polish so it never
+/// blanks — then the Activity chain is the habit hook, and every card keeps a
+/// quiet empty state so the grid never collapses while data accrues.
 struct InsightsView: View {
     @EnvironmentObject var history: TranscriptHistoryStore
     @EnvironmentObject var aggregates: UsageAggregateStore
@@ -18,12 +18,12 @@ struct InsightsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     HeroRow(snapshot: model.snapshot)
+                    polishLine
                     ActivityCard(model: model)
                     HStack(alignment: .top, spacing: 14) {
                         WordsCard(snapshot: model.snapshot)
                         WhereWhenCard(snapshot: model.snapshot)
                     }
-                    RecordsCard(snapshot: model.snapshot)
                 }
                 .padding(.bottom, 24)
             }
@@ -46,6 +46,22 @@ struct InsightsView: View {
             .padding(.horizontal, 4)
             .padding(.bottom, 12)
     }
+
+    /// Polish's contribution, kept off the hero (it blanks when Polish is off)
+    /// and shown as one quiet line only once there's something to celebrate.
+    @ViewBuilder private var polishLine: some View {
+        if model.snapshot.totalFixes > 0 {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 12, weight: .semibold))  // ds-allow: icon
+                    .foregroundStyle(Color.accentColor)
+                Text("Polish has cleaned up \(model.snapshot.totalFixes.formatted()) filler words for you.")
+                    .font(.inkCallout)
+                    .foregroundStyle(Color.inkSub)
+            }
+            .padding(.horizontal, 4)
+        }
+    }
 }
 
 // MARK: - Card chrome
@@ -53,15 +69,28 @@ struct InsightsView: View {
 /// The shared Insights card: panel fill, hairline, a plain title, content.
 /// Titles carry the whole story — no explainer captions (they read as noise;
 /// the data is the explanation).
-private struct InsightsCard<Content: View>: View {
+private struct InsightsCard<Content: View, Accessory: View>: View {
     let title: String
-    @ViewBuilder var content: Content
+    let accessory: Accessory
+    let content: Content
+
+    init(title: String,
+         @ViewBuilder accessory: () -> Accessory,
+         @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.accessory = accessory()
+        self.content = content()
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(title)
-                .font(.inkHeadline)
-                .foregroundStyle(Color.inkText)
+            HStack(spacing: 10) {
+                Text(title)
+                    .font(.inkHeadline)
+                    .foregroundStyle(Color.inkText)
+                Spacer(minLength: 0)
+                accessory
+            }
             content
         }
         .padding(18)
@@ -72,6 +101,13 @@ private struct InsightsCard<Content: View>: View {
             RoundedRectangle(cornerRadius: Radius.tile, style: .continuous)
                 .stroke(Color.line, lineWidth: 1)
         )
+    }
+}
+
+/// Cards without a header accessory (the common case) omit the slot entirely.
+extension InsightsCard where Accessory == EmptyView {
+    init(title: String, @ViewBuilder content: () -> Content) {
+        self.init(title: title, accessory: { EmptyView() }, content: content)
     }
 }
 
@@ -89,57 +125,52 @@ private struct CardSubhead: View {
 
 // MARK: - Hero trio
 
-/// The three headline numbers, glanceable at the top of the page. Each maps to
-/// one feeling: pride (words), appreciation of the app (fixes Polish made),
-/// pride again (speed). Big serif numeral, uppercase eyebrow, one quiet
-/// detail line — the Flow "what good looks like" reading, in Ink's voice.
+/// The three headline numbers, glanceable at the top of the page — personal
+/// records, not lifetime totals (those live on Home). Each is a best the user
+/// can beat: most in a day, longest take, fastest day. All are Polish-free, so
+/// the trio holds up whether or not Polish is on. Big serif numeral, one
+/// sentence-case line beneath — no eyebrow, no second detail row.
 private struct HeroRow: View {
     let snapshot: InsightsModel.Snapshot
 
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
-            HeroStat(value: snapshot.totalWords > 0 ? snapshot.totalWords.formatted() : "—",
-                     label: "Words dictated",
-                     detail: wordsDetail)
-            HeroStat(value: snapshot.totalFixes > 0 ? snapshot.totalFixes.formatted() : "—",
-                     label: "Words cleaned up",
-                     detail: "fillers Polish removed for you")
-            HeroStat(value: snapshot.averageWpm.map { "\($0)" } ?? "—",
-                     label: "Words per minute",
-                     detail: "your average speaking pace")
+            HeroStat(value: snapshot.bestDayWords.map { $0.formatted() } ?? "—",
+                     label: "most words in a day")
+            HeroStat(value: snapshot.longestDictationMs.map { InsightsMath.formatDuration(ms: $0) } ?? "—",
+                     label: "longest dictation")
+            HeroStat(value: snapshot.fastestWpm.map { "\($0)" } ?? "—",
+                     unit: snapshot.fastestWpm != nil ? "wpm" : nil,
+                     label: "fastest day")
         }
-    }
-
-    private var wordsDetail: String {
-        snapshot.activeDays > 0 ? "across \(snapshot.activeDays) active days" : "since you started"
     }
 }
 
 private struct HeroStat: View {
     let value: String
+    var unit: String?
     let label: String
-    let detail: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(value)
-                .font(.inkStat)
-                .monospacedDigit()
-                .foregroundStyle(value == "—" ? Color.inkFaint : Color.inkText)
-                .lineLimit(1)
-                .minimumScaleFactor(0.55)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(label)
-                    .font(.inkEyebrow)
-                    .tracking(0.8)
-                    .textCase(.uppercase)
-                    .foregroundStyle(Color.inkSub)
-                Text(detail)
-                    .font(.inkCaption)
-                    .foregroundStyle(Color.inkFaint)
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(value)
+                    .font(.inkStat)
+                    .monospacedDigit()
+                    .foregroundStyle(value == "—" ? Color.inkFaint : Color.inkText)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .minimumScaleFactor(0.55)
+                if let unit {
+                    Text(unit)
+                        .font(.inkBody)
+                        .foregroundStyle(Color.inkSub)
+                }
             }
+            Text(label)
+                .font(.inkCallout)
+                .foregroundStyle(Color.inkSub)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -157,6 +188,16 @@ private struct HeroStat: View {
 private struct ActivityCard: View {
     @ObservedObject var model: InsightsModel
 
+    /// The day the cursor is over, plus its grid position, so the tooltip can
+    /// anchor to that exact square. `nil` when the cursor is off the grid.
+    @State private var hover: HoverInfo?
+
+    private struct HoverInfo: Equatable {
+        let cell: InsightsMath.HeatCell
+        let col: Int
+        let row: Int
+    }
+
     private static let cellSize: CGFloat = 12
     private static let cellGap: CGFloat = 4
     private static let axisHeight: CGFloat = 15
@@ -171,8 +212,14 @@ private struct ActivityCard: View {
         var id: Int { col }
     }
 
+    // The paging control rides in the shared card's header accessory slot,
+    // opposite the "Activity" title.
     var body: some View {
         InsightsCard(title: "Activity") {
+            if model.snapshot.canPageBack || model.snapshot.canPageForward {
+                paging
+            }
+        } content: {
             GeometryReader { geo in
                 HStack(alignment: .top, spacing: Self.hGap) {
                     VStack(alignment: .leading, spacing: Self.axisGap) {
@@ -180,11 +227,16 @@ private struct ActivityCard: View {
                         heatmap
                     }
                     Spacer(minLength: 0)
-                    if model.snapshot.hasAnyActivity {
-                        streakStats
-                    } else {
-                        emptyInvite
+                    Group {
+                        if model.snapshot.hasAnyActivity {
+                            streakStats
+                        } else {
+                            emptyInvite
+                        }
                     }
+                    // Center the stat group against the grid so it reads as a
+                    // balanced pair, not a cluster pinned to the month axis.
+                    .frame(maxHeight: .infinity, alignment: .center)
                 }
                 .onAppear { fitWeeks(to: geo.size.width) }
                 .onChange(of: geo.size.width) { _, w in fitWeeks(to: w) }
@@ -196,28 +248,78 @@ private struct ActivityCard: View {
         }
     }
 
-    /// The heatmap is adaptive: as many week-columns as the row can hold, up
-    /// to 30 — never an overflowing fixed grid (the window minimum is narrower
-    /// than 30 weeks of the larger cells).
+    // MARK: Paging
+
+    /// Month range + ‹ › — shown only when history runs past one window. Arrows
+    /// grey out at the ends (offset 0 = today; oldest page = first activity).
+    private var paging: some View {
+        HStack(spacing: 10) {
+            Text(model.snapshot.windowRange)
+                .font(.inkCaption)
+                .monospacedDigit()
+                .foregroundStyle(Color.inkFaint)
+            HStack(spacing: 4) {
+                pageButton("chevron.left", enabled: model.snapshot.canPageBack) { model.pageBack() }
+                pageButton("chevron.right", enabled: model.snapshot.canPageForward) { model.pageForward() }
+            }
+        }
+    }
+
+    private func pageButton(_ systemName: String, enabled: Bool,
+                            action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 11, weight: .semibold))  // ds-allow: icon
+                .foregroundStyle(Color.inkSub)
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+                .overlay(
+                    RoundedRectangle(cornerRadius: Radius.keycap, style: .continuous)
+                        .stroke(Color.line, lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.35)
+        .modifier(PointingHandCursor())
+    }
+
+    /// The heatmap fills the row: as many week-columns as fit beside the
+    /// streak column, so the grid always reaches the stats instead of stopping
+    /// short and stranding a gap. Capped at 53 (a year) for very wide windows;
+    /// floored at 8 so it never collapses. Older history is reached by paging,
+    /// not by shrinking the window.
     private func fitWeeks(to width: CGFloat) {
         let available = width - Self.streakColumnWidth - Self.hGap
         let perWeek = Self.cellSize + Self.cellGap
         let weeks = Int((available + Self.cellGap) / perWeek)
-        model.setWeekCount(min(30, max(8, weeks)))
+        model.setWeekCount(min(53, max(8, weeks)))
     }
 
     // MARK: Heatmap + axis
 
     private var heatmap: some View {
         HStack(alignment: .top, spacing: Self.cellGap) {
-            ForEach(Array(model.snapshot.heatmapWeeks.enumerated()), id: \.offset) { _, week in
+            ForEach(Array(model.snapshot.heatmapWeeks.enumerated()), id: \.offset) { col, week in
                 VStack(spacing: Self.cellGap) {
-                    ForEach(week, id: \.date) { cell in
+                    ForEach(Array(week.enumerated()), id: \.element.date) { row, cell in
                         heatCell(cell)
+                            // Instant, unlike the system `.help` tooltip's ~1.5s
+                            // delay — the number should appear the moment you're
+                            // on a square. Clearing is guarded so the fast move
+                            // between two squares doesn't blank the new one.
+                            .onHover { inside in
+                                if inside {
+                                    hover = HoverInfo(cell: cell, col: col, row: row)
+                                } else if hover?.cell.date == cell.date {
+                                    hover = nil
+                                }
+                            }
                     }
                 }
             }
         }
+        .overlay(alignment: .bottomLeading) { tooltipOverlay }
     }
 
     private func heatCell(_ cell: InsightsMath.HeatCell) -> some View {
@@ -234,7 +336,55 @@ private struct ActivityCard: View {
                 }
             }
             .frame(width: Self.cellSize, height: Self.cellSize)
-            .help(cellHelp(cell))
+            .contentShape(Rectangle())
+            .accessibilityLabel(cellHelp(cell))
+    }
+
+    // MARK: Hover tooltip
+
+    /// The floating bubble anchored above the hovered square. Bottom-anchored to
+    /// the grid so it grows upward off a known point without measuring its own
+    /// height; left edge tracks the square's column. `allowsHitTesting(false)`
+    /// so it never steals the hover from the cell underneath.
+    @ViewBuilder private var tooltipOverlay: some View {
+        if let hover {
+            let step = Self.cellSize + Self.cellGap
+            tooltip(for: hover.cell)
+                .allowsHitTesting(false)
+                .offset(x: CGFloat(hover.col) * step,
+                        y: -(Self.gridHeight - CGFloat(hover.row) * step) - 6)
+        }
+    }
+
+    private func tooltip(for cell: InsightsMath.HeatCell) -> some View {
+        let day = cell.date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
+        return VStack(alignment: .leading, spacing: 2) {
+            Text(day + (cell.isToday ? " · Today" : ""))
+                .font(.inkCaption)
+                .foregroundStyle(Color.inkSub)
+            if cell.words > 0 {
+                Text("\(cell.words.formatted()) words")
+                    .font(.inkCalloutEmphasized)
+                    .foregroundStyle(Color.inkText)
+                Text("\(cell.dictations) \(cell.dictations == 1 ? "dictation" : "dictations")")
+                    .font(.inkCaption)
+                    .foregroundStyle(Color.inkFaint)
+            } else {
+                Text("No dictation")
+                    .font(.inkCallout)
+                    .foregroundStyle(Color.inkFaint)
+            }
+        }
+        .fixedSize()
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(Color.card)
+        .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
+                .stroke(Color.line, lineWidth: 1)
+        )
+        .shadow(color: Elevation.card, radius: 8, y: 2)
     }
 
     /// "Deeper ink, more words" — the accent-over-chip ramp, mirrored exactly
@@ -285,8 +435,8 @@ private struct ActivityCard: View {
 
     // MARK: Legend
 
-    /// Spells out the two things the squares encode: the intensity ramp, and
-    /// the ring that flags today.
+    /// Spells out the intensity ramp the squares encode (the ring on today's
+    /// square is self-evident and needs no legend entry).
     private var legend: some View {
         HStack(spacing: 8) {
             Text("Less")
@@ -301,16 +451,6 @@ private struct ActivityCard: View {
                 }
             }
             Text("More words")
-                .font(.inkCaption)
-                .foregroundStyle(Color.inkSub)
-
-            Spacer(minLength: 12)
-
-            swatch.overlay(
-                RoundedRectangle(cornerRadius: 3, style: .continuous)
-                    .stroke(Color.inkText, lineWidth: 1.5)
-            )
-            Text("Today")
                 .font(.inkCaption)
                 .foregroundStyle(Color.inkSub)
         }
@@ -542,47 +682,3 @@ private struct WhereWhenCard: View {
     }
 }
 
-// MARK: - Records (wide)
-
-private struct RecordsCard: View {
-    let snapshot: InsightsModel.Snapshot
-
-    var body: some View {
-        InsightsCard(title: "Records") {
-            // Each label is a plain sentence fragment the number completes —
-            // "2,184 · most words in one day" — no parentheses to decode.
-            HStack(spacing: 12) {
-                tile(value: snapshot.bestDayWords.map { $0.formatted() },
-                     label: "most words in one day")
-                tile(value: snapshot.longestDictationMs.map { InsightsMath.formatDuration(ms: $0) },
-                     label: "longest single dictation")
-                tile(value: snapshot.fastestWordsPerMinute.map { "\($0) wpm" },
-                     label: "fastest day on record")
-            }
-            .padding(.top, 14)
-        }
-    }
-
-    private func tile(value: String?, label: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(value ?? "—")
-                .font(.inkStatSmall)
-                .monospacedDigit()
-                .foregroundStyle(value == nil ? Color.inkFaint : Color.inkText)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-            Text(label)
-                .font(.inkCallout)
-                .foregroundStyle(Color.inkSub)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.paper)
-        .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
-                .stroke(Color.line, lineWidth: 1)
-        )
-    }
-}

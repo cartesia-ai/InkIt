@@ -13,25 +13,30 @@ final class InsightsMathTests: XCTestCase {
         calendar.date(from: DateComponents(year: 2026, month: 7, day: 11, hour: 12))!
     }
 
-    /// A day aggregate `offset` days before `today`.
+    /// A day aggregate `offset` days before `today`. `spokenWords` defaults to
+    /// `words` — the common case where every dictation was timed; pass it
+    /// explicitly to model untimed/seeded words that must not feed WPM.
     private func day(_ offset: Int, words: Int,
                      longestMs: Int = 0, fillers: Int = 0,
-                     speakingMs: Int = 0) -> UsageAggregateStore.Day {
+                     speakingMs: Int = 0, spokenWords: Int? = nil) -> UsageAggregateStore.Day {
         let date = calendar.startOfDay(for: calendar.date(byAdding: .day, value: -offset, to: today)!)
         return UsageAggregateStore.Day(dayKey: InsightsMath.dayKey(for: date), day: date,
                                        words: words, dictations: 1,
                                        longestDictationMs: longestMs,
                                        fillerWordsRemoved: fillers,
-                                       speakingMs: speakingMs)
+                                       speakingMs: speakingMs,
+                                       spokenWords: spokenWords ?? words)
     }
 
     private func entry(_ text: String, hoursAgo: Int = 0,
-                       appName: String? = nil, appBundleID: String? = nil) -> TranscriptHistoryStore.Entry {
+                       appName: String? = nil, appBundleID: String? = nil,
+                       wordCount: Int? = nil, recordingMs: Int? = nil) -> TranscriptHistoryStore.Entry {
         TranscriptHistoryStore.Entry(
             text: text,
             timestamp: calendar.date(byAdding: .hour, value: -hoursAgo, to: today)!,
             latency: nil, original: nil, polish: nil, failure: nil,
-            appName: appName, appBundleID: appBundleID
+            appName: appName, appBundleID: appBundleID,
+            wordCount: wordCount, recordingMs: recordingMs
         )
     }
 
@@ -91,6 +96,21 @@ final class InsightsMathTests: XCTestCase {
         XCTAssertEqual(cells.last!.words, 100)
     }
 
+    func testHeatmapDayOffsetSlidesWindowBack() {
+        // Offset by one 4-week window: the newest cell is 28 days before today,
+        // nothing is flagged today, and the day whose words we set lands where
+        // its within-window offset says it should.
+        let offset = 28
+        let weeks = InsightsMath.heatmapWeeks(days: [day(offset, words: 100)],
+                                              now: today, weekCount: 4, dayOffset: offset)
+        let cells = weeks.flatMap { $0 }
+        XCTAssertEqual(cells.count, 28)
+        XCTAssertFalse(cells.contains(where: \.isToday), "an offset window never contains today")
+        XCTAssertEqual(cells.last?.words, 100, "the day 28 days back is the window's newest cell")
+        let expectedNewest = calendar.startOfDay(for: calendar.date(byAdding: .day, value: -offset, to: today)!)
+        XCTAssertEqual(cells.last.map { calendar.startOfDay(for: $0.date) }, expectedNewest)
+    }
+
     func testHeatmapSingleSpeedHistoryInksFully() {
         // Every active day identical → thresholds collapse → active days are
         // level 4, not the faintest tint.
@@ -130,14 +150,38 @@ final class InsightsMathTests: XCTestCase {
                     day(1, words: 300, fillers: 8, speakingMs: 80_000)]
         XCTAssertEqual(InsightsMath.totalWords(days: days), 400)
         XCTAssertEqual(InsightsMath.totalFillersRemoved(days: days), 20)
-        // 400 words over 120s of speech = 200 wpm.
-        XCTAssertEqual(InsightsMath.averageWordsPerMinute(days: days), 200)
+    }
+
+    // MARK: Words per minute (shared by Home + Insights)
+
+    func testAverageWpmPairsEachEntrysWordsWithItsDuration() {
+        // 100 words over 40s + 300 words over 80s = 400 words / 120s = 200 wpm.
+        let entries = [entry("a", wordCount: 100, recordingMs: 40_000),
+                       entry("b", wordCount: 300, recordingMs: 80_000)]
+        XCTAssertEqual(InsightsMath.averageWordsPerMinute(entries: entries), 200)
     }
 
     func testAverageWpmNilUntilAMinuteOfSpeech() {
-        XCTAssertNil(InsightsMath.averageWordsPerMinute(days: [day(0, words: 50, speakingMs: 10_000)]),
+        XCTAssertNil(InsightsMath.averageWordsPerMinute(entries: [entry("a", wordCount: 50, recordingMs: 10_000)]),
                      "under the one-minute floor there is no meaningful average yet")
-        XCTAssertNil(InsightsMath.averageWordsPerMinute(days: []))
+        XCTAssertNil(InsightsMath.averageWordsPerMinute(entries: []))
+    }
+
+    /// Regression for the Home/Insights drift: entries missing a duration (the
+    /// seeded/untimed history that had no press→release time) must be skipped
+    /// entirely, not counted with a zero or borrowed denominator. 150 timed
+    /// words over one minute is 150 wpm even alongside 5,000 untimed words.
+    func testAverageWpmSkipsUntimedEntries() {
+        let entries = [entry("timed", wordCount: 150, recordingMs: 60_000),
+                       entry("untimed", wordCount: 5_000, recordingMs: nil)]
+        XCTAssertEqual(InsightsMath.averageWordsPerMinute(entries: entries), 150)
+    }
+
+    /// History with no timed entries at all yields nil — the surfaces show "—",
+    /// never a number divided by borrowed speaking time.
+    func testAverageWpmNilWithoutAnyTimedEntries() {
+        let entries = [entry("a", wordCount: 5_000, recordingMs: nil)]
+        XCTAssertNil(InsightsMath.averageWordsPerMinute(entries: entries))
     }
 
     // MARK: Words

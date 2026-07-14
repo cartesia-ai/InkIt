@@ -15,7 +15,7 @@ enum StatFormat {
         if minutes < 1 { return ("\(Int((minutes * 60).rounded()))", "sec") }
         if minutes < 60 { return ("\(Int(minutes.rounded()))", "min") }
         let hours = minutes / 60
-        if hours < 24 { return (hours < 10 ? String(format: "%.1f", hours) : "\(Int(hours.rounded()))", "h") }
+        if hours < 24 { return (String(format: "%.1f", hours), "hr") }
         let days = hours / 24
         return (days < 10 ? String(format: "%.1f", days) : "\(Int(days.rounded()))", "days")
     }
@@ -321,7 +321,7 @@ struct HomeView: View {
     // speaking speed.
     private var statBand: some View {
         HStack(alignment: .top, spacing: 0) {
-            statCell(label: "Dictated words",
+            statCell(label: "Total words",
                      value: history.lifetimeWords.formatted(), unit: nil)
             bandDivider
             statCell(label: "Time saved",
@@ -527,18 +527,11 @@ struct HomeView: View {
         InsightsMath.currentStreak(days: aggregates.days, today: Date())
     }
 
-    /// Lifetime mean speaking speed across entries that recorded both a word
-    /// count and a duration; "—" until the first timed dictation lands.
+    /// Lifetime mean speaking speed. Shares `InsightsMath.averageWordsPerMinute`
+    /// with the Insights hero so the two surfaces can't show different numbers;
+    /// "—" until a minute of timed dictation has accrued.
     private var averageWpm: String {
-        let timed: [(words: Int, ms: Int)] = history.entries.compactMap { entry in
-            guard let words = entry.wordCount, let ms = entry.recordingMs,
-                  words > 0, ms > 0 else { return nil }
-            return (words, ms)
-        }
-        let totalMs = timed.reduce(0) { $0 + $1.ms }
-        guard totalMs > 0 else { return "—" }
-        let totalWords = timed.reduce(0) { $0 + $1.words }
-        return "\(Int((Double(totalWords) / (Double(totalMs) / 60_000)).rounded()))"
+        InsightsMath.averageWordsPerMinute(entries: history.entries).map(String.init) ?? "—"
     }
 
     private func transcriptRow(_ entry: TranscriptHistoryStore.Entry) -> some View {

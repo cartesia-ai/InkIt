@@ -168,14 +168,16 @@ enum InsightsMath {
         let isToday: Bool
     }
 
-    /// `weekCount` columns × 7 rows of days ending **today** (bottom of the
-    /// last column), oldest first — the prototype's flow, not GitHub's
-    /// weekday-aligned columns, so there are never leading ghost days.
+    /// `weekCount` columns × 7 rows of days, oldest first — the prototype's
+    /// flow, not GitHub's weekday-aligned columns, so there are never leading
+    /// ghost days. The window's newest day is `dayOffset` days before today
+    /// (0 = ends today); paging slides it back a full window at a time.
     /// Levels are quartiles of the user's own nonzero days: "deeper ink, more
     /// words" relative to *their* usage, so light dictators still see range.
     static func heatmapWeeks(days: [UsageAggregateStore.Day],
                              now: Date,
                              weekCount: Int,
+                             dayOffset: Int = 0,
                              calendar: Calendar = .current) -> [[HeatCell]] {
         guard weekCount > 0 else { return [] }
         let wordsByKey = Dictionary(days.map { ($0.dayKey, $0.words) },
@@ -185,10 +187,11 @@ enum InsightsMath {
         let thresholds = levelThresholds(days: days)
         let today = calendar.startOfDay(for: now)
         let totalDays = weekCount * 7
+        let base = max(0, dayOffset)
 
         var cells: [HeatCell] = []
         cells.reserveCapacity(totalDays)
-        for offset in stride(from: totalDays - 1, through: 0, by: -1) {
+        for offset in stride(from: totalDays - 1 + base, through: base, by: -1) {
             guard let date = calendar.date(byAdding: .day, value: -offset, to: today) else { continue }
             let key = dayKey(for: date)
             let words = wordsByKey[key] ?? 0
@@ -367,15 +370,27 @@ enum InsightsMath {
         days.reduce(0) { $0 + $1.fillerWordsRemoved }
     }
 
-    /// Lifetime average speaking pace: all words over all speaking time. nil
-    /// until at least `minSpeakingMs` of speech exists (the same one-minute
-    /// floor the daily record uses) so a single early blurt can't set the tone.
-    static func averageWordsPerMinute(days: [UsageAggregateStore.Day],
+    /// Lifetime mean speaking pace — the single source of truth both Home and
+    /// Insights render, so the two surfaces can never disagree. Pairs each
+    /// dictation's own word count with its own press→release duration (only
+    /// entries that recorded both) and divides the totals. Computed straight
+    /// from the transcript entries, deliberately *not* the day aggregates:
+    /// aggregates sum words and speaking time as separate counters, which can
+    /// fall out of lockstep (e.g. across a schema change) and skew the ratio;
+    /// the per-entry pairing here can't. Stays nil under a minute of timed
+    /// speech — a tiny sample posts a jumpy, meaningless number.
+    static func averageWordsPerMinute(entries: [TranscriptHistoryStore.Entry],
                                       minSpeakingMs: Int = 60_000) -> Int? {
-        let speaking = days.reduce(0) { $0 + $1.speakingMs }
-        let words = days.reduce(0) { $0 + $1.words }
-        guard speaking >= minSpeakingMs, words > 0 else { return nil }
-        return Int((Double(words) * 60_000 / Double(speaking)).rounded())
+        var totalWords = 0
+        var totalMs = 0
+        for entry in entries {
+            guard let words = entry.wordCount, let ms = entry.recordingMs,
+                  words > 0, ms > 0 else { continue }
+            totalWords += words
+            totalMs += ms
+        }
+        guard totalMs >= minSpeakingMs, totalWords > 0 else { return nil }
+        return Int((Double(totalWords) * 60_000 / Double(totalMs)).rounded())
     }
 
     // MARK: - Records
@@ -396,8 +411,8 @@ enum InsightsMath {
     /// of speech carry too little signal and are skipped.
     static func fastestDayWordsPerMinute(days: [UsageAggregateStore.Day],
                                          minSpeakingMs: Int = 60_000) -> Int? {
-        days.filter { $0.speakingMs >= minSpeakingMs && $0.words > 0 }
-            .map { Int((Double($0.words) * 60_000 / Double($0.speakingMs)).rounded()) }
+        days.filter { $0.speakingMs >= minSpeakingMs && $0.spokenWords > 0 }
+            .map { Int((Double($0.spokenWords) * 60_000 / Double($0.speakingMs)).rounded()) }
             .max()
     }
 
