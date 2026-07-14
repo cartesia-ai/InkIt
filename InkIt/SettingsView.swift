@@ -467,12 +467,6 @@ struct SettingsPopover: View {
                 }
             }
             Spacer()
-            ExternalLink(
-                title: "Share feedback",
-                url: URL(string: "https://forms.gle/jXNtDsTaLt2rKQ8N9")!
-            )
-            .padding(.horizontal, 9)
-            .padding(.bottom, 4)
         }
         .padding(10)
         .frame(width: 224)

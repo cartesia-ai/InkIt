@@ -377,7 +377,11 @@ private struct InkModal<Content: View>: View {
 
     var body: some View {
         ZStack {
-            Color.scrim
+            // Frosted backdrop: the material blurs the window behind so the card
+            // reads as clearly in front, with the dim tint on top for contrast.
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .overlay(Color.scrim)
                 .contentShape(Rectangle())
                 .onTapGesture(perform: onDismiss)
             content

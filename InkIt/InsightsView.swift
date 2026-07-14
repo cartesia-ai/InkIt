@@ -18,7 +18,6 @@ struct InsightsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     HeroRow(snapshot: model.snapshot)
-                    polishLine
                     ActivityCard(model: model)
                     HStack(alignment: .top, spacing: 14) {
                         WordsCard(snapshot: model.snapshot)
@@ -47,21 +46,6 @@ struct InsightsView: View {
             .padding(.bottom, 12)
     }
 
-    /// Polish's contribution, kept off the hero (it blanks when Polish is off)
-    /// and shown as one quiet line only once there's something to celebrate.
-    @ViewBuilder private var polishLine: some View {
-        if model.snapshot.totalFixes > 0 {
-            HStack(spacing: 6) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 12, weight: .semibold))  // ds-allow: icon
-                    .foregroundStyle(Color.accentColor)
-                Text("Polish has cleaned up \(model.snapshot.totalFixes.formatted()) filler words for you.")
-                    .font(.inkCallout)
-                    .foregroundStyle(Color.inkSub)
-            }
-            .padding(.horizontal, 4)
-        }
-    }
 }
 
 // MARK: - Card chrome
@@ -515,6 +499,10 @@ private struct HBar: View {
     var ghost = false
     /// Optional leading mark (the app icon on the "Where you dictate" rows).
     var icon: Image?
+    /// True when `icon` is an SF Symbol fallback rather than a real app icon.
+    /// Real icons ship with transparent padding; symbols fill their box, so we
+    /// inset them to match the surrounding icons' visual weight.
+    var iconIsSymbol = false
 
     var body: some View {
         HStack(spacing: 10) {
@@ -522,8 +510,9 @@ private struct HBar: View {
                 icon
                     .resizable()
                     .scaledToFit()
-                    .frame(width: 20, height: 20)
+                    .frame(width: iconIsSymbol ? 15 : 20, height: iconIsSymbol ? 15 : 20)
                     .foregroundStyle(Color.inkFaint)  // tints symbol fallbacks only
+                    .frame(width: 20, height: 20)
             }
             Text(label)
                 .font(.inkCalloutEmphasized)
@@ -586,6 +575,9 @@ private struct WordsCard: View {
 private struct WhereWhenCard: View {
     let snapshot: InsightsModel.Snapshot
 
+    /// The 2-hour bin the pointer is over, if any — drives the hover tooltip.
+    @State private var hourHover: Int?
+
     /// Below this many dictations in the window, the histogram is confetti.
     private static let minDictationsForHours = 5
 
@@ -594,10 +586,12 @@ private struct WhereWhenCard: View {
             if !snapshot.appShare.isEmpty {
                 let top = Double(snapshot.appShare.map(\.count).max() ?? 1)
                 ForEach(snapshot.appShare, id: \.name) { share in
+                    let mark = Self.appIcon(bundleID: share.bundleID)
                     HBar(label: share.name,
                          fraction: Double(share.count) / max(top, 1),
                          value: "\(share.percent)%",
-                         icon: Self.appIcon(bundleID: share.bundleID))
+                         icon: mark.image,
+                         iconIsSymbol: mark.isSymbol)
                 }
             } else {
                 ForEach(0..<4, id: \.self) { _ in
@@ -623,19 +617,22 @@ private struct WhereWhenCard: View {
     }
 
     /// The real app icon via Launch Services, cached per bundle ID. The
-    /// "Other" bucket (nil) and uninstalled apps get a quiet dashed glyph.
-    private static var iconCache: [String: Image] = [:]
-    private static func appIcon(bundleID: String?) -> Image {
-        let fallback = Image(systemName: "app.dashed")
-        guard let bundleID else { return fallback }
+    /// "Other" bucket (nil) gets a generic grid glyph standing in for the
+    /// long tail of apps; uninstalled apps get a quiet dashed glyph.
+    /// Returns the mark and whether it's an SF Symbol fallback (so the row can
+    /// inset it to match real icons' padding).
+    private static var iconCache: [String: (image: Image, isSymbol: Bool)] = [:]
+    private static func appIcon(bundleID: String?) -> (image: Image, isSymbol: Bool) {
+        guard let bundleID else { return (Image(systemName: "square.grid.2x2"), true) }
         if let cached = iconCache[bundleID] { return cached }
-        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
-            iconCache[bundleID] = fallback
-            return fallback
+        let mark: (image: Image, isSymbol: Bool)
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+            mark = (Image(nsImage: NSWorkspace.shared.icon(forFile: url.path)), false)
+        } else {
+            mark = (Image(systemName: "app.dashed"), true)
         }
-        let image = Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
-        iconCache[bundleID] = image
-        return image
+        iconCache[bundleID] = mark
+        return mark
     }
 
     // The peak speaks for itself — the one full-accent bar — so there's no
@@ -652,13 +649,71 @@ private struct WhereWhenCard: View {
         return HStack(alignment: .bottom, spacing: 4) {
             ForEach(0..<12, id: \.self) { i in
                 let fraction = hasHourData ? Double(bins[i]) / Double(maxCount) : Self.ghostHeights[i]
-                UnevenRoundedRectangle(topLeadingRadius: 3, topTrailingRadius: 3)
-                    .fill(barColor(bin: i, isPeak: i == peak))
-                    .frame(height: max(3, 56 * fraction))
+                // A full-height clear column is the hover target, so the pointer
+                // catches the whole time slot — not just the (often tiny) bar.
+                Color.clear
                     .frame(maxWidth: .infinity)
+                    .frame(height: 56)
+                    .overlay(alignment: .bottom) {
+                        UnevenRoundedRectangle(topLeadingRadius: 3, topTrailingRadius: 3)
+                            .fill(barColor(bin: i, isPeak: i == peak))
+                            .frame(height: max(3, 56 * fraction))
+                    }
+                    .contentShape(Rectangle())
+                    .onHover { inside in
+                        guard hasHourData else { return }
+                        if inside { hourHover = i }
+                        else if hourHover == i { hourHover = nil }
+                    }
+                    // Bottom-anchored like the heatmap tooltip: grows upward off
+                    // the column's bottom without measuring its own height.
+                    .overlay(alignment: .bottom) {
+                        if hourHover == i {
+                            hourTooltip(i)
+                                .allowsHitTesting(false)
+                                .offset(y: -62)
+                        }
+                    }
             }
         }
         .frame(height: 56, alignment: .bottom)
+    }
+
+    private func hourTooltip(_ i: Int) -> some View {
+        let count = snapshot.hourBins[i]
+        return VStack(alignment: .leading, spacing: 2) {
+            Text(Self.binTimeRange(i))
+                .font(.inkCaption)
+                .foregroundStyle(Color.inkSub)
+            Text("\(count.formatted()) \(count == 1 ? "dictation" : "dictations")")
+                .font(.inkCalloutEmphasized)
+                .foregroundStyle(count > 0 ? Color.inkText : Color.inkFaint)
+        }
+        .fixedSize()
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(Color.card)
+        .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
+                .stroke(Color.line, lineWidth: 1)
+        )
+        .shadow(color: Elevation.card, radius: 8, y: 2)
+    }
+
+    /// The 2-hour span a bin covers, e.g. "12–2 AM" or "10 PM – 12 AM".
+    private static func binTimeRange(_ i: Int) -> String {
+        let start = clockLabel(i * 2)
+        let end = clockLabel((i * 2 + 2) % 24)
+        return start.meridiem == end.meridiem
+            ? "\(start.hour)–\(end.hour) \(end.meridiem)"
+            : "\(start.hour) \(start.meridiem) – \(end.hour) \(end.meridiem)"
+    }
+
+    private static func clockLabel(_ hour24: Int) -> (hour: Int, meridiem: String) {
+        let meridiem = hour24 < 12 ? "AM" : "PM"
+        let h = hour24 % 12
+        return (h == 0 ? 12 : h, meridiem)
     }
 
     /// Quiet placeholder silhouette while there's too little data to mean much.
