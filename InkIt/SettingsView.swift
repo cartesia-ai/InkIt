@@ -14,9 +14,9 @@ private enum SettingsMetrics {
     static let captionSpacing: CGFloat = 3
 
     /// Editable-field surface. The same token backs every text field and the
-    /// hotkey recorder so they match exactly. Warm card, matching the onboarding
-    /// key field, so Settings reads as the same paper as the rest of the app.
-    static let fieldBackground = Color.card
+    /// hotkey recorder so they match exactly. Uses the modal-sheet card surface so
+    /// fields lift with the rest of the sheet in Dark mode.
+    static let fieldBackground = Color.modalCard
     /// Resting field border.
     static let fieldBorder = Color(nsColor: .separatorColor)
     static let fieldBorderWidth: CGFloat = 1
@@ -471,7 +471,7 @@ struct SettingsPopover: View {
         .padding(10)
         .frame(width: 224)
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(Color.canvas)
+        .background(Color.modalBG)
     }
 
     private var detail: some View {
@@ -499,9 +499,9 @@ struct SettingsPopover: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            // Warm canvas behind the grouped Forms (each hides its own system
-            // scroll background) so Settings reads as the same paper as Home.
-            .background(Color.canvas)
+            // The modal-sheet ground behind the grouped Forms (each hides its own
+            // system scroll background) so the sheet reads as one continuous paper.
+            .background(Color.modalBG)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         // With no divider, a left gutter keeps the detail from crowding the
@@ -857,7 +857,7 @@ private struct SettingsStack<Content: View>: View {
             // Explicit .caption / section-header fonts still win where set.
             .font(.inkBody)
         }
-        .background(Color.canvas)
+        .background(Color.modalBG)
     }
 }
 
@@ -870,7 +870,7 @@ private struct SettingsCard<Content: View>: View {
         _VariadicView.Tree(SettingsRows()) { content }
             .background(
                 RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
-                    .fill(Color.lift)
+                    .fill(Color.modalCard)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
@@ -1066,10 +1066,10 @@ private struct ActivationModeCard: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(
                 RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
-                    // `lift`, not white `card`, so the activation cards match the
+                    // The modal-sheet card surface, so the activation cards match the
                     // grouped section surfaces and the whole pane reads as one
-                    // ladder above the canvas (DESIGN_SYSTEM.md › Color).
-                    .fill(Color.lift)
+                    // ladder above the sheet ground (DESIGN_SYSTEM.md › Color).
+                    .fill(Color.modalCard)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
@@ -1917,7 +1917,7 @@ private struct ShortcutKeycap: View {
             .frame(minWidth: 28, minHeight: 22)
             .background(
                 RoundedRectangle(cornerRadius: Radius.inset)
-                    .fill(Color.canvas)
+                    .fill(Color.modalBG)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: Radius.inset)

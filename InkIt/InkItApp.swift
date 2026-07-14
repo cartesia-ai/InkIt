@@ -34,6 +34,16 @@ extension Color {
     static let lift    = Color("HomeLift")    // top panel (history log)
     static let card    = Color("CardBG")      // cards, fields, controls
     static let paper   = Color("PaperBG")     // inset wells (ground inside a panel)
+    // A floating modal is its own lifted "sheet": in Dark mode a black drop shadow
+    // is invisible, so (per Material's dark-theme elevation guidance) the sheet
+    // reads as raised by being *lighter* than the window behind it. The whole sheet
+    // lifts as a unit — ground and cards both step up — so the card-above-ground
+    // hierarchy is preserved (a lifted ground alone would sink the cards into it).
+    // Both match the app's `canvas` / `card` in Light, so Light is unchanged.
+    /// Modal sheet ground (the paper the sections sit on). Above `canvas` in Dark.
+    static let modalBG   = Color("ModalBG")
+    /// Modal section/field surface. A clear step above `modalBG` in Dark.
+    static let modalCard = Color("ModalCard")
 
     // Shell & structure tokens (new with the sidebar shell, round 10).
     /// Sidebar column background — a step warmer/deeper than the canvas.
@@ -377,19 +387,17 @@ private struct InkModal<Content: View>: View {
 
     var body: some View {
         ZStack {
-            // Frosted backdrop: the material blurs the window behind so the card
-            // reads as clearly in front, with the dim tint on top for contrast.
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .overlay(Color.scrim)
+            // A plain, slight dim behind the card — no material blur, which tints
+            // dark under a Dark appearance and reads as a near-blackout.
+            Color.scrim
                 .contentShape(Rectangle())
                 .onTapGesture(perform: onDismiss)
             content
-                .background(Color.canvas)
+                .background(Color.modalBG)
                 .clipShape(RoundedRectangle(cornerRadius: Radius.panel, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: Radius.panel, style: .continuous)
-                        .strokeBorder(Color.primary.opacity(0.08))
+                        .strokeBorder(Color.primary.opacity(0.12))
                 )
                 .shadow(color: Elevation.modal, radius: 40, y: 18)
         }
@@ -1457,7 +1465,8 @@ private struct WindowChrome: NSViewRepresentable {
         // Keep the titlebar transparent + full-size content so the warm canvas
         // extends all the way to the top; our own content (the hint/gear strip
         // and lists) lays out below the titlebar safe area, unobscured.
-        window.title = "InkIt"
+        // Empty title (not just hidden) so no app name ever draws in the titlebar.
+        window.title = ""
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.titlebarSeparatorStyle = .none
