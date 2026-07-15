@@ -666,8 +666,10 @@ private struct WhereWhenCard: View {
                         else if hourHover == i { hourHover = nil }
                     }
                     // Bottom-anchored like the heatmap tooltip: grows upward off
-                    // the column's bottom without measuring its own height.
-                    .overlay(alignment: .bottom) {
+                    // the column's bottom without measuring its own height. The
+                    // outermost columns anchor to their inner edge so the full
+                    // tooltip width can't spill past the card's clip.
+                    .overlay(alignment: Self.hourTooltipAlignment(i)) {
                         if hourHover == i {
                             hourTooltip(i)
                                 .allowsHitTesting(false)
@@ -677,6 +679,17 @@ private struct WhereWhenCard: View {
             }
         }
         .frame(height: 56, alignment: .bottom)
+    }
+
+    // Center the tooltip on its bar, except at the two ends where a centered,
+    // full-width bubble would overflow the card and get clipped — those anchor
+    // to the chart's edge and grow inward instead.
+    private static func hourTooltipAlignment(_ i: Int) -> Alignment {
+        switch i {
+        case 0, 1: return .bottomLeading
+        case 10, 11: return .bottomTrailing
+        default: return .bottom
+        }
     }
 
     private func hourTooltip(_ i: Int) -> some View {
