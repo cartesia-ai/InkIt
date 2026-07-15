@@ -72,6 +72,7 @@ extension Color {
 
     /// Dimming scrim behind a modal sheet (the delete-all confirm).
     static let scrim = Color.black.opacity(0.18)
+    static let scrimStrong = Color.black.opacity(0.5)
 }
 
 /// Corner-radius scale. Every `RoundedRectangle(cornerRadius:)` / `.hoverBackdrop`
@@ -129,6 +130,7 @@ extension Font {
     /// Compact sheet / popover header title — smaller than a full-window pane
     /// title (the Settings popover header).
     static let inkSheetTitle = Font.system(size: 16, weight: .medium)
+    static let inkModalTitle = Font.system(size: 22, weight: .regular, design: .serif)
     /// The sidebar wordmark — the app name beside its icon. Sits a touch above
     /// the pane titles it navigates to (round 13): the brand leads the rail, so
     /// it earns a hair more size than the content. Medium, never bold.
@@ -381,17 +383,17 @@ struct ManageMenuRow: View {
 /// backdrop. Defining it once keeps "an InkIt modal" a single source of truth, so
 /// Settings and the Delete-all confirm can't drift apart. Tap-out runs `onDismiss`;
 /// the caller owns Esc/Return via the content's keyboard shortcuts.
-private struct InkModal<Content: View>: View {
+struct InkModal<Content: View>: View {
     let onDismiss: () -> Void
+    var scrim: Color = .scrim
+    var dismissOnTapOutside: Bool = true
     @ViewBuilder var content: Content
 
     var body: some View {
         ZStack {
-            // A plain, slight dim behind the card — no material blur, which tints
-            // dark under a Dark appearance and reads as a near-blackout.
-            Color.scrim
+            scrim
                 .contentShape(Rectangle())
-                .onTapGesture(perform: onDismiss)
+                .onTapGesture { if dismissOnTapOutside { onDismiss() } }
             content
                 .background(Color.modalBG)
                 .clipShape(RoundedRectangle(cornerRadius: Radius.panel, style: .continuous))
@@ -646,9 +648,7 @@ struct MainWindowView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color.sidebar)
             .background(WindowChrome())
-            // Floating update pill, bottom-center, over the content but below the
-            // settings modal's dimmed backdrop (added after this overlay).
-            .overlay(alignment: .bottom) { UpdatePill() }
+            .overlay { UpdateModal() }
             .overlay { settingsModal }
             .overlay { deleteConfirmModal }
             // Toasts live on the main window's lower-right, above any modal, so a

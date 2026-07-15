@@ -728,9 +728,10 @@ private struct PrimaryButton: View {
 /// reads as the same navy fill. See DESIGN_SYSTEM.md › Solid CTA fill.
 struct InkButtonStyle: ButtonStyle {
     /// `ink` is the standard navy CTA; `destructive` swaps the fill to red for
-    /// dangerous confirms (e.g. Delete All) while keeping the same shape, hover,
-    /// and press behavior so the two read as one family.
-    enum Variant { case ink, destructive }
+    /// dangerous confirms (e.g. Delete All); `accent` swaps it to the amber accent
+    /// for a marquee action (the update prompt). All keep the same shape, hover,
+    /// and press behavior so they read as one family.
+    enum Variant { case ink, destructive, accent }
 
     var variant: Variant = .ink
     var compact = false
@@ -752,6 +753,7 @@ struct InkButtonStyle: ButtonStyle {
             switch variant {
             case .ink:         return Color("InkFill")
             case .destructive: return .inkDanger
+            case .accent:      return .accentColor
             }
         }
 
@@ -759,6 +761,7 @@ struct InkButtonStyle: ButtonStyle {
             switch variant {
             case .ink:         return Color("InkFillText")
             case .destructive: return .white  // ds-allow: legible label on the red destructive fill
+            case .accent:      return .white  // ds-allow: white label on the amber accent fill, matching the accent CTA
             }
         }
 
