@@ -4,7 +4,7 @@
 
 ### Just ink it.
 
-https://github.com/user-attachments/assets/a9bce14a-5294-48fc-ba1c-19f3eaef378e
+https://github.com/user-attachments/assets/b5416169-28f5-4434-9eab-0a3aaf41f020
 
 <a href="https://github.com/cartesia-ai/InkIt/releases/latest/download/InkIt.dmg">
   <img src=".github/media/download-macos.svg" height="48" alt="Download for macOS" />
