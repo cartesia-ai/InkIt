@@ -1,5 +1,4 @@
 import Foundation
-import SwiftUI
 import AppKit
 import Combine
 
@@ -208,61 +207,12 @@ final class AppCoordinator: ObservableObject {
         registerHotkey()
     }
 
-    var statusText: String {
-        switch state {
-        case .idle: return "Idle"
-        case .recording: return "Live"
-        case .finalizing: return "Finalizing…"
-        case .rewriting: return "Polishing…"
-        case .pasting: return "Pasting…"
-        case .heldInHistory: return "Saved to History"
-        case .error(let m): return "Error: \(m)"
-        }
-    }
-
-    var statusColor: Color {
-        switch state {
-        case .idle: return .secondary
-        case .recording: return Color(nsColor: .systemOrange)
-        case .finalizing, .rewriting, .pasting: return .orange
-        case .heldInHistory: return .secondary
-        case .error: return .red
-        }
-    }
-
-    var menuBarIconName: String {
-        switch state {
-        case .recording: return "waveform.circle.fill"
-        case .finalizing, .rewriting, .pasting: return "waveform.circle"
-        case .heldInHistory: return "tray.and.arrow.down"
-        case .error: return "exclamationmark.circle"
-        case .idle: return "mic"
-        }
-    }
-
-    /// Short text shown in the menu bar (more visible than an SF Symbol on
-    /// some systems). Keep it tight — the menu bar is precious real estate.
-    var menuBarLabel: String {
-        switch state {
-        case .recording: return "● Ink"
-        case .finalizing: return "… Ink"
-        case .rewriting: return "✎ Ink"
-        case .pasting: return "↩ Ink"
-        case .heldInHistory: return "⬇ Ink"
-        case .error: return "⚠ Ink"
-        case .idle: return "Ink"
-        }
-    }
-
     func beginOnboardingTrial() {
         routesFinalTranscriptToOnboarding = true
         lastTrialLatency = nil
         lastTrialRecordingMs = nil
         liveTranscript = ""
         ensureHotkeyRegistration()
-        // Surface the real Notch HUD during the trial so the "Try it" step
-        // mimics actual use — the recording island and live waveform appear up
-        // by the notch, exactly as they will every day after onboarding.
         if hud == nil {
             hud = NotchHUDController(coordinator: self)
         }

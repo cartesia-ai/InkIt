@@ -91,23 +91,9 @@ final class PermissionsService: ObservableObject {
 
     private func currentAccessibilityState(trusted: Bool) -> PermissionState {
         if trusted { return .granted }
-        // macOS exposes no "denied" status for Accessibility — AXIsProcessTrusted
-        // is just false either way. But once we've fired the prompt, re-firing it
-        // is a no-op, so the only way forward is a manual toggle. The resume flag
-        // persists this across the AX relaunch so the manual state survives it.
         let prompted = axRequestedAt != nil
             || UserDefaults.standard.bool(forKey: resumeOnboardingKey)
         return prompted ? .needsManual : .notRequested
-    }
-
-    var microphoneStatusString: String {
-        switch AVCaptureDevice.authorizationStatus(for: .audio) {
-        case .notDetermined: return "Not determined"
-        case .denied:        return "Denied"
-        case .restricted:    return "Restricted"
-        case .authorized:    return "Authorized"
-        @unknown default:    return "Unknown"
-        }
     }
 
     func requestMicrophone(_ completion: @escaping (Bool) -> Void) {
@@ -148,32 +134,7 @@ final class PermissionsService: ObservableObject {
         NSWorkspace.shared.open(url)
     }
 
-    var appIdentityDescription: String {
-        let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "InkIt"
-        let bundleID = Bundle.main.bundleIdentifier ?? "unknown bundle id"
-        return "\(name) • \(bundleID)\n\(Bundle.main.bundlePath)"
-    }
-
-    /// Fires the system TCC prompt and opens System Settings → Privacy &
-    /// Security → Accessibility.
-    ///
-    /// `AXIsProcessTrustedWithOptions(prompt: true)` is the only API that
-    /// pre-adds InkIt to the Accessibility list (disabled), so the user can
-    /// just flip the toggle instead of hunting for the "+" button. macOS only
-    /// shows the dialog once per decision, so calling this again after a Deny
-    /// silently no-ops and just re-opens Settings.
-    ///
-    /// Only call this from an explicit user action (the onboarding/Settings
-    /// "Enable" button) — never from the dictation hot path, or repeated key
-    /// presses would keep re-popping the dialog. Polling (`refresh`) detects
-    /// the grant live once the user flips the toggle.
     func requestAccessibility() {
-        // Fire the prompting API at most once. macOS re-shows the dialog on
-        // every `AXIsProcessTrustedWithOptions(prompt: true)` call while the app
-        // is untrusted, so re-entering this (a second "Enable" tap, the Settings
-        // row, a key press on the dictation hot path) would re-pop the bubble
-        // the user just dismissed. Once we've prompted — or after a Deny, which
-        // sets the resume flag — every later call just re-opens Settings.
         let alreadyPrompted = axRequestedAt != nil
             || UserDefaults.standard.bool(forKey: resumeOnboardingKey)
         if !alreadyPrompted {
@@ -185,51 +146,6 @@ final class PermissionsService: ObservableObject {
         openAccessibilitySettings()
     }
 
-    /// Lets the UI explicitly re-check after the user returns from System
-    /// Settings. If Accessibility is still stale in-process, fall back to the
-    /// relaunch path so a new process can read the fresh trust bit.
-    func confirmAccessibilityGrant() {
-        refresh()
-        if hasAccessibility {
-            axRequestedAt = nil
-            UserDefaults.standard.removeObject(forKey: resumeOnboardingKey)
-            return
-        }
-        guard let requestedAt = axRequestedAt else {
-            // After a relaunch or manual restart we no longer know whether the
-            // user has already been sent to System Settings. Don't let the
-            // confirmation button become a no-op; prompt again.
-            openAccessibilitySettings()
-            return
-        }
-        // Give the user a beat to finish the Settings interaction before we
-        // decide the process-local trust bit is stale.
-        guard Date().timeIntervalSince(requestedAt) > 1.0 else {
-            openAccessibilitySettings()
-            return
-        }
-        relaunch()
-    }
-
-    private func relaunch() {
-        UserDefaults.standard.set(true, forKey: resumeOnboardingKey)
-        let appURL = Bundle.main.bundleURL
-
-        let configuration = NSWorkspace.OpenConfiguration()
-        configuration.createsNewApplicationInstance = true
-        NSWorkspace.shared.openApplication(at: appURL, configuration: configuration) { _, error in
-            DispatchQueue.main.async {
-                if error != nil {
-                    self.openAccessibilitySettings()
-                    return
-                }
-                NSApp.terminate(nil)
-            }
-        }
-    }
-
-    /// Opens System Settings → Privacy & Security → Accessibility without firing
-    /// the TCC prompt. Use this for the `needsManual` "Open Settings" action.
     func openAccessibilitySettings() {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else {
             return
