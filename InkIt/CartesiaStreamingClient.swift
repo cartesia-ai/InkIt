@@ -156,6 +156,11 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
+    private static let finalizeSilenceMs = 150
+    private func finalizeSilence() -> Data {
+        Data(count: sampleRate * 2 * Self.finalizeSilenceMs / 1000)
+    }
+
     /// Request close. Per the STT docs, the server processes all buffered audio
     /// into events — emitting a final `turn.end` with the last word — and then
     /// disconnects. We therefore complete on that final `turn.end` (see
@@ -181,6 +186,7 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
             return
         }
         closeRequestedAt = Date()
+        task.send(.data(finalizeSilence())) { _ in }
         task.send(.string(#"{"type":"close"}"#)) { _ in }
         scheduleCloseFallback(after: fallback)
     }
@@ -392,6 +398,7 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
         stateLock.unlock()
         if shouldClose {
             closeRequestedAt = Date()
+            task.send(.data(finalizeSilence())) { _ in }
             task.send(.string(#"{"type":"close"}"#)) { _ in }
         }
     }
