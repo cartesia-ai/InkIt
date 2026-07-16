@@ -1,21 +1,13 @@
 import XCTest
 @testable import InkIt
 
-/// Pins the pure analytics behind Insights: streak math, heatmap bucketing,
-/// word counting, filler diffs, app shares, hour bins, and the records.
-/// Everything here is a value-in/value-out function — no store, no singleton,
-/// no clock (dates are injected).
 final class InsightsMathTests: XCTestCase {
 
     private let calendar = Calendar.current
-    /// A fixed "now", mid-day so day arithmetic never straddles midnight.
     private var today: Date {
         calendar.date(from: DateComponents(year: 2026, month: 7, day: 11, hour: 12))!
     }
 
-    /// A day aggregate `offset` days before `today`. `spokenWords` defaults to
-    /// `words` — the common case where every dictation was timed; pass it
-    /// explicitly to model untimed/seeded words that must not feed WPM.
     private func day(_ offset: Int, words: Int,
                      longestMs: Int = 0, fillers: Int = 0,
                      speakingMs: Int = 0, spokenWords: Int? = nil) -> UsageAggregateStore.Day {
@@ -40,8 +32,6 @@ final class InsightsMathTests: XCTestCase {
         )
     }
 
-    // MARK: Streaks
-
     func testCurrentStreakEmptyHistoryIsZero() {
         XCTAssertEqual(InsightsMath.currentStreak(days: [], today: today), 0)
     }
@@ -53,8 +43,6 @@ final class InsightsMathTests: XCTestCase {
     }
 
     func testCurrentStreakSurvivesQuietToday() {
-        // Nothing today yet, but yesterday + the day before were active: the
-        // streak is safe until midnight, not broken at breakfast.
         let days = [day(1, words: 5), day(2, words: 7)]
         XCTAssertEqual(InsightsMath.currentStreak(days: days, today: today), 2)
     }
@@ -84,8 +72,6 @@ final class InsightsMathTests: XCTestCase {
         XCTAssertEqual(summary.of, 10, "span is inclusive of both endpoints")
     }
 
-    // MARK: Heatmap
-
     func testHeatmapShapeAndTodayMarker() {
         let weeks = InsightsMath.heatmapWeeks(days: [day(0, words: 100)], now: today, weekCount: 4)
         XCTAssertEqual(weeks.count, 4)
@@ -97,9 +83,6 @@ final class InsightsMathTests: XCTestCase {
     }
 
     func testHeatmapDayOffsetSlidesWindowBack() {
-        // Offset by one 4-week window: the newest cell is 28 days before today,
-        // nothing is flagged today, and the day whose words we set lands where
-        // its within-window offset says it should.
         let offset = 28
         let weeks = InsightsMath.heatmapWeeks(days: [day(offset, words: 100)],
                                               now: today, weekCount: 4, dayOffset: offset)
@@ -112,8 +95,6 @@ final class InsightsMathTests: XCTestCase {
     }
 
     func testHeatmapSingleSpeedHistoryInksFully() {
-        // Every active day identical → thresholds collapse → active days are
-        // level 4, not the faintest tint.
         let weeks = InsightsMath.heatmapWeeks(days: [day(0, words: 50), day(1, words: 50)],
                                               now: today, weekCount: 2)
         let active = weeks.flatMap { $0 }.filter { $0.words > 0 }
@@ -143,8 +124,6 @@ final class InsightsMathTests: XCTestCase {
         XCTAssertTrue(cells.dropLast().allSatisfy { $0.dictations == 0 }, "empty days report zero dictations")
     }
 
-    // MARK: Headline totals
-
     func testHeadlineTotalsSumAcrossHistory() {
         let days = [day(0, words: 100, fillers: 12, speakingMs: 40_000),
                     day(1, words: 300, fillers: 8, speakingMs: 80_000)]
@@ -152,10 +131,7 @@ final class InsightsMathTests: XCTestCase {
         XCTAssertEqual(InsightsMath.totalFillersRemoved(days: days), 20)
     }
 
-    // MARK: Words per minute (shared by Home + Insights)
-
     func testAverageWpmPairsEachEntrysWordsWithItsDuration() {
-        // 100 words over 40s + 300 words over 80s = 400 words / 120s = 200 wpm.
         let entries = [entry("a", wordCount: 100, recordingMs: 40_000),
                        entry("b", wordCount: 300, recordingMs: 80_000)]
         XCTAssertEqual(InsightsMath.averageWordsPerMinute(entries: entries), 200)
@@ -167,24 +143,16 @@ final class InsightsMathTests: XCTestCase {
         XCTAssertNil(InsightsMath.averageWordsPerMinute(entries: []))
     }
 
-    /// Regression for the Home/Insights drift: entries missing a duration (the
-    /// seeded/untimed history that had no press→release time) must be skipped
-    /// entirely, not counted with a zero or borrowed denominator. 150 timed
-    /// words over one minute is 150 wpm even alongside 5,000 untimed words.
     func testAverageWpmSkipsUntimedEntries() {
         let entries = [entry("timed", wordCount: 150, recordingMs: 60_000),
                        entry("untimed", wordCount: 5_000, recordingMs: nil)]
         XCTAssertEqual(InsightsMath.averageWordsPerMinute(entries: entries), 150)
     }
 
-    /// History with no timed entries at all yields nil — the surfaces show "—",
-    /// never a number divided by borrowed speaking time.
     func testAverageWpmNilWithoutAnyTimedEntries() {
         let entries = [entry("a", wordCount: 5_000, recordingMs: nil)]
         XCTAssertNil(InsightsMath.averageWordsPerMinute(entries: entries))
     }
-
-    // MARK: Words
 
     func testTokenizeStripsPunctuationAndNormalizesApostrophes() {
         let tokens = InsightsMath.tokenize("Don't ship it, twice — \"don't\"!")
@@ -207,14 +175,11 @@ final class InsightsMathTests: XCTestCase {
         XCTAssertEqual(top.first?.word, "Cartesia")
     }
 
-    // MARK: Fillers
-
     func testFillersRemovedCountsUnigramsAndBigrams() {
         let removed = InsightsMath.fillersRemoved(
             original: "um so like the uh plan you know",
             polished: "so the plan"
         )
-        // um + like + uh + (you know = 2 words) = 5
         XCTAssertEqual(removed, 5)
     }
 
@@ -228,8 +193,6 @@ final class InsightsMathTests: XCTestCase {
         XCTAssertEqual(InsightsMath.fillersRemoved(original: "ship it thursday",
                                                    polished: "Ship it Thursday."), 0)
     }
-
-    // MARK: Where you dictate
 
     func testAppShareGroupsByBundleAndBucketsOther() {
         var entries: [TranscriptHistoryStore.Entry] = []
@@ -255,8 +218,6 @@ final class InsightsMathTests: XCTestCase {
         XCTAssertEqual(InsightsMath.wholePercents(of: [6, 3, 1, 1, 1], total: 12).reduce(0, +), 100)
         XCTAssertEqual(InsightsMath.wholePercents(of: [12], total: 12), [100])
     }
-
-    // MARK: When you speak
 
     func testHourHistogramBinsByTwoHours() {
         let e1 = TranscriptHistoryStore.Entry(
@@ -286,15 +247,12 @@ final class InsightsMathTests: XCTestCase {
     }
 
     func testFastestDayPicksBestWPM() {
-        // 300 words over 2 min = 150 wpm; 500 words over 5 min = 100 wpm.
         let days = [day(0, words: 300, speakingMs: 120_000),
                     day(1, words: 500, speakingMs: 300_000)]
         XCTAssertEqual(InsightsMath.fastestDayWordsPerMinute(days: days), 150)
     }
 
     func testFastestDaySkipsThinDays() {
-        // 50 words in 10s would be a bogus 300 wpm — under the one-minute
-        // floor it must not count; with no qualifying day the record is nil.
         let days = [day(0, words: 50, speakingMs: 10_000)]
         XCTAssertNil(InsightsMath.fastestDayWordsPerMinute(days: days))
         XCTAssertNil(InsightsMath.fastestDayWordsPerMinute(days: []))
@@ -310,8 +268,6 @@ final class InsightsMathTests: XCTestCase {
         XCTAssertEqual(InsightsMath.formatDuration(ms: 48_200), "48s")
         XCTAssertEqual(InsightsMath.formatDuration(ms: 192_000), "3m 12s")
     }
-
-    // MARK: Day keys
 
     func testDayKeyBoundaries() {
         let lateNight = calendar.date(from: DateComponents(year: 2026, month: 7, day: 10, hour: 23, minute: 59))!

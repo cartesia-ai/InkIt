@@ -2,8 +2,6 @@ import SwiftUI
 import AppKit
 import AVFoundation
 
-// MARK: - Root
-
 enum OnboardingStep: Int, CaseIterable {
     case welcome
     case permissions
@@ -15,12 +13,8 @@ enum OnboardingStep: Int, CaseIterable {
 struct OnboardingRootView: View {
     @EnvironmentObject var settings: SettingsStore
     @EnvironmentObject var coordinator: AppCoordinator
-    // Observed at the root so the progress dots can live-gate forward jumps on
-    // the current permission grants, not just on what's been reached.
     @StateObject private var permissions = PermissionsService.shared
     @State private var step: OnboardingStep = {
-        // If we just silently relaunched mid-onboarding to pick up a fresh
-        // Accessibility grant, resume at the permissions step.
         let key = "resumeOnboardingAtPermissions"
         if UserDefaults.standard.bool(forKey: key) {
             UserDefaults.standard.removeObject(forKey: key)
@@ -30,19 +24,14 @@ struct OnboardingRootView: View {
     }()
     @State private var direction: Int = 1
 
-    // Dots sit at dotsTopInset; content clears them by the band below.
     private let dotsTopInset: CGFloat = 40
     private let dotsBandHeight: CGFloat = 64
 
     var body: some View {
         ZStack(alignment: .top) {
-            // Calm, appearance-aware backdrop: a single solid warm-paper fill,
-            // the same on every step (no gradient, no per-step rainbow).
-            // See DESIGN_SYSTEM.md.
             Color.paper
                 .ignoresSafeArea()
 
-            // Centered step content; top inset clears the pinned dots.
             Group {
                 switch step {
                 case .welcome:     WelcomeStep(next: next)
@@ -62,7 +51,6 @@ struct OnboardingRootView: View {
             .padding(.top, dotsTopInset + dotsBandHeight)
             .padding(.bottom, 56)
 
-            // Progress dots, pinned to the top — same position every step.
             StepIndicator(step: step, isReachable: isReachable, go: go)
                 .padding(.top, dotsTopInset)
         }
@@ -79,13 +67,9 @@ struct OnboardingRootView: View {
     }
 
     private func finish() {
-        // Flipping the flag causes RootView to swap from OnboardingRootView to
-        // MainWindowView in the same WindowGroup window — no need to close.
         settings.hasCompletedOnboarding = true
     }
 
-    /// Tap-to-navigate from the progress dots. Animates in the right direction
-    /// and is a no-op for the current step or any step that isn't reachable.
     private func go(to target: OnboardingStep) {
         guard target != step, isReachable(target) else { return }
         direction = target.rawValue > step.rawValue ? 1 : -1
@@ -94,9 +78,6 @@ struct OnboardingRootView: View {
         }
     }
 
-    /// Whether a step's own gate is currently satisfied. Backward steps are
-    /// always re-enterable; forward jumps are only allowed when every earlier
-    /// step is still complete (live gating, so emptying the key re-locks ahead).
     private func isComplete(_ s: OnboardingStep) -> Bool {
         switch s {
         case .welcome, .tryIt, .done:
@@ -151,7 +132,6 @@ private struct StepDot: View {
 
     var body: some View {
         ZStack {
-            // Cross-fade hollow ring ↔ amber fill.
             Circle()
                 .strokeBorder(Color.secondary.opacity(0.3), lineWidth: 1.5)
                 .opacity(isFilled ? 0 : 1)
@@ -159,12 +139,9 @@ private struct StepDot: View {
                 .fill(Color.accentColor)
                 .opacity(isFilled ? 1 : 0)
         }
-        // Tappable (already-completed) dots deepen on hover so they read as
-        // a place you can jump back to; the current and unreachable dots don't.
         .brightness(tappable && hovering ? -Hover.fillShift : 0)
         .frame(width: dot, height: dot)
         .animation(Hover.animation, value: hovering)
-        // Larger slot = hit target; dot pitch unaffected.
         .frame(width: slot, height: slot)
         .contentShape(Rectangle())
         .onHover { hovering = tappable && $0 }
@@ -173,8 +150,6 @@ private struct StepDot: View {
     }
 }
 
-/// Applies the pointing-hand cursor only when a control is actually clickable —
-/// used by the progress dots so unreachable steps don't signal as tappable.
 private struct ConditionalPointer: ViewModifier {
     let active: Bool
     func body(content: Content) -> some View {
@@ -185,8 +160,6 @@ private struct ConditionalPointer: ViewModifier {
         }
     }
 }
-
-// MARK: - Welcome
 
 private struct WelcomeStep: View {
     let next: () -> Void
@@ -240,7 +213,6 @@ private struct WelcomeStep: View {
     }
 }
 
-/// Icon + title + one-line benefit, in a quiet card — the Welcome value props.
 private struct BenefitRow: View {
     let icon: String
     let title: String
@@ -267,8 +239,6 @@ private struct BenefitRow: View {
         )
     }
 }
-
-// MARK: - Permissions
 
 private struct PermissionsStep: View {
     let next: () -> Void
@@ -304,9 +274,6 @@ private struct PermissionsStep: View {
                     manualWhy: "This is how InkIt types into whatever app you’re in. Without it, dictation has nowhere to land.",
                     settingsPath: "Privacy & Security ▸ Accessibility",
                     enable: { permissions.requestAccessibility() },
-                    // Already prompted (and pre-added to the list) by this point —
-                    // just open the pane. Re-firing the prompt would re-pop the
-                    // system bubble the user already dismissed.
                     openSettings: { permissions.openAccessibilitySettings() }
                 )
             }
@@ -328,16 +295,9 @@ private struct PermissionCard: View {
     let title: String
     let subtitle: String
     let state: PermissionState
-    /// Friendly one-liner explaining why the permission is required and how to
-    /// finish granting it, shown only in the `needsManual` state.
     let manualWhy: String
-    /// The System Settings pane to send the user to, e.g.
-    /// "Privacy & Security ▸ Accessibility".
     let settingsPath: String
-    /// Fire the system TCC prompt (only meaningful in `notRequested`).
     let enable: () -> Void
-    /// Jump straight to the relevant System Settings pane (the `needsManual`
-    /// action — never re-fires the prompt).
     let openSettings: () -> Void
 
     var manual: Bool { state == .needsManual }
@@ -385,7 +345,6 @@ private struct PermissionCard: View {
     private var manualBody: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 14) {
-                // Stronger amber tile so the glyph reads against the tinted card.
                 GlyphTile(icon: icon, size: 48, corner: 13, iconSize: 22,
                           fill: Color.accentColor.opacity(0.22))
                 VStack(alignment: .leading, spacing: 4) {
@@ -414,9 +373,6 @@ private struct PermissionCard: View {
     }
 }
 
-/// A numbered instruction line — amber badge + "prefix emphasis" text — used
-/// in the permission card's manual-fix state. The text reads in one uniform
-/// weight; no inline bolding.
 private struct ManualStep: View {
     let number: Int
     let prefix: String
@@ -437,12 +393,6 @@ private struct ManualStep: View {
     }
 }
 
-// MARK: - API key
-
-/// Compact validation status shown inside the field's trailing edge — a glyph
-/// plus a concise label so the verdict reads in place without a caption below.
-/// Shared by both key steps since both validators expose the same
-/// `APIKeyValidator.State`.
 private struct KeyValidationLabel: View {
     let state: APIKeyValidator.State
 
@@ -505,9 +455,6 @@ private struct APIKeyStep: View {
             }
             .frame(maxWidth: 460)
 
-            // Information-only note: free-quota reassurance + attribution.
-            // No fill, border, or bold so the elevated key field stays the
-            // single focal point — this recedes into the page as a caption.
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "gift")
                     .font(.system(size: 13))  // ds-allow: icon
@@ -532,10 +479,6 @@ private struct APIKeyStep: View {
         }
     }
 
-    /// Custom credential field: CardBG container matching the rest of onboarding,
-    /// taller and narrower than a system field, with a leading key glyph and the
-    /// live validation status tucked inside the trailing edge. Always masked —
-    /// the key is never rendered in plain text.
     private var keyField: some View {
         HStack(spacing: 12) {
             Image(systemName: "key.fill")
@@ -564,8 +507,6 @@ private struct APIKeyStep: View {
                     lineWidth: fieldFocused ? 2 : 1
                 )
         )
-        // Subtle elevation makes the key field the screen's focal point — it
-        // lifts off the paper while the note below stays flat/recessive.
         .shadow(color: Elevation.drop, radius: 12, x: 0, y: 5)
         .animation(.easeInOut(duration: 0.15), value: fieldFocused)
         .contentShape(Rectangle())
@@ -573,8 +514,6 @@ private struct APIKeyStep: View {
     }
 
 }
-
-// MARK: - Try it
 
 private struct TryItStep: View {
     let next: () -> Void
@@ -591,9 +530,6 @@ private struct TryItStep: View {
                     .multilineTextAlignment(.center)
             }
 
-            // The shared practice card owns the trial lifecycle, the staged
-            // reveal, the editable box, and history logging. Sending here just
-            // advances onboarding to the next step.
             TryItPracticeCard(onSend: next)
 
             Button("Skip for now") { next() }
@@ -605,8 +541,6 @@ private struct TryItStep: View {
         }
     }
 }
-
-// MARK: - Done
 
 private struct DoneStep: View {
     let finish: () -> Void
@@ -642,17 +576,11 @@ private struct DoneStep: View {
     }
 }
 
-// MARK: - Shared bits
-
-/// Accent-tinted rounded tile holding an SF Symbol — the recurring glyph
-/// treatment across onboarding.
 private struct GlyphTile: View {
     let icon: String
     var size: CGFloat = 84
     var corner: CGFloat = 22
     var iconSize: CGFloat = 36
-    /// Tile fill. Defaults to the soft accent; callers on a tinted card pass a
-    /// stronger amber so the glyph still reads (the manual-permission step).
     var fill: Color = Color.accentSoft
 
     var body: some View {
@@ -719,18 +647,7 @@ private struct PrimaryButton: View {
     }
 }
 
-/// The "ink" call-to-action: a solid navy fill with white text in light mode,
-/// inverting to a warm off-white fill with navy text in dark — the pen color
-/// from the app icon. The amber accent stays reserved for live-signal cues
-/// (selection, links, the waveform), per DESIGN_SYSTEM.md.
-/// The "ink" call-to-action style — the app's one solid button. Shared beyond
-/// onboarding (e.g. Settings ▸ General permission rows) so every primary action
-/// reads as the same navy fill. See DESIGN_SYSTEM.md › Solid CTA fill.
 struct InkButtonStyle: ButtonStyle {
-    /// `ink` is the standard navy CTA; `destructive` swaps the fill to red for
-    /// dangerous confirms (e.g. Delete All); `accent` swaps it to the amber accent
-    /// for a marquee action (the update prompt). All keep the same shape, hover,
-    /// and press behavior so they read as one family.
     enum Variant { case ink, destructive, accent }
 
     var variant: Variant = .ink
@@ -740,8 +657,6 @@ struct InkButtonStyle: ButtonStyle {
         Surface(configuration: configuration, variant: variant, compact: compact)
     }
 
-    /// Hover needs `@State`, which a `ButtonStyle` can't hold directly, so the
-    /// label is rendered through this small stateful view.
     private struct Surface: View {
         let configuration: ButtonStyleConfiguration
         let variant: Variant
@@ -774,8 +689,6 @@ struct InkButtonStyle: ButtonStyle {
                 .background(
                     RoundedRectangle(cornerRadius: compact ? 7 : 9, style: .continuous)
                         .fill(fill)
-                        // Brighten the fill on hover (no movement) so the button
-                        // reads as live before the press-dim takes over.
                         .brightness(hovering && isEnabled ? Hover.fillShift : 0)
                         .opacity(configuration.isPressed ? 0.82 : 1)
                         .animation(Hover.animation, value: hovering)
@@ -787,10 +700,6 @@ struct InkButtonStyle: ButtonStyle {
     }
 }
 
-/// The quiet secondary action: a text-only label with no fill or border, used
-/// beside a solid `InkButtonStyle` in confirm dialogs (e.g. Cancel next to a
-/// destructive primary). Shares the same label scale and padding so the two sit
-/// at one height; recedes via `.secondary` and dims slightly on hover/press.
 struct InkSecondaryButtonStyle: ButtonStyle {
     var compact = false
 

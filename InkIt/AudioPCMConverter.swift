@@ -1,8 +1,6 @@
 import Foundation
 import AVFoundation
 
-/// Converts arbitrary microphone input buffers to mono pcm_s16le @ 16 kHz,
-/// returning the raw little-endian byte payload Cartesia expects.
 final class AudioPCMConverter {
     private let converter: AVAudioConverter
     private let output: AVAudioFormat
@@ -14,7 +12,6 @@ final class AudioPCMConverter {
     }
 
     func convert(buffer: AVAudioPCMBuffer) -> Data {
-        // Estimate output capacity based on sample-rate ratio.
         let ratio = output.sampleRate / buffer.format.sampleRate
         let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio + 1024)
         guard let outBuffer = AVAudioPCMBuffer(pcmFormat: output, frameCapacity: capacity) else {

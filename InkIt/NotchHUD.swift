@@ -2,17 +2,8 @@ import SwiftUI
 import AppKit
 import Combine
 
-// MARK: - Metrics
-
 private enum HUDMetrics {
-    /// Window is wide enough to host the centered live/status pill that drops
-    /// below the notch; the whole window is click-through.
     static let windowWidth: CGFloat = 520
-    /// Live/status pill extends this far below the notch, and overhangs the
-    /// notch by `pillOverhang` on each side so the two merge visually.
-    /// Total drop below the notch = a small gap under the notch, the content
-    /// row, then padding beneath it so the text/waveform aren't jammed against
-    /// the notch's bottom edge.
     static let contentTopGap: CGFloat = 0
     static let contentRowHeight: CGFloat = 12
     static let contentBottomPad: CGFloat = 4
@@ -20,24 +11,15 @@ private enum HUDMetrics {
     static let pillOverhang: CGFloat = 14
     static let minPillWidth: CGFloat = 150
 
-    // Floating fallback (displays without a physical notch): a detached,
-    // content-sized capsule below the menu bar instead of a fake notch.
     static let floatingTopGap: CGFloat = 3
     static let floatingHeight: CGFloat = 22
     static let floatingHPad: CGFloat = 12
     static let floatingShadowPad: CGFloat = 16
 }
 
-// MARK: - Notch geometry
-
-/// Describes where the camera notch is (or where a simulated one should go) so
-/// the HUD can anchor itself to the center of the screen and merge with it.
 struct NotchGeometry: Equatable {
-    /// X coordinate (screen space) of the notch center.
     var centerX: CGFloat
-    /// Width of the physical (or simulated) notch.
     var notchWidth: CGFloat
-    /// Height of the menu-bar / notch strip. The pill drops below it.
     var menuBarHeight: CGFloat
     var hasPhysicalNotch: Bool
 
@@ -57,8 +39,6 @@ struct NotchGeometry: Equatable {
                 hasPhysicalNotch: true
             )
         }
-        // No physical notch: simulate one centered at the top. `notchWidth` is
-        // unused on this path — the floating capsule is content-sized.
         return NotchGeometry(
             centerX: frame.midX,
             notchWidth: 180,
@@ -67,9 +47,6 @@ struct NotchGeometry: Equatable {
         )
     }
 
-    /// Height of the HUD window (and the SwiftUI content frame). Notched displays
-    /// size to the notch strip + pill; non-notch displays add the gap below the
-    /// menu bar, the floating capsule, and room for its shadow.
     var hudWindowHeight: CGFloat {
         hasPhysicalNotch
             ? menuBarHeight + HUDMetrics.pillContentHeight
@@ -77,8 +54,6 @@ struct NotchGeometry: Equatable {
     }
 }
 
-/// Shared layout state. `geometry` drives the SwiftUI view and is refreshed when
-/// the screen configuration changes.
 @MainActor
 final class HUDLayout: ObservableObject {
     @Published var geometry: NotchGeometry
@@ -88,12 +63,6 @@ final class HUDLayout: ObservableObject {
     }
 }
 
-// MARK: - Window controller
-
-/// Notch-anchored "ghost island" HUD. Invisible at rest; while dictating or
-/// processing it shows a compact status pill that merges with the notch and
-/// hangs straight down. Purely a status surface — it never captures the mouse,
-/// so the cursor stays where the user put it. History lives in the main app.
 @MainActor
 final class NotchHUDController: NSObject {
     private var panel: NSPanel?
@@ -136,8 +105,6 @@ final class NotchHUDController: NSObject {
         panel.isMovableByWindowBackground = false
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
         panel.hidesOnDeactivate = false
-        // Pure status surface: the window never swallows clicks, so the menu bar
-        // and whatever is behind the pill stay fully interactive.
         panel.ignoresMouseEvents = true
 
         let host = NSHostingView(rootView: NotchHUDView(layout: layout)
@@ -170,17 +137,11 @@ final class NotchHUDController: NSObject {
     }
 }
 
-// MARK: - SwiftUI view
-
 private enum HUDPresentation: Equatable {
     case hidden
     case live
     case status(String)
-    /// A brief, self-clearing confirmation, e.g. "Saved to History" when a
-    /// transcript was held instead of pasted. Rendered as "InkIt • <label>".
     case notice(String)
-    /// A brief, self-clearing error, e.g. a lost dictation. Same shape as
-    /// `.notice` but with a red warning glyph: "InkIt ⚠ <label>".
     case errorNotice(String)
 }
 
@@ -189,9 +150,6 @@ private struct NotchHUDView: View {
     @ObservedObject var layout: HUDLayout
 
     private var mode: HUDPresentation {
-        // Pure live surface: the island is only present while recording and
-        // collapses the moment the hotkey is released. Polishing/pasting happen
-        // silently in the background (the menu bar still reflects them).
         switch coordinator.state {
         case .recording:        return .live
         case .heldInHistory:    return .notice("Saved to History")
@@ -200,27 +158,16 @@ private struct NotchHUDView: View {
         }
     }
 
-    // MARK: Geometry (window-local, top-left origin)
-
     private var menuBar: CGFloat { layout.geometry.menuBarHeight }
     private var W: CGFloat { HUDMetrics.windowWidth }
     private var H: CGFloat { layout.geometry.hudWindowHeight }
 
-    /// Live/status pill: centered under the notch, wide enough to overhang it
-    /// on both sides so the two black shapes merge into one island.
     private var pillWidth: CGFloat {
         max(layout.geometry.notchWidth + HUDMetrics.pillOverhang * 2, HUDMetrics.minPillWidth)
     }
 
-    // MARK: Body
-
     private var isVisible: Bool { mode != .hidden }
 
-    /// Collapsed, the island shrinks to exactly the notch footprint (notch width
-    /// × menu-bar height), so it retracts *into* the notch and vanishes there —
-    /// black-on-black, no opacity fade. Active, it widens and drops the content
-    /// strip below the notch. Animating the geometry (not the alpha) is what
-    /// makes release read as a smooth contraction instead of a flicker.
     private var displayedWidth: CGFloat {
         isVisible ? pillWidth : layout.geometry.notchWidth
     }
@@ -230,9 +177,6 @@ private struct NotchHUDView: View {
 
     var body: some View {
         Group {
-            // On a notched Mac the island merges with the physical notch; without
-            // one, that shape reads as a black blob pasted onto the menu bar, so we
-            // fall back to a detached floating capsule instead.
             if layout.geometry.hasPhysicalNotch {
                 pill(content: islandContent)
             } else {
@@ -243,10 +187,6 @@ private struct NotchHUDView: View {
         .animation(.spring(response: 0.32, dampingFraction: 0.9), value: isVisible)
     }
 
-    /// Non-notch fallback: a detached, content-sized capsule floating just below
-    /// the menu bar. All corners rounded, soft shadow, and it scales/fades in and
-    /// out (there's no notch to retract into). Same content as the notch island;
-    /// the window stays click-through, so it never gets in the way.
     @ViewBuilder
     private var floatingIsland: some View {
         Group {
@@ -256,8 +196,6 @@ private struct NotchHUDView: View {
                     .padding(.horizontal, HUDMetrics.floatingHPad)
                     .frame(height: HUDMetrics.floatingHeight)
                     .background(
-                        // Shadow rides the static capsule (not the animating
-                        // content) so the waveform doesn't re-rasterize the blur.
                         Capsule(style: .continuous)
                             .fill(.black)
                             .overlay(
@@ -292,10 +230,7 @@ private struct NotchHUDView: View {
         }
     }
 
-    // MARK: Shapes
-
     private func shape(radius: CGFloat) -> some View {
-        // Square top corners (flush with screen edge / notch), rounded bottom.
         UnevenRoundedRectangle(
             cornerRadii: .init(topLeading: 0, bottomLeading: radius,
                                bottomTrailing: radius, topTrailing: 0),
@@ -336,17 +271,11 @@ private struct NotchHUDView: View {
             .position(x: W / 2, y: displayedHeight / 2)
     }
 
-    // MARK: Content
-
     private var liveContent: some View {
         HStack(spacing: 7) {
             Text("InkIt")
                 .font(.inkNotchBrand)
                 .foregroundStyle(.white.opacity(0.85))
-            // Hold a quiet pulsing dot until the mic is actually capturing, then
-            // reveal the live waveform. That still→moving switch is the "start
-            // speaking" cue — it keeps the user from talking into the dead window
-            // while a Bluetooth mic finishes switching into its input profile.
             Group {
                 if coordinator.audioReady {
                     HUDWaveform(level: coordinator.inputLevel)
@@ -388,9 +317,6 @@ private struct NotchHUDView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 
-    /// Same compact shape as `noticeContent`, but leads with a red warning glyph
-    /// so a lost dictation reads as a problem at a glance. The label is kept very
-    /// short by the coordinator (e.g. "No internet", "Out of credits").
     private func errorNoticeContent(label: String) -> some View {
         HStack(spacing: 5) {
             Text("InkIt")
@@ -407,11 +333,6 @@ private struct NotchHUDView: View {
     }
 }
 
-// MARK: - Preparing cue
-
-/// A single softly breathing dot shown while the mic is still coming up (before
-/// the first real audio). It deliberately reads as "wait" — the moment it gives
-/// way to the lively waveform is the user's "start speaking" signal.
 private struct HUDPreparingDot: View {
     @State private var pulsing = false
 
@@ -428,8 +349,6 @@ private struct HUDPreparingDot: View {
     }
 }
 
-// MARK: - Waveform
-
 private struct HUDWaveform: View {
     let level: Float
     @State private var phase: CGFloat = 0
@@ -441,8 +360,6 @@ private struct HUDWaveform: View {
                 ForEach(0..<barCount, id: \.self) { i in
                     let t = phase + CGFloat(i) * 0.30
                     let wobble = (sin(t * .pi * 2) + 1) / 2
-                    // Punch up quiet input and widen the per-bar swing so the
-                    // waveform reads as lively rather than a faint shimmer.
                     let loudness = CGFloat(min(1, max(0.18, level * 1.7)))
                     let height = 2 + (geo.size.height - 2) * loudness * (0.12 + 0.88 * wobble)
                     Capsule(style: .continuous)
@@ -460,8 +377,6 @@ private struct HUDWaveform: View {
     }
 }
 
-// MARK: - In-window toast
-
 enum ScreenToastStyle: Equatable {
     case success, error
 }
@@ -471,9 +386,6 @@ private struct ToastItem: Equatable {
     let style: ScreenToastStyle
 }
 
-/// Drives a brief, self-dismissing toast. The host view (`ToastOverlay`) pins it
-/// to a window's lower-right; callers just `show(_:style:)`. A new toast replaces
-/// whatever's showing. Shared so any view in the tree can post without plumbing.
 @MainActor
 final class ToastCenter: ObservableObject {
     static let shared = ToastCenter()
@@ -487,21 +399,16 @@ final class ToastCenter: ObservableObject {
         withAnimation(Motion.state) {
             item = ToastItem(message: message, style: style)
         }
-        // Cancelling the prior dismissal makes a stale one a non-issue, so this
-        // just clears the current toast after its time is up.
         clearWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             withAnimation(Motion.state) { self?.item = nil }
         }
         clearWork = work
-        // Errors carry more to read; give them longer on screen.
         let seconds: TimeInterval = style == .error ? 4.0 : 2.0
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
     }
 }
 
-/// Pins the current toast to the bottom-trailing corner of whatever view it
-/// overlays (the main window). Renders nothing when there's no toast.
 struct ToastOverlay: View {
     @ObservedObject private var center = ToastCenter.shared
 

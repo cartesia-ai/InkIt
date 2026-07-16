@@ -1,12 +1,5 @@
 import SwiftUI
 
-/// The Insights section — the user's dictation quantified, all of it computed
-/// on-device by `InsightsMath` over the durable day aggregates and the
-/// transcript history. The page is composed to a single feeling: *be proud of
-/// this, and keep going.* A hero trio of personal records leads — deliberately
-/// distinct from Home's lifetime totals, and independent of Polish so it never
-/// blanks — then the Activity chain is the habit hook, and every card keeps a
-/// quiet empty state so the grid never collapses while data accrues.
 struct InsightsView: View {
     @EnvironmentObject var history: TranscriptHistoryStore
     @EnvironmentObject var aggregates: UsageAggregateStore
@@ -32,9 +25,6 @@ struct InsightsView: View {
         .padding(.top, 20)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear { model.refresh() }
-        // New dictation / Delete All both change the entry count; day
-        // aggregates only ever change alongside it. Nothing here recomputes
-        // while the user is elsewhere (Home search never touches this).
         .onChange(of: history.entries.count) { _, _ in model.refresh() }
     }
 
@@ -48,11 +38,6 @@ struct InsightsView: View {
 
 }
 
-// MARK: - Card chrome
-
-/// The shared Insights card: panel fill, hairline, a plain title, content.
-/// Titles carry the whole story — no explainer captions (they read as noise;
-/// the data is the explanation).
 private struct InsightsCard<Content: View, Accessory: View>: View {
     let title: String
     let accessory: Accessory
@@ -88,14 +73,12 @@ private struct InsightsCard<Content: View, Accessory: View>: View {
     }
 }
 
-/// Cards without a header accessory (the common case) omit the slot entirely.
 extension InsightsCard where Accessory == EmptyView {
     init(title: String, @ViewBuilder content: () -> Content) {
         self.init(title: title, accessory: { EmptyView() }, content: content)
     }
 }
 
-/// A second in-card heading (When you speak, under Where you dictate).
 private struct CardSubhead: View {
     let title: String
 
@@ -107,13 +90,6 @@ private struct CardSubhead: View {
     }
 }
 
-// MARK: - Hero trio
-
-/// The three headline numbers, glanceable at the top of the page — personal
-/// records, not lifetime totals (those live on Home). Each is a best the user
-/// can beat: most in a day, longest take, fastest day. All are Polish-free, so
-/// the trio holds up whether or not Polish is on. Big serif numeral, one
-/// sentence-case line beneath — no eyebrow, no second detail row.
 private struct HeroRow: View {
     let snapshot: InsightsModel.Snapshot
 
@@ -167,13 +143,9 @@ private struct HeroStat: View {
     }
 }
 
-// MARK: - Activity (wide)
-
 private struct ActivityCard: View {
     @ObservedObject var model: InsightsModel
 
-    /// The day the cursor is over, plus its grid position, so the tooltip can
-    /// anchor to that exact square. `nil` when the cursor is off the grid.
     @State private var hover: HoverInfo?
 
     private struct HoverInfo: Equatable {
@@ -196,8 +168,6 @@ private struct ActivityCard: View {
         var id: Int { col }
     }
 
-    // The paging control rides in the shared card's header accessory slot,
-    // opposite the "Activity" title.
     var body: some View {
         InsightsCard(title: "Activity") {
             if model.snapshot.canPageBack || model.snapshot.canPageForward {
@@ -218,8 +188,6 @@ private struct ActivityCard: View {
                             emptyInvite
                         }
                     }
-                    // Center the stat group against the grid so it reads as a
-                    // balanced pair, not a cluster pinned to the month axis.
                     .frame(maxHeight: .infinity, alignment: .center)
                 }
                 .onAppear { fitWeeks(to: geo.size.width) }
@@ -232,10 +200,6 @@ private struct ActivityCard: View {
         }
     }
 
-    // MARK: Paging
-
-    /// Month range + ‹ › — shown only when history runs past one window. Arrows
-    /// grey out at the ends (offset 0 = today; oldest page = first activity).
     private var paging: some View {
         HStack(spacing: 10) {
             Text(model.snapshot.windowRange)
@@ -268,11 +232,6 @@ private struct ActivityCard: View {
         .modifier(PointingHandCursor())
     }
 
-    /// The heatmap fills the row: as many week-columns as fit beside the
-    /// streak column, so the grid always reaches the stats instead of stopping
-    /// short and stranding a gap. Capped at 53 (a year) for very wide windows;
-    /// floored at 8 so it never collapses. Older history is reached by paging,
-    /// not by shrinking the window.
     private func fitWeeks(to width: CGFloat) {
         let available = width - Self.streakColumnWidth - Self.hGap
         let perWeek = Self.cellSize + Self.cellGap
@@ -280,18 +239,12 @@ private struct ActivityCard: View {
         model.setWeekCount(min(53, max(8, weeks)))
     }
 
-    // MARK: Heatmap + axis
-
     private var heatmap: some View {
         HStack(alignment: .top, spacing: Self.cellGap) {
             ForEach(Array(model.snapshot.heatmapWeeks.enumerated()), id: \.offset) { col, week in
                 VStack(spacing: Self.cellGap) {
                     ForEach(Array(week.enumerated()), id: \.element.date) { row, cell in
                         heatCell(cell)
-                            // Instant, unlike the system `.help` tooltip's ~1.5s
-                            // delay — the number should appear the moment you're
-                            // on a square. Clearing is guarded so the fast move
-                            // between two squares doesn't blank the new one.
                             .onHover { inside in
                                 if inside {
                                     hover = HoverInfo(cell: cell, col: col, row: row)
@@ -324,12 +277,6 @@ private struct ActivityCard: View {
             .accessibilityLabel(cellHelp(cell))
     }
 
-    // MARK: Hover tooltip
-
-    /// The floating bubble anchored above the hovered square. Bottom-anchored to
-    /// the grid so it grows upward off a known point without measuring its own
-    /// height; left edge tracks the square's column. `allowsHitTesting(false)`
-    /// so it never steals the hover from the cell underneath.
     @ViewBuilder private var tooltipOverlay: some View {
         if let hover {
             let step = Self.cellSize + Self.cellGap
@@ -371,13 +318,8 @@ private struct ActivityCard: View {
         .shadow(color: Elevation.card, radius: 8, y: 2)
     }
 
-    /// "Deeper ink, more words" — the accent-over-chip ramp, mirrored exactly
-    /// by the legend below so the color scale is spelled out, not guessed.
     private static let levelOpacity: [Double] = [0, 0.22, 0.45, 0.70, 1.0]
 
-    /// Month abbreviations along the top of the grid — a column gets a label
-    /// when its first day lands in a new month, so the timeline reads at a
-    /// glance without weekday-aligning the grid.
     private var monthMarkers: [MonthMark] {
         let calendar = Calendar.current
         var marks: [MonthMark] = []
@@ -407,8 +349,6 @@ private struct ActivityCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// Two-line tooltip: the day, then what happened on it — the "hover to
-    /// understand a given day" ask, answered with words *and* dictation count.
     private func cellHelp(_ cell: InsightsMath.HeatCell) -> String {
         let day = cell.date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
         let heading = day + (cell.isToday ? " · Today" : "")
@@ -417,10 +357,6 @@ private struct ActivityCard: View {
         return "\(heading)\n\(cell.words.formatted()) words · \(cell.dictations) \(unit)"
     }
 
-    // MARK: Legend
-
-    /// Spells out the intensity ramp the squares encode (the ring on today's
-    /// square is self-evident and needs no legend entry).
     private var legend: some View {
         HStack(spacing: 8) {
             Text("Less")
@@ -446,8 +382,6 @@ private struct ActivityCard: View {
             .fill(Color.chip)
             .frame(width: 12, height: 12)
     }
-
-    // MARK: Streak column
 
     private var streakStats: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -487,21 +421,12 @@ private struct ActivityCard: View {
     }
 }
 
-// MARK: - Shared bar row
-
-/// The horizontal bar the two list cards share: label · track · value.
-/// Fractions are relative to the list's own maximum, so the top row always
-/// reads full.
 private struct HBar: View {
     let label: String
     let fraction: Double
     let value: String
     var ghost = false
-    /// Optional leading mark (the app icon on the "Where you dictate" rows).
     var icon: Image?
-    /// True when `icon` is an SF Symbol fallback rather than a real app icon.
-    /// Real icons ship with transparent padding; symbols fill their box, so we
-    /// inset them to match the surrounding icons' visual weight.
     var iconIsSymbol = false
 
     var body: some View {
@@ -540,12 +465,9 @@ private struct HBar: View {
     }
 }
 
-// MARK: - Your favorite words
-
 private struct WordsCard: View {
     let snapshot: InsightsModel.Snapshot
 
-    /// Below this many words this month the counts are noise, not habits.
     private static let minTokensForWords = 200
 
     var body: some View {
@@ -570,15 +492,11 @@ private struct WordsCard: View {
     }
 }
 
-// MARK: - Where you dictate + When you speak
-
 private struct WhereWhenCard: View {
     let snapshot: InsightsModel.Snapshot
 
-    /// The 2-hour bin the pointer is over, if any — drives the hover tooltip.
     @State private var hourHover: Int?
 
-    /// Below this many dictations in the window, the histogram is confetti.
     private static let minDictationsForHours = 5
 
     var body: some View {
@@ -616,11 +534,6 @@ private struct WhereWhenCard: View {
         snapshot.windowDictations >= Self.minDictationsForHours
     }
 
-    /// The real app icon via Launch Services, cached per bundle ID. The
-    /// "Other" bucket (nil) gets a generic grid glyph standing in for the
-    /// long tail of apps; uninstalled apps get a quiet dashed glyph.
-    /// Returns the mark and whether it's an SF Symbol fallback (so the row can
-    /// inset it to match real icons' padding).
     private static var iconCache: [String: (image: Image, isSymbol: Bool)] = [:]
     private static func appIcon(bundleID: String?) -> (image: Image, isSymbol: Bool) {
         guard let bundleID else { return (Image(systemName: "square.grid.2x2"), true) }
@@ -635,8 +548,6 @@ private struct WhereWhenCard: View {
         return mark
     }
 
-    // The peak speaks for itself — the one full-accent bar — so there's no
-    // caption spelling it out.
     private var peakBin: Int? {
         guard let maxCount = snapshot.hourBins.max(), maxCount > 0 else { return nil }
         return snapshot.hourBins.firstIndex(of: maxCount)
@@ -649,8 +560,6 @@ private struct WhereWhenCard: View {
         return HStack(alignment: .bottom, spacing: 4) {
             ForEach(0..<12, id: \.self) { i in
                 let fraction = hasHourData ? Double(bins[i]) / Double(maxCount) : Self.ghostHeights[i]
-                // A full-height clear column is the hover target, so the pointer
-                // catches the whole time slot — not just the (often tiny) bar.
                 Color.clear
                     .frame(maxWidth: .infinity)
                     .frame(height: 56)
@@ -665,10 +574,6 @@ private struct WhereWhenCard: View {
                         if inside { hourHover = i }
                         else if hourHover == i { hourHover = nil }
                     }
-                    // Bottom-anchored like the heatmap tooltip: grows upward off
-                    // the column's bottom without measuring its own height. The
-                    // outermost columns anchor to their inner edge so the full
-                    // tooltip width can't spill past the card's clip.
                     .overlay(alignment: Self.hourTooltipAlignment(i)) {
                         if hourHover == i {
                             hourTooltip(i)
@@ -681,9 +586,6 @@ private struct WhereWhenCard: View {
         .frame(height: 56, alignment: .bottom)
     }
 
-    // Center the tooltip on its bar, except at the two ends where a centered,
-    // full-width bubble would overflow the card and get clipped — those anchor
-    // to the chart's edge and grow inward instead.
     private static func hourTooltipAlignment(_ i: Int) -> Alignment {
         switch i {
         case 0, 1: return .bottomLeading
@@ -714,7 +616,6 @@ private struct WhereWhenCard: View {
         .shadow(color: Elevation.card, radius: 8, y: 2)
     }
 
-    /// The 2-hour span a bin covers, e.g. "12–2 AM" or "10 PM – 12 AM".
     private static func binTimeRange(_ i: Int) -> String {
         let start = clockLabel(i * 2)
         let end = clockLabel((i * 2 + 2) % 24)
@@ -729,7 +630,6 @@ private struct WhereWhenCard: View {
         return (h == 0 ? 12 : h, meridiem)
     }
 
-    /// Quiet placeholder silhouette while there's too little data to mean much.
     private static let ghostHeights: [Double] = [0.12, 0.2, 0.3, 0.42, 0.55, 0.65, 0.72, 0.65, 0.55, 0.42, 0.3, 0.2]
 
     private func barColor(bin: Int, isPeak: Bool) -> Color {

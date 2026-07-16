@@ -2,11 +2,6 @@ import XCTest
 import SwiftData
 @testable import InkIt
 
-/// Pins the durable daily-aggregate contract: per-day upserts, local-day
-/// keying, the one-time seed from existing history, and — the product
-/// promise — that a typed Delete All on transcripts leaves the aggregates
-/// standing. In-memory containers and an ephemeral defaults suite; no
-/// singletons, no disk.
 @MainActor
 final class UsageAggregateStoreTests: XCTestCase {
 
@@ -37,8 +32,6 @@ final class UsageAggregateStoreTests: XCTestCase {
                                                    hour: hour, minute: minute))!
     }
 
-    // MARK: Upserts
-
     func testSameDayRecordsUpsertIntoOneRow() throws {
         let store = UsageAggregateStore(container: try makeContainer(),
                                         isPersistent: true, defaults: defaults)
@@ -66,8 +59,6 @@ final class UsageAggregateStoreTests: XCTestCase {
         XCTAssertEqual(store.days.map(\.words), [10, 20], "days mirror stays oldest-first")
     }
 
-    // MARK: Delete All survival
-
     func testTranscriptDeleteAllLeavesAggregates() throws {
         let container = try makeContainer()
         let context = container.mainContext
@@ -81,7 +72,6 @@ final class UsageAggregateStoreTests: XCTestCase {
                                         isPersistent: true, defaults: defaults)
         XCTAssertEqual(store.days.first?.words, 3, "seeded from the existing row")
 
-        // The exact wipe TranscriptHistoryStore.clear() performs.
         try context.delete(model: TranscriptRecord.self)
         try context.save()
 
@@ -92,12 +82,9 @@ final class UsageAggregateStoreTests: XCTestCase {
         XCTAssertEqual(survivors.first?.words, 3)
     }
 
-    // MARK: Seeding
-
     func testSeedFoldsHistoryIntoDays() throws {
         let container = try makeContainer()
         let context = container.mainContext
-        // A legacy row (no wordCount → counted from text) and a new-style row.
         context.insert(TranscriptRecord(entry: .init(text: "one two three",
                                                      timestamp: at(hour: 9, day: 10),
                                                      latency: nil, original: nil,
@@ -133,8 +120,6 @@ final class UsageAggregateStoreTests: XCTestCase {
                                         isPersistent: true, defaults: defaults)
         XCTAssertEqual(first.days.first?.words, 2)
 
-        // "Second launch" against the same container + defaults: the seeded
-        // flag must prevent double-counting.
         let second = UsageAggregateStore(container: container,
                                          isPersistent: true, defaults: defaults)
         XCTAssertEqual(second.days.count, 1)
@@ -148,7 +133,6 @@ final class UsageAggregateStoreTests: XCTestCase {
                                                      latency: nil, original: nil,
                                                      polish: nil, failure: nil)))
         try context.save()
-        // Un-migrated legacy blob still present → seeding must hold off.
         defaults.set(Data("[]".utf8), forKey: "transcriptHistory.v1")
 
         let store = UsageAggregateStore(container: container,

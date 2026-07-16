@@ -35,13 +35,6 @@ final class TranscriptRewriter {
         self.session = URLSession(configuration: config)
     }
 
-    /// Opens the TLS/TCP connection to the provider host ahead of the real
-    /// polish POST so the hot-path request reuses a warm pooled connection —
-    /// saving DNS + TCP + TLS setup (roughly one extra round trip) on what is
-    /// otherwise a cold connection per dictation. Fire this at key-press; the
-    /// response is intentionally discarded (a 404/405 still warms the
-    /// connection). Reusing *this same instance's* `session` for the later
-    /// polish call is what makes the warm connection land in the pool.
     func prewarm() {
         guard !apiKey.isEmpty else { return }
         var req = URLRequest(url: provider.endpoint)
@@ -51,8 +44,6 @@ final class TranscriptRewriter {
         session.dataTask(with: req) { _, _, _ in }.resume()
     }
 
-    /// Rewrites the transcript: strips filler, fixes homophones and obvious ASR
-    /// slips, and applies light formatting. No on-screen context is used.
     func rewriteWithoutContext(transcript: String,
                                timeout: TimeInterval? = nil,
                                runID: String? = nil) async -> Result<String, RewriteFailure> {
@@ -66,8 +57,6 @@ final class TranscriptRewriter {
         ]
         return await call(system: system, transcript: transcript, model: self.model, timeout: timeout ?? provider.rewriteTimeout, label: "plain", runID: runID)
     }
-
-    // MARK: - Shared HTTP plumbing
 
     private func call(system: [[String: Any]], transcript: String, model: String, timeout: TimeInterval, label: String, runID: String?) async -> Result<String, RewriteFailure> {
         let estimatedInputTokens = max(48, transcript.count / 3)
@@ -84,7 +73,6 @@ final class TranscriptRewriter {
 
         if provider.isOpenAICompatible {
             req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-            // Flatten the Anthropic-style system blocks into one system message.
             let systemText = system.compactMap { $0["text"] as? String }.joined(separator: "\n\n")
             var openAIBody: [String: Any] = [
                 "model": model,
@@ -96,9 +84,6 @@ final class TranscriptRewriter {
                 ],
             ]
             if provider == .groq {
-                // gpt-oss is a reasoning model: minimal effort, and keep the
-                // thinking text out of the response content. Groq-only — other
-                // providers reject unknown params.
                 openAIBody["reasoning_effort"] = "low"
                 openAIBody["reasoning_format"] = "hidden"
             }
@@ -154,8 +139,6 @@ final class TranscriptRewriter {
                 DebugLog.error("Rewriter[\(label)] response parse failed elapsed=\(elapsed)")
                 return .failure(.unknown)
             }
-            // gpt-oss likes U+202F/U+00A0 no-break spaces ("3 pm") — invisible
-            // in pasted text and unsearchable; normalize to plain spaces.
             let cleaned = text
                 .replacingOccurrences(of: "\u{202F}", with: " ")
                 .replacingOccurrences(of: "\u{00A0}", with: " ")
@@ -175,9 +158,6 @@ final class TranscriptRewriter {
         }
     }
 
-    // MARK: - Error classification
-
-    /// Maps an HTTP status (and headers, for Retry-After) to a user-facing reason.
     private static func failure(forStatus status: Int, headers: [AnyHashable: Any]?) -> RewriteFailure {
         switch status {
         case 429:
@@ -195,7 +175,6 @@ final class TranscriptRewriter {
         }
     }
 
-    /// Maps a thrown URLError to a user-facing reason (timeout vs offline).
     private static func failure(forURLError error: Error) -> RewriteFailure {
         guard let urlError = error as? URLError else { return .unknown }
         switch urlError.code {
@@ -209,8 +188,6 @@ final class TranscriptRewriter {
         }
     }
 
-    /// Parses a `Retry-After` header (seconds, or an HTTP date) into an absolute
-    /// retry time. nil if absent or unparseable.
     private static func retryAt(from headers: [AnyHashable: Any]?) -> Date? {
         guard let raw = headers?["Retry-After"] as? String else { return nil }
         if let seconds = TimeInterval(raw.trimmingCharacters(in: .whitespaces)) {
@@ -221,8 +198,6 @@ final class TranscriptRewriter {
         fmt.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
         return fmt.date(from: raw)
     }
-
-    // MARK: - Static prompt
 
     private static let instructions: String = """
     You are a transcription cleaner, not an assistant. Repair speech-to-text errors in <transcript> and output only the corrected text.

@@ -40,9 +40,6 @@ enum STTFailure: Equatable {
         }
     }
 
-    /// Classify from a Cartesia error event. `error_code` is the most reliable
-    /// signal (credits come back as quota_exceeded / plan_upgrade_required), then
-    /// the HTTP `status_code`.
     static func classify(statusCode: Int?, errorCode: String?) -> STTFailure {
         switch errorCode {
         case "quota_exceeded", "plan_upgrade_required": return .outOfCredits
@@ -58,8 +55,6 @@ enum STTFailure: Equatable {
         }
     }
 
-    /// Classify a transport error: prefer the HTTP status on a failed WebSocket
-    /// upgrade, else map the URLError (offline vs. server/timeout).
     static func classify(transportError error: Error, response: URLResponse?) -> STTFailure {
         if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
             return classify(statusCode: http.statusCode, errorCode: nil)
@@ -161,27 +156,16 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
         Data(count: sampleRate * 2 * Self.finalizeSilenceMs / 1000)
     }
 
-    /// Request close. Per the STT docs, the server processes all buffered audio
-    /// into events — emitting a final `turn.end` with the last word — and then
-    /// disconnects. We therefore complete on that final `turn.end` (see
-    /// `handleMessage`) or on the socket close, whichever lands first; the timer
-    /// below is only a fallback for a socket that never finishes.
     func finalizeAndClose() {
         guard let task, !hasClosed else { onClosed?(joinedTranscript()); return }
         stateLock.lock()
         let connected = isConnected
         if !connected { pendingClose = true }
         awaitingClose = true
-        // If nothing has been transcribed yet, there's no trailing word to
-        // protect — the long flush window only exists to catch the final
-        // `turn.end`. Collapse fast in that case so silent presses don't leave
-        // the "Done" pill hanging for the full grace period.
         let hasContent = !completedTurns.isEmpty || !currentTurn.isEmpty
         stateLock.unlock()
         let fallback: TimeInterval = hasContent ? 3.0 : 2.0
         if !connected {
-            // Defer the close until buffered audio has been flushed in
-            // `handleConnected()`. The fallback timer below still fires.
             scheduleCloseFallback(after: fallback)
             return
         }
@@ -191,10 +175,6 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
         scheduleCloseFallback(after: fallback)
     }
 
-    /// Fallback only: guarantees we don't hang if the server never emits a final
-    /// `turn.end` or closes the socket. The happy path completes earlier, on the
-    /// final `turn.end` or `didCloseWith`. The delay is shortened when no
-    /// transcript content was received, since there's no last word to wait for.
     private func scheduleCloseFallback(after delay: TimeInterval) {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self, !self.hasClosed else { return }
@@ -204,13 +184,7 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
 
     func cancel() { finishClose(reason: .externalCancel) }
 
-    /// `reportClosed: false` finishes the session WITHOUT firing `onClosed` — used
-    /// on error paths, which already reported via `onError`. Otherwise the error's
-    /// close would also deliver an (empty) transcript to `onClosed`, and the
-    /// coordinator would reset its state to `.idle`, wiping the error notice.
     private func finishClose(reason: CloseReason, reportClosed: Bool = true) {
-        // Atomic so the final `turn.end` and the socket close racing to finish
-        // can't both report `onClosed`.
         stateLock.lock()
         if hasClosed { stateLock.unlock(); return }
         hasClosed = true
@@ -222,38 +196,6 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
         if reportClosed { onClosed?(joinedTranscript()) }
     }
 
-    /// Resolve a terminal failure into one of three outcomes, in priority order:
-    ///
-    /// 1. A failure we can *name* (offline, server 5xx, rate-limited, out of
-    ///    credits, invalid key) → surface it via `onError` so the user gets an
-    ///    actionable notch notice.
-    /// 2. An *unexplained* ending (`.unknown`) when we already have transcript
-    ///    content → deliver the words and finish, exactly like a normal release.
-    ///    We don't actually know anything broke, so we don't cry wolf over work
-    ///    that's already done. (the graceful-goodbye case)
-    /// 3. An unexplained ending with no content → the user simply said nothing;
-    ///    collapse to the clean empty-transcript path, no notch error. (the
-    ///    silent / too-short press case)
-    ///
-    /// The key invariant: only a *named* failure ever shows an error. `.unknown`
-    /// never does — it delivers whatever we have, or stays quiet. That covers
-    /// every flavor of benign disconnect uniformly (POSIX ENOTCONN/EPIPE/
-    /// ECONNRESET, a normal WebSocket close 1000/1001 that races the receive
-    /// loop, an unclassified 400) without enumerating each one. The only thing
-    /// that slips through silently is an *unexplained* mid-stream failure with
-    /// partial content — rare, since genuine transport drops classify as
-    /// `.offline`/`.serverError` and still surface.
-    ///
-    /// One carve-out: a `.serverError` after close was already requested, with
-    /// no transcript content. That's the rapid tap-and-release — the server
-    /// answers a ~zero-audio session's close with a 500 instead of an empty
-    /// turn (the 400 flavor of the same press already collapses via the
-    /// `.unknown` path). The user has released and nothing was said, so
-    /// "Server error" is alarming and non-actionable; collapse to the clean
-    /// empty path instead. A 5xx mid-hold, or one with words in hand, still
-    /// surfaces.
-    // `internal` (not `private`) so the decision can be unit-tested directly via
-    // `@testable import` without standing up a live WebSocket.
     func reportFailureOrCollapse(_ failure: STTFailure, errorReason: CloseReason) {
         stateLock.lock()
         let hasContent = !completedTurns.isEmpty || !currentTurn.isEmpty
@@ -274,8 +216,6 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
         finishClose(reason: hasContent ? .serverClosed : .silentNoAudio, reportClosed: true)
     }
 
-    // MARK: - Receive loop
-
     private func receive() {
         task?.receive { [weak self] result in
             guard let self else { return }
@@ -285,13 +225,6 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
                     let ns = error as NSError
                     let httpStatus = (self.task?.response as? HTTPURLResponse)?.statusCode
                     DebugLog.info("receive failure: domain=\(ns.domain) code=\(ns.code) http=\(httpStatus.map(String.init) ?? "nil") desc=\(ns.localizedDescription)")
-                    // A normal server close (WebSocket 1000/1001) races the pending
-                    // receive and surfaces here as a benign POSIX disconnect
-                    // (ENOTCONN/EPIPE/ECONNRESET) rather than a real transport
-                    // error — it classifies as `.unknown`, which reportFailureOrCollapse
-                    // resolves by delivering whatever transcript we have (graceful
-                    // goodbye) or finishing silently (said nothing). Only a *named*
-                    // transport failure ever surfaces as an error.
                     self.reportFailureOrCollapse(
                         STTFailure.classify(transportError: error, response: self.task?.response),
                         errorReason: .receiveFailed
@@ -309,7 +242,6 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
-    // `internal` so tests can inject transcript content by feeding turn events.
     func handleMessage(_ text: String) {
         guard let data = text.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -319,7 +251,6 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
 
         switch type {
         case "turn.update", "turn.eager_end":
-            // Cumulative transcript for the in-progress turn.
             stateLock.lock()
             currentTurn = (json["transcript"] as? String) ?? currentTurn
             stateLock.unlock()
@@ -333,14 +264,9 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
             let closing = awaitingClose
             stateLock.unlock()
             onTranscriptUpdate?(joinedTranscript())
-            // Once we've requested close, this is the flushed final turn carrying
-            // the last word. Complete here so we snapshot the full transcript
-            // instead of racing the socket close (which may report before this
-            // event is processed).
             if closing { finishClose(reason: .finalTurnReceived) }
 
         case "turn.resume":
-            // User continued a previously "eagerly ended" turn; keep current state.
             break
 
         case "connected":
@@ -350,23 +276,10 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
             break
 
         case "error":
-            // Cartesia error events carry a required `status_code` and an optional
-            // `error_code` (e.g. quota_exceeded, concurrency_limited) — classify
-            // off those rather than the human-readable message.
             let status = json["status_code"] as? Int
             let code = json["error_code"] as? String
             let msg = (json["message"] as? String) ?? (json["title"] as? String) ?? "Cartesia error"
             DebugLog.info("STT error event: status=\(status.map(String.init) ?? "nil") code=\(code ?? "nil") msg=\(msg)")
-            // A too-short / silent press can make Cartesia reject the session with
-            // a 400 — or, on the ~zero-audio instant-close path, a 500 — instead
-            // of returning an empty turn. That's not a failure the user should
-            // see ("Couldn't transcribe" / "Server error" reads as something
-            // broke) — it just means they said nothing. reportFailureOrCollapse
-            // forgives both flavors when no transcript content ever arrived (the
-            // 400 via `.unknown`, the 500 via the post-close carve-out) and
-            // collapses to the clean empty-transcript path (onClosed → idle, no
-            // notch error). Real failures (401/402/429, a mid-hold 5xx, or any
-            // error after partial content) still report via onError.
             reportFailureOrCollapse(
                 STTFailure.classify(statusCode: status, errorCode: code),
                 errorReason: .serverError
@@ -377,11 +290,6 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
-    /// Called when the server emits `connected`. Flushes any audio captured
-    /// during the handshake, then (if the user already released the hotkey)
-    /// sends the deferred close. Order matters: audio must be queued onto the
-    /// task BEFORE the close frame, and BEFORE we unset `isConnected`'s gate
-    /// so concurrent `sendAudio` callers don't race ahead of the buffer.
     private func handleConnected() {
         guard let task else { return }
         stateLock.lock()
@@ -413,8 +321,6 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    // MARK: - URLSessionWebSocketDelegate
-
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
                     didCloseWith closeCode: URLSessionWebSocketTask.CloseCode,
                     reason: Data?) {
@@ -423,12 +329,6 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
         finishClose(reason: .serverClosed)
     }
 
-    /// A rejected WebSocket *upgrade* — invalid/expired key, over credit limit,
-    /// rate limited — is delivered here, not through `receive()`. Without this
-    /// the failure is swallowed and the session ends silently (no notch error).
-    /// The HTTP status on `task.response` carries the cause; fall back to the
-    /// URLError. Guarded so the happy-path completion and `receive()`'s own
-    /// failure handling don't double-report.
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         guard !hasClosed else { return }
         if let error {
@@ -489,7 +389,6 @@ enum SessionMetrics {
         return arr
     }
 
-    /// Human-readable summary for a debug menu or log dump.
     static func summary() -> String {
         let all = load()
         guard !all.isEmpty else { return "No sessions recorded yet." }

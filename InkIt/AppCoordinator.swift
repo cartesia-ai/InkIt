@@ -8,8 +8,6 @@ enum DictationState: Equatable {
     case finalizing
     case rewriting
     case pasting
-    /// No editable field was focused at release, so the transcript was kept in
-    /// History instead of pasted. A brief, self-clearing confirmation state.
     case heldInHistory
     case error(String)
 }
@@ -20,11 +18,6 @@ final class AppCoordinator: ObservableObject {
     @Published private(set) var lastError: String?
     @Published private(set) var liveTranscript: String = ""
     @Published private(set) var inputLevel: Float = 0
-    /// Whether the input device is actually capturing yet. False for the brief
-    /// window after the hotkey while the mic comes up (notably the Bluetooth
-    /// A2DP→HFP profile switch, ~200–500ms). The HUD shows a "preparing" cue
-    /// until this flips true, so the user doesn't speak into the dead gap and
-    /// lose their first words. See `AudioCaptureService.onReady`.
     @Published private(set) var audioReady: Bool = false
 
     private let audio = AudioCaptureService()
@@ -38,37 +31,16 @@ final class AppCoordinator: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var hadAccessibility = false
     private var isHotkeyRegistered = false
-    /// When the dictation hot path last routed the user to Accessibility
-    /// Settings. Mashing the key — or pressing again after clicking Deny —
-    /// must not yank System Settings to the front on every press, so we
-    /// re-open it at most once per `accessibilityPromptThrottle`. The HUD
-    /// error still shows every time.
     private var lastAccessibilityPrompt: Date?
     private let accessibilityPromptThrottle: TimeInterval = 10
     private var lastExternalApp: NSRunningApplication?
     private var pasteTargetApp: NSRunningApplication?
     private var contextTargetSnapshot: TargetAppSnapshot?
     private var routesFinalTranscriptToOnboarding = false
-    /// Transcribe latency of the most recent trial take (the trial neither
-    /// polishes nor pastes, so transcribe is the whole story). Captured so the
-    /// onboarding Try-it step can persist it alongside the saved transcript,
-    /// letting Home's "avg time to text" show a real number on first landing.
     private(set) var lastTrialLatency: TranscriptHistoryStore.Latency?
-    /// Speech duration of the most recent trial take (press → release), the
-    /// trial-path counterpart of the `recordingMs` captured for normal
-    /// dictations, so practice rows carry the same usage metadata.
     private(set) var lastTrialRecordingMs: Int?
-    /// Monotonic timestamp of the most recent hotkey release, used as the
-    /// anchor for per-dictation latency measurements.
     private var releaseTime: DispatchTime?
-    /// Monotonic timestamp of the most recent hotkey press (recording start),
-    /// paired with `releaseTime` to measure how long the user spoke
-    /// (`recordingMs` on the history entry).
     private var recordingStartTime: DispatchTime?
-    /// LLM session connection-warmed at key-press so its TLS/TCP setup overlaps
-    /// the time the user spends speaking, instead of landing on the critical
-    /// path after release. Consumed once in `correctedTranscript` and reset on
-    /// every `startDictation`.
     private var warmRewriter: TranscriptRewriter?
 
     #if DEBUG
@@ -94,8 +66,6 @@ final class AppCoordinator: ObservableObject {
         audio.onReady = { [weak self] in
             Task { @MainActor in self?.audioReady = true }
         }
-        // Show the notch HUD only after the user has completed onboarding,
-        // so it doesn't compete with the first-launch window.
         refreshHUD()
         settings.$hasCompletedOnboarding
             .receive(on: DispatchQueue.main)
@@ -120,12 +90,6 @@ final class AppCoordinator: ObservableObject {
             .store(in: &cancellables)
     }
 
-    /// `didActivateApplicationNotification` fires only on app transitions. If
-    /// the user holds Fn while InkIt is frontmost before ever Cmd-Tabbing
-    /// away, `lastExternalApp` stays nil and `pasteTargetApp` resolves to
-    /// nil. Seed from the current frontmost (if non-InkIt) or the first
-    /// non-InkIt regular running app so the fallback chain always has
-    /// something usable.
     private func seedLastExternalApp() {
         let ownBundleID = Bundle.main.bundleIdentifier
         if let front = NSWorkspace.shared.frontmostApplication, front.bundleIdentifier != ownBundleID {
@@ -168,8 +132,6 @@ final class AppCoordinator: ObservableObject {
         }
         permissions.startPolling()
         hadAccessibility = permissions.hasAccessibility
-        // When Accessibility flips on, re-register so the Fn binding can
-        // upgrade from the passive monitor to the suppressing event tap.
         permissions.$hasAccessibility
             .receive(on: DispatchQueue.main)
             .sink { [weak self] hasAX in
@@ -180,11 +142,6 @@ final class AppCoordinator: ObservableObject {
                     self.registerHotkey()
                 } else if !hasAX && self.hadAccessibility {
                     self.hadAccessibility = false
-                    // Accessibility was revoked mid-session, which kills the Fn
-                    // CGEventTap. Re-register so the binding downgrades to the
-                    // passive monitor instead of leaving a dead tap that silently
-                    // swallows key presses. When AX is restored the branch above
-                    // upgrades back to the suppressing tap.
                     if self.isHotkeyRegistered { self.registerHotkey() }
                 }
             }
@@ -222,16 +179,11 @@ final class AppCoordinator: ObservableObject {
         routesFinalTranscriptToOnboarding = false
         if !settings.hasCompletedOnboarding {
             unregisterHotkey()
-            // Tear the HUD back down so it doesn't linger over the remaining
-            // onboarding steps; refreshHUD re-creates it once onboarding completes.
             hud?.dismiss()
             hud = nil
         }
     }
 
-    /// Hotkey press. In hold mode this starts dictation (release stops it). In
-    /// hands-free mode a press flips recording on or off, so the next press is
-    /// what stops and pastes — just like releasing the key in hold mode.
     private func handleHotkeyPress() {
         switch settings.dictationMode {
         case .hold:
@@ -246,13 +198,9 @@ final class AppCoordinator: ObservableObject {
         }
     }
 
-    /// Hotkey release. Only hold mode acts on release; in hands-free mode the
-    /// next press is what stops recording, so a release is ignored.
     private func handleHotkeyRelease() {
         guard settings.dictationMode == .hold else { return }
         isHotkeyHeld = false
-        // An error shown during the hold has been held on screen; now that the
-        // user has finished, give it a clean dwell from release, then it clears.
         if case .error = state {
             armErrorDismiss()
             return
@@ -261,11 +209,6 @@ final class AppCoordinator: ObservableObject {
     }
 
     func startDictation() {
-        // Start not just from idle but from the brief unhappy-path notices
-        // (held-in-history, error): pressing the hotkey during one of those
-        // clearly means "let me dictate again," so don't block it (which also
-        // stopped the dead key-press from triggering the system error beep). A
-        // dictation actually in flight still guards against a double-start.
         switch state {
         case .idle, .heldInHistory, .error: break
         default: return
@@ -283,12 +226,6 @@ final class AppCoordinator: ObservableObject {
             return
         }
         guard permissions.hasAccessibility else {
-            // Mirror the microphone-denied experience: surface the HUD error and
-            // route the user to fix it. requestAccessibility fires the system
-            // "InkIt would like to control this computer" prompt and opens the
-            // Accessibility pane. Throttle the Settings re-open so mashing the
-            // key (or pressing again after Deny) doesn't yank it to the front
-            // on every press — the HUD error below still nudges every time.
             setError("Accessibility needed")
             let now = Date()
             let shouldPrompt = lastAccessibilityPrompt
@@ -308,20 +245,8 @@ final class AppCoordinator: ObservableObject {
         if settings.playFeedbackSounds { FeedbackSoundPlayer.shared.playStart() }
         let frontmostApp = NSWorkspace.shared.frontmostApplication
         let ownBundleID = Bundle.main.bundleIdentifier
-        // The onboarding trial box should only capture dictation when InkIt
-        // itself is frontmost — i.e. the user is actually looking at the box.
-        // If they've clicked into another app, behave like normal dictation
-        // and paste at their real cursor; otherwise the box silently swallows
-        // text meant for whatever they were focused on.
         let routeToOnboardingBox = routesFinalTranscriptToOnboarding
             && frontmostApp?.bundleIdentifier == ownBundleID
-        // The trial box never shows interim transcript. While dictating into
-        // another app the box must stay empty (the final text pastes at the real
-        // cursor, and the preview must not leak into a box they aren't looking
-        // at). And even when routed to the box itself, we deliberately hold the
-        // words back until release — they land all at once when the final
-        // transcript arrives in onClosed, rather than flickering in word-by-word.
-        // That makes the reveal feel like a result, not a live caption.
         let suppressLivePreview = routesFinalTranscriptToOnboarding
         pasteTargetApp = {
             if let frontmostApp, frontmostApp.bundleIdentifier != ownBundleID {
@@ -332,30 +257,14 @@ final class AppCoordinator: ObservableObject {
         contextTargetSnapshot = TargetAppSnapshot.capture(from: pasteTargetApp)
         DebugLog.info("startDictation: frontmost=\(frontmostApp?.bundleIdentifier ?? "nil") lastExternal=\(lastExternalApp?.bundleIdentifier ?? "nil") resolvedTarget=\(pasteTargetApp?.bundleIdentifier ?? "nil") targetSnapshot=\(contextTargetSnapshot?.logDescription ?? "nil")")
 
-        // Nudge a Chromium/Electron target (Slack, VS Code, etc.) into building
-        // its full accessible tree now, at press, so its focused textbox is
-        // visible by the time we re-check editability at release. Done lazily by
-        // Chromium otherwise, which makes the release-time check race the tree
-        // and wrongly hold the transcript in History. No-op for native apps.
         if let targetPid = pasteTargetApp?.processIdentifier {
             FocusedEditable.enableWebAccessibility(pid: targetPid)
         }
 
-        // Capture the resolved target and snapshot into the onClosed closure.
-        // Instance state (pasteTargetApp / contextTargetSnapshot) can be wiped
-        // mid-flight by setError or a stale paste callback, which would cause
-        // correctedTranscript to fall back to raw paste even though we had a
-        // perfectly good target at recording start.
         let capturedTargetApp = pasteTargetApp
         let capturedSnapshot = contextTargetSnapshot
-        // Same wipe-proofing for the press timestamp — it anchors the entry's
-        // `recordingMs` (press → release, how long the user spoke).
         let capturedRecordingStart = recordingStartTime
 
-        // Pre-warm the polish LLM connection (DNS+TCP+TLS) at key-press so its
-        // setup overlaps the time the user is still speaking rather than landing
-        // on the critical path after release. Skipped for the onboarding/Home
-        // try box (which never polishes).
         warmRewriter = nil
         if !routeToOnboardingBox,
            settings.correctionEnabled,
@@ -385,8 +294,6 @@ final class AppCoordinator: ObservableObject {
                 guard let self else { return }
                 let transcriptArrived = DispatchTime.now()
                 let release = self.releaseTime
-                // How long the user actually spoke (press → release); nil if
-                // either anchor is missing (e.g. an error wiped the flow).
                 let recordingMs: Int? = {
                     guard let start = capturedRecordingStart, let end = release else { return nil }
                     return Self.elapsedMs(start, end)
@@ -398,20 +305,12 @@ final class AppCoordinator: ObservableObject {
                     self.state = .idle
                     return
                 }
-                // A real transcript came back, so the Cartesia key works and
-                // credits are available: clear any persisted "transcription paused"
-                // state driving the Home card.
                 self.settings.cartesiaKeyInvalid = false
                 self.settings.cartesiaOutOfCredits = false
                 if routeToOnboardingBox {
                     self.pasteTargetApp = nil
                     self.contextTargetSnapshot = nil
                     self.liveTranscript = raw
-                    // The trial is verbatim — no polish, no paste — so the only
-                    // latency that applies is transcribe (release → final text).
-                    // Capture it so the practice card can persist it alongside the
-                    // saved transcript; the card logs the take to history itself on
-                    // send (as `.off`, no diff).
                     self.lastTrialLatency = release.map { start in
                         TranscriptHistoryStore.Latency(
                             transcribeMs: Self.elapsedMs(start, transcriptArrived),
@@ -428,10 +327,6 @@ final class AppCoordinator: ObservableObject {
                     raw: raw,
                     targetSnapshot: capturedSnapshot
                 )
-                // Keep the persisted "key stopped working" state honest: a clean
-                // rewrite clears it; an auth rejection (401/403) sets it so the
-                // Polish settings pane shows the paused/re-enter state instead of
-                // silently pasting raw.
                 if correction.outcome == .polished {
                     self.settings.polishKeyInvalid = false
                     self.settings.polishOutOfCredits = false
@@ -441,12 +336,6 @@ final class AppCoordinator: ObservableObject {
                 }
                 let polishFinished = DispatchTime.now()
 
-                // Re-check at release whether an editable field is actually
-                // focused. The target app was resolved at hotkey press; if the
-                // user clicked a surface with no text field (or focus moved
-                // during dictation), pasting now would fire Cmd+V into the wrong
-                // app or nowhere. In that case hold the transcript in History —
-                // it's still saved and copyable — rather than guess.
                 let focus = await FocusedEditable.current()
                 guard focus.isEditable else {
                     self.pasteTargetApp = nil
@@ -474,8 +363,6 @@ final class AppCoordinator: ObservableObject {
                 }
 
                 self.state = .pasting
-                // Paste into the verified, currently-focused app rather than the
-                // (possibly stale) press-time target.
                 self.paste.paste(text: correction.text, targetApp: focus.app ?? capturedTargetApp) { ok in
                     Task { @MainActor in
                         self.pasteTargetApp = nil
@@ -531,8 +418,6 @@ final class AppCoordinator: ObservableObject {
         client?.finalizeAndClose()
     }
 
-    /// Result of the optional AI-correction pass: the text to paste plus how
-    /// correction turned out, so history can show the right indicator.
     private struct Correction {
         let text: String
         let outcome: TranscriptHistoryStore.PolishOutcome
@@ -540,9 +425,6 @@ final class AppCoordinator: ObservableObject {
         var failure: TranscriptHistoryStore.PolishFailure?
     }
 
-    /// Maps a rewriter result to a `Correction`. `.success` keeps the raw text
-    /// alongside for diffing (even when unchanged); `.failure` falls back to raw
-    /// and records why, so the history row can explain it.
     private static func polishResult(raw: String,
                                      result: Result<String, RewriteFailure>,
                                      provider: LLMProvider) -> Correction {
@@ -570,11 +452,6 @@ final class AppCoordinator: ObservableObject {
         }
     }
 
-    /// Optionally runs the raw transcript through the AI correction pipeline.
-    /// Returns the corrected text and outcome on success, or `raw`/`.off` if
-    /// correction is disabled or skipped, or `raw`/`.failed` if the rewrite
-    /// errored. Never throws — the user must always get at least the raw
-    /// transcript pasted.
     private func correctedTranscript(
         raw: String,
         targetSnapshot: TargetAppSnapshot?
@@ -582,7 +459,6 @@ final class AppCoordinator: ObservableObject {
         let runID = Self.makeCorrectionRunID()
         let enabled = settings.correctionEnabled
         let hasKey = !settings.apiKey(for: settings.rewriteProvider).isEmpty
-        // Single grep-able marker, one row per dictation: which app + outcome.
         let appTag: String = {
             guard let s = targetSnapshot else { return "app=nil bundle=nil" }
             return "app=\(s.localizedName) bundle=\(s.bundleIdentifier ?? "nil")"
@@ -596,8 +472,6 @@ final class AppCoordinator: ObservableObject {
 
         let provider = settings.rewriteProvider
         let apiKey = settings.apiKey(for: provider)
-        // Prefer the connection-warmed rewriter opened at key-press; build a
-        // fresh one only if prewarm was skipped (e.g. settings changed mid-hold).
         let rewriter = warmRewriter ?? TranscriptRewriter(provider: provider, model: settings.rewriteModel, apiKey: apiKey)
         warmRewriter = nil
 
@@ -607,8 +481,6 @@ final class AppCoordinator: ObservableObject {
         return Self.polishResult(raw: raw, result: result, provider: provider)
     }
 
-    /// Briefly surface "Saved to History" (notch + menu bar), then fall back to
-    /// idle. Mirrors `setError`'s self-clearing timer but isn't an error state.
     private func showHeldInHistoryNotice() {
         state = .heldInHistory
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
@@ -618,16 +490,8 @@ final class AppCoordinator: ObservableObject {
         }
     }
 
-    /// Surface a classified STT failure. Every cause gets a brief notch flash
-    /// (via setError → the `.error` notice, self-clearing after 2.5s). The two
-    /// persistent, user-fixable causes also set a flag that drives the Home
-    /// "Transcription is paused" card until the next successful dictation.
-    /// True while the dictation hotkey is physically held (hold mode). Keeps an
-    /// error notice up for the whole press rather than letting it flash by.
     private var isHotkeyHeld = false
 
-    /// The pending `.error` self-clear, cancelable so a release (or a new error)
-    /// can re-arm a fresh dwell. See `armErrorDismiss`.
     private var errorDismissWork: DispatchWorkItem?
 
     private func handleSTTFailure(_ failure: STTFailure) {
@@ -636,10 +500,6 @@ final class AppCoordinator: ObservableObject {
         case .outOfCredits: settings.cartesiaOutOfCredits = true
         default: break
         }
-        // Show the error right away — even mid-hold — so the user finds out
-        // promptly instead of talking into a dead session until they release.
-        // setError's dwell keeps it up while the key is held and clears after
-        // release, so it neither flashes past nor persists.
         setError(failure.notchMessage)
     }
 
@@ -682,7 +542,6 @@ final class AppCoordinator: ObservableObject {
         String(UUID().uuidString.prefix(8))
     }
 
-    /// Whole milliseconds between two monotonic timestamps, clamped at 0.
     private static func elapsedMs(_ start: DispatchTime, _ end: DispatchTime) -> Int {
         guard end.uptimeNanoseconds > start.uptimeNanoseconds else { return 0 }
         return Int((end.uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000)
@@ -690,15 +549,6 @@ final class AppCoordinator: ObservableObject {
 }
 
 #if DEBUG
-/// Debug-only tripwire for a blocked main run loop. A blocked main thread is the
-/// precondition for the bug class this guards: historically the Fn event tap ran
-/// on the main run loop, so any main-thread stall froze modifier keys; the tap
-/// now runs off-main, but heavy synchronous work on main (a hand-rolled AX walk,
-/// say) is still the thing that reintroduces UI hangs. This pings main on a
-/// cadence and logs loudly when a round-trip exceeds the threshold — coverage
-/// that event taps and AX traversal can't get from unit tests, firing the moment
-/// anyone reintroduces blocking-on-main in *any* module. Never compiled into
-/// release builds.
 final class MainThreadWatchdog {
     private let queue = DispatchQueue(label: "com.cartesia.InkIt.MainThreadWatchdog", qos: .utility)
     private let pingInterval: TimeInterval
@@ -732,7 +582,6 @@ final class MainThreadWatchdog {
                     DebugLog.info(String(format: "MainThreadWatchdog: main run loop blocked %.0fms (threshold %.0fms)",
                                          waited * 1000, self.stallThreshold * 1000))
                 }
-                // Re-arm from the worker queue regardless of how long main took.
                 self.scheduleNextPing()
             }
         }

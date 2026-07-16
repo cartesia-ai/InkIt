@@ -1,10 +1,5 @@
 import Foundation
 
-/// An LLM provider for the transcript rewrite ("Polish transcripts").
-///
-/// All providers except Anthropic speak the OpenAI-compatible
-/// `/chat/completions` shape, so they share one request path that only varies
-/// by `endpoint` + bearer key + model. Anthropic uses its native Messages API.
 enum LLMProvider: String, CaseIterable, Identifiable, Hashable {
     case groq
     case gemini
@@ -22,9 +17,6 @@ enum LLMProvider: String, CaseIterable, Identifiable, Hashable {
         }
     }
 
-    /// Placeholder hint for the Settings key field — the provider's key prefix
-    /// so it's obvious you've pasted the right credential. Shown only while the
-    /// field is empty.
     var keyPlaceholder: String {
         switch self {
         case .groq:      return "gsk_…"
@@ -34,8 +26,6 @@ enum LLMProvider: String, CaseIterable, Identifiable, Hashable {
         }
     }
 
-    /// Chat endpoint. Anthropic uses its native Messages API; the rest are
-    /// OpenAI-compatible `/chat/completions`.
     var endpoint: URL {
         switch self {
         case .groq:      return URL(string: "https://api.groq.com/openai/v1/chat/completions")!
@@ -47,11 +37,6 @@ enum LLMProvider: String, CaseIterable, Identifiable, Hashable {
 
     var isOpenAICompatible: Bool { self != .anthropic }
 
-    /// Curated, latency-friendly models for the rewrite task (filler removal,
-    /// punctuation, proper-noun repair). Ordered with the recommended default
-    /// first. Groq's Llama models retire 2026-08-16; gpt-oss-20b is the
-    /// production-tier successor (benchmarked 2026-07: mean ≈ 385ms, max 749ms
-    /// across 87 rewrite-shaped requests). Gemini Flash-Lite ≈ 510ms.
     var models: [String] {
         switch self {
         case .groq:      return ["openai/gpt-oss-20b"]
@@ -63,13 +48,6 @@ enum LLMProvider: String, CaseIterable, Identifiable, Hashable {
 
     var defaultModel: String { models.first! }
 
-    /// Hard ceiling on a rewrite request before we abandon it and fall back to
-    /// the raw transcript. Sized just above each model's observed p99 so it only
-    /// fires on a genuinely hung request, never a healthy-but-slow one — cutting
-    /// a tighter ceiling would silently downgrade good rewrites to raw text.
-    /// Groq gpt-oss-20b (the default) maxed at 749ms across 87 rewrite-shaped
-    /// requests, so 1.0s is ample; the other small models get more headroom
-    /// since we haven't measured their tails.
     var rewriteTimeout: TimeInterval {
         switch self {
         case .groq:                       return 1.0
@@ -77,7 +55,6 @@ enum LLMProvider: String, CaseIterable, Identifiable, Hashable {
         }
     }
 
-    /// Where the user obtains an API key.
     var keyURL: URL {
         switch self {
         case .groq:      return URL(string: "https://console.groq.com/keys")!
@@ -87,10 +64,6 @@ enum LLMProvider: String, CaseIterable, Identifiable, Hashable {
         }
     }
 
-    /// Where the user reviews their plan / billing when Polish is paused because
-    /// they're out of credits. Mirrors the console domains of `keyURL`. Anthropic
-    /// is verified; the others are best-effort and land on the right console even
-    /// if the exact subpath shifts.
     var billingURL: URL {
         switch self {
         case .groq:      return URL(string: "https://console.groq.com/settings/billing")!
@@ -111,9 +84,6 @@ enum LLMProvider: String, CaseIterable, Identifiable, Hashable {
         }
     }
 
-    /// Builds the credit-free probe request used to validate `key` for this
-    /// provider. OpenAI-compatible providers carry a bearer token; Anthropic
-    /// uses its `x-api-key` + version headers.
     func validationRequest(key: String) -> URLRequest {
         var req = URLRequest(url: validationURL)
         req.httpMethod = "GET"

@@ -2,13 +2,6 @@ import XCTest
 import SwiftData
 @testable import InkIt
 
-/// Locks the SwiftData persistence contract for transcript rows: the `Entry`
-/// value type the UI consumes maps 1:1 to the on-disk `TranscriptRecord`, and
-/// every field — including the `Codable` nested value types (`Latency`,
-/// `PolishOutcome`, `PolishFailure`) SwiftData stores as composite attributes —
-/// survives an insert/fetch round trip unchanged. That round trip is the
-/// migration's riskiest assumption, so it is pinned here against an in-memory
-/// store (no disk, no singleton, no global state).
 @MainActor
 final class TranscriptRecordTests: XCTestCase {
 
@@ -60,8 +53,6 @@ final class TranscriptRecordTests: XCTestCase {
                        "the Codable failure enum must persist as a composite attribute")
     }
 
-    /// Legacy entries carry no latency/polish/failure; nil-valued optionals must
-    /// round-trip too (the v1 decode path produces these).
     func testMinimalRecordRoundTrips() throws {
         let context = try makeInMemoryContext()
         let entry = TranscriptHistoryStore.Entry(
@@ -75,10 +66,6 @@ final class TranscriptRecordTests: XCTestCase {
         XCTAssertEqual(try context.fetch(FetchDescriptor<TranscriptRecord>()).first?.toEntry(), entry)
     }
 
-    /// The Insights usage fields (app identity, frozen word count, speech
-    /// duration) added in the round-10 release must round-trip — and stay
-    /// `nil` for rows written before they existed (the lightweight-migration
-    /// read path).
     func testUsageMetadataRoundTrips() throws {
         let context = try makeInMemoryContext()
         let entry = TranscriptHistoryStore.Entry(

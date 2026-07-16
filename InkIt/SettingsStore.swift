@@ -5,21 +5,11 @@ import Carbon.HIToolbox
 import Security
 import ServiceManagement
 
-/// The kind of hotkey binding currently in use.
-///
-/// The Fn key is special on macOS: it isn't a standard modifier in the Carbon
-/// `RegisterEventHotKey` API. We detect it via `NSEvent.flagsChanged` instead.
 enum HotkeyBinding: Equatable {
     case carbon(keyCode: UInt32, modifiers: UInt32)
     case fn
-    /// A bare modifier key (⌘/⌥/⌃/⇧) used on its own, identified by physical
-    /// keyCode so left and right are distinct. Carbon can't bind a lone
-    /// modifier, so HotkeyManager observes it via a flagsChanged event tap.
     case modifierKey(keyCode: UInt32)
 
-    /// Bare modifiers and Fn are always valid; only keyed combos can clash with a
-    /// system-wide shortcut macOS won't let us override (or shouldn't). The
-    /// recorder shows a single "{keys} is invalid" toast, so this is just a Bool.
     var isValidShortcut: Bool {
         guard case .carbon(let keyCode, let modifiers) = self else { return true }
         let usesCommand = modifiers & UInt32(cmdKey) != 0
@@ -68,9 +58,6 @@ enum HotkeyBinding: Equatable {
     ]
 }
 
-/// User's appearance choice. `.system` follows the OS setting; the other two
-/// pin the app. Applied app-wide via `NSApp.appearance` (the always-dark notch
-/// HUD ignores it — see DESIGN_SYSTEM.md).
 enum AppearancePreference: String, CaseIterable, Identifiable {
     case system, light, dark
 
@@ -93,10 +80,6 @@ enum AppearancePreference: String, CaseIterable, Identifiable {
     }
 }
 
-/// How the dictation hotkey behaves. `.hold` is press-and-hold — release to
-/// paste, the original (and default) behavior. `.toggle` is hands-free: one
-/// press starts, the next press stops and pastes, for dictating longer
-/// passages without holding the key. See AppCoordinator's hotkey handlers.
 enum DictationMode: String, CaseIterable, Identifiable {
     case hold, toggle
 
@@ -109,8 +92,6 @@ enum DictationMode: String, CaseIterable, Identifiable {
         }
     }
 
-    /// One-line gesture description shown beneath the label in the picker.
-    /// Kept strictly parallel so the two modes read as a clean contrast.
     var detail: String {
         switch self {
         case .hold:   return "Hold your shortcut while you speak, release to paste."
@@ -159,7 +140,6 @@ final class SettingsStore: ObservableObject {
         didSet { Keychain.set(cartesiaAPIKey, for: KeychainAccount.cartesia) }
     }
 
-    /// Light / Dark / follow-System. Persisted and applied on change.
     @Published var appearance: AppearancePreference {
         didSet {
             defaults.set(appearance.rawValue, forKey: Keys.appearance)
@@ -167,9 +147,6 @@ final class SettingsStore: ObservableObject {
         }
     }
 
-    /// Pushes the current `appearance` onto the running app. Safe to call from
-    /// any point after the app is up; no-op for `.system` beyond clearing any
-    /// previous override.
     func applyAppearance() {
         NSApp?.appearance = appearance.nsAppearance
     }
@@ -178,61 +155,33 @@ final class SettingsStore: ObservableObject {
         didSet { defaults.set(correctionEnabled, forKey: Keys.correctionEnabled) }
     }
 
-    /// Whether the user has dismissed the Home "Polish your dictation" nudge.
-    /// Sticky so a dismissed nudge stays gone across launches. The nudge only
-    /// shows when polish is off anyway, so enabling polish also hides it.
     @Published var polishNudgeDismissed: Bool {
         didSet { defaults.set(polishNudgeDismissed, forKey: Keys.polishNudgeDismissed) }
     }
 
-    /// Whether AI correction may read on-screen context (the focused app's
-    /// visible text via Accessibility) to repair proper nouns and identifiers.
-    /// UID of the input device the user pinned for dictation, or "" to follow
-    /// the macOS default. Pinning decouples "what I dictate into" from whatever
-    /// macOS routes to (e.g. AirPods hijacking the mic). The capture service
-    /// falls back to the system default when the pinned device is unplugged, so
-    /// a stale UID is always safe. Persisted by UID (stable across replug), not
-    /// by the transient AudioDeviceID.
     @Published var preferredInputDeviceUID: String {
         didSet { defaults.set(preferredInputDeviceUID, forKey: Keys.preferredInputDeviceUID) }
     }
 
-    /// True when a polish rewrite last failed because the provider rejected the
-    /// key (401/403) — the key "stopped working." Persisted so Settings can show
-    /// the honest "paused — re-enter a key" state even after a relaunch, instead
-    /// of silently pasting raw. Cleared when a key validates, the provider
-    /// changes, or polish is (re)enabled. See AppCoordinator.correctedTranscript.
     @Published var polishKeyInvalid: Bool {
         didSet { defaults.set(polishKeyInvalid, forKey: Keys.polishKeyInvalid) }
     }
 
-    /// True when a polish rewrite last failed because the provider rejected the
-    /// request for billing reasons (402). Drives the "Polish is paused — out of
-    /// credits" home card. Cleared when a rewrite succeeds or the provider changes.
     @Published var polishOutOfCredits: Bool {
         didSet { defaults.set(polishOutOfCredits, forKey: Keys.polishOutOfCredits) }
     }
 
-    /// True when an STT session last failed on an invalid/expired Cartesia key
-    /// (401/403). Drives the "Transcription is paused — invalid key" home card.
-    /// Cleared on the next successful transcription. See AppCoordinator.
     @Published var cartesiaKeyInvalid: Bool {
         didSet { defaults.set(cartesiaKeyInvalid, forKey: Keys.cartesiaKeyInvalid) }
     }
 
-    /// True when an STT session last failed because Cartesia credits are used up
-    /// (402 / quota_exceeded / plan_upgrade_required). Drives the "Transcription
-    /// is paused — out of credits" home card. Cleared on the next success.
     @Published var cartesiaOutOfCredits: Bool {
         didSet { defaults.set(cartesiaOutOfCredits, forKey: Keys.cartesiaOutOfCredits) }
     }
 
-    /// Selected LLM provider + model for the rewrite ("Polish transcripts").
     @Published var rewriteProvider: LLMProvider {
         didSet {
             defaults.set(rewriteProvider.rawValue, forKey: Keys.rewriteProvider)
-            // A broken-key / out-of-credits verdict belongs to the old provider;
-            // clear both so the newly selected provider starts from a clean slate.
             polishKeyInvalid = false
             polishOutOfCredits = false
         }
@@ -242,8 +191,6 @@ final class SettingsStore: ObservableObject {
         didSet { defaults.set(rewriteModel, forKey: Keys.rewriteModel) }
     }
 
-    /// Per-provider API keys, keyed by `LLMProvider.rawValue`. Persisted to the
-    /// Keychain, one item per provider; an empty value removes that item.
     @Published var llmAPIKeys: [String: String] {
         didSet {
             for provider in LLMProvider.allCases {
@@ -257,14 +204,10 @@ final class SettingsStore: ObservableObject {
         llmAPIKeys[provider.rawValue] = key
     }
 
-    /// Whether the currently selected rewrite provider has a key on file.
     var hasRewriteKey: Bool {
         !apiKey(for: rewriteProvider).trimmingCharacters(in: .whitespaces).isEmpty
     }
 
-    /// The Polish settings pane's state, derived from whether a key exists,
-    /// whether polish is enabled, and whether the key last failed auth. The key
-    /// is the switch: no key → setup. See PolishSettingsView.
     enum PolishUIState { case setup, on, paused, keyBroken }
     var polishUIState: PolishUIState {
         guard hasRewriteKey else { return .setup }
@@ -272,14 +215,8 @@ final class SettingsStore: ObservableObject {
         return polishKeyInvalid ? .keyBroken : .on
     }
 
-    /// A persistent, user-fixable problem with one of the two services, surfaced
-    /// as a calm card in the Home rail. Only config/account problems that won't
-    /// fix themselves — never transient blips (offline, 5xx, rate limit), which
-    /// live in the moment (notch) and the history log.
     enum ServiceIssue: Equatable { case keyInvalid, outOfCredits }
 
-    /// Transcription (Cartesia) problem to surface on Home, or nil when healthy.
-    /// Suppressed when no key is set yet — that's onboarding/setup, not a fault.
     var transcriptionIssue: ServiceIssue? {
         guard !cartesiaAPIKey.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
         if cartesiaKeyInvalid { return .keyInvalid }
@@ -287,8 +224,6 @@ final class SettingsStore: ObservableObject {
         return nil
     }
 
-    /// Polish (LLM provider) problem to surface on Home, or nil. Suppressed when
-    /// Polish is off or has no key — there's nothing paused to fix in that case.
     var polishIssue: ServiceIssue? {
         guard correctionEnabled, hasRewriteKey else { return nil }
         if polishKeyInvalid { return .keyInvalid }
@@ -296,9 +231,6 @@ final class SettingsStore: ObservableObject {
         return nil
     }
 
-    /// Turn on the LLM "Polish transcripts" rewrite for `provider`, keeping the
-    /// selected model valid. Centralizes the provider/model/enabled trio so the
-    /// Polish settings pane stays consistent.
     func enablePolish(provider: LLMProvider) {
         rewriteProvider = provider
         if !provider.models.contains(rewriteModel) {
@@ -367,16 +299,10 @@ final class SettingsStore: ObservableObject {
         didSet { defaults.set(hasCompletedOnboarding, forKey: Keys.hasCompletedOnboarding) }
     }
 
-    /// Developer trace logging to `~/Library/Logs/InkIt-debug.log`. Off by
-    /// default because traces include raw transcripts and on-screen context.
-    /// See `DebugLog`.
     @Published var debugLoggingEnabled: Bool {
         didSet { defaults.set(debugLoggingEnabled, forKey: Keys.debugLogging) }
     }
 
-    /// Horizontal position of the notch HUD on the active screen, normalized
-    /// from 0.0 (left edge) to 1.0 (right edge). Defaults slightly left of
-    /// center so it does not sit directly below the camera notch.
     @Published var playFeedbackSounds: Bool {
         didSet { defaults.set(playFeedbackSounds, forKey: Keys.playFeedbackSounds) }
     }
@@ -403,15 +329,11 @@ final class SettingsStore: ObservableObject {
         }
     }
 
-    /// The verb for the active dictation mode — hands-free taps to start/stop,
-    /// push-to-talk holds. One source of truth for every "Press/Hold" cue.
     var dictationModeVerb: String {
         dictationMode == .toggle ? "Press" : "Hold"
     }
 
     private init() {
-        // --- Secrets live in the Keychain. Read them there, migrating any
-        // plaintext keys written by older builds, then scrub the plaintext. ---
         if let stored = Keychain.string(for: KeychainAccount.cartesia) {
             self.cartesiaAPIKey = stored
         } else {
@@ -420,8 +342,6 @@ final class SettingsStore: ObservableObject {
             if !legacy.isEmpty { Keychain.set(legacy, for: KeychainAccount.cartesia) }
         }
         defaults.removeObject(forKey: Keys.apiKey)
-        // Default to Light so first-run onboarding is light; users can switch
-        // to Dark or System in Settings (applied instantly). See DESIGN_SYSTEM.md.
         self.appearance = defaults.string(forKey: Keys.appearance)
             .flatMap(AppearancePreference.init(rawValue:)) ?? .light
         self.correctionEnabled = defaults.bool(forKey: Keys.correctionEnabled)
@@ -434,8 +354,6 @@ final class SettingsStore: ObservableObject {
         self.rewriteProvider = defaults.string(forKey: Keys.rewriteProvider)
             .flatMap(LLMProvider.init(rawValue:)) ?? .groq
         self.rewriteModel = defaults.string(forKey: Keys.rewriteModel) ?? LLMProvider.groq.defaultModel
-        // Per-provider LLM keys: Keychain first, migrating from the legacy
-        // UserDefaults map (and the even older standalone Anthropic key).
         let legacyLLMKeys = (defaults.dictionary(forKey: Keys.llmKeys) as? [String: String]) ?? [:]
         let legacyAnthropic = defaults.string(forKey: Keys.anthropicAPIKey) ?? ""
         var loadedLLMKeys: [String: String] = [:]
@@ -485,12 +403,9 @@ final class SettingsStore: ObservableObject {
             let storedKey = defaults.object(forKey: Keys.hotkeyKeyCode) as? Int
             self.hotkey = .modifierKey(keyCode: UInt32(storedKey ?? kVK_Control))
         default:
-            // Default to the Fn / 🌐 key — claimed via a CGEventTap that
-            // suppresses the system Globe action while InkIt is running.
             self.hotkey = .fn
         }
 
-        // Keep model valid for the selected provider.
         if !rewriteProvider.models.contains(rewriteModel) {
             rewriteModel = rewriteProvider.defaultModel
         }
@@ -515,25 +430,10 @@ final class SettingsStore: ObservableObject {
     }
 }
 
-/// Thin wrapper over the macOS Keychain for InkIt's API keys. Secrets are stored
-/// as generic-password items under one service so they never touch UserDefaults
-/// (a plaintext plist). Calls are synchronous and best-effort: a Keychain miss
-/// or error degrades to an absent value rather than crashing.
-///
-/// Keychain items are bound to the app's code signature, so they only survive a
-/// rebuild when the signature is stable. Signed release builds qualify; ad-hoc
-/// "Sign to Run Locally" builds (what a contributor without a Developer ID gets)
-/// re-sign each build, which would orphan the items. For those builds only we
-/// fall back to a namespaced UserDefaults key — friendlier for contributors,
-/// while shipped builds keep secrets out of plaintext. (VoiceInk does the same.)
 enum Keychain {
     private static let service = Bundle.main.bundleIdentifier ?? "InkIt"
-    /// Distinct from any legacy `Keys` so the migration's plaintext-scrub can't
-    /// delete a value we just wrote here.
     private static let fallbackPrefix = "secretFallback."
 
-    /// True when the running build is signed with a stable identity (not ad-hoc
-    /// or unsigned), so Keychain items persist across rebuilds. Computed once.
     static let usesKeychain: Bool = isStablySigned()
 
     static func string(for account: String) -> String? {
@@ -556,8 +456,6 @@ enum Keychain {
         return value
     }
 
-    /// Stores `value` for `account`. An empty value removes the item, so the
-    /// store never holds a blank secret.
     static func set(_ value: String, for account: String) {
         guard !value.isEmpty else {
             remove(account)
@@ -574,8 +472,6 @@ enum Keychain {
         ]
         let attributes: [String: Any] = [
             kSecValueData as String: Data(value.utf8),
-            // Readable while locked so dictation works without an unlock prompt;
-            // still excluded from iCloud/backup sync.
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
         ]
         let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
@@ -597,9 +493,6 @@ enum Keychain {
         SecItemDelete(query as CFDictionary)
     }
 
-    /// Inspects the running binary's code signature. Returns true only when it
-    /// carries a signing identifier and is not ad-hoc — i.e. the signature is
-    /// stable enough for Keychain items to survive a rebuild.
     private static func isStablySigned() -> Bool {
         var code: SecCode?
         guard SecCodeCopySelf(SecCSFlags(), &code) == errSecSuccess, let code else { return false }

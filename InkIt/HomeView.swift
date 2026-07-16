@@ -1,17 +1,9 @@
 import SwiftUI
 import AppKit
 
-// MARK: - Stat formatting
-
-/// Numeric formatting for the Home stat band.
 enum StatFormat {
-    /// Estimated time saved vs typing: the gap between typing the words (~40 wpm)
-    /// and speaking them (~150 wpm). An estimate — the "saved vs typing" label
-    /// signals as much.
     static func timeSaved(words: Int) -> (value: String, unit: String) {
         let minutes = Double(words) * (1.0 / 40.0 - 1.0 / 150.0)
-        // Below a minute, show seconds so the very first dictation registers
-        // something rather than a discouraging "0 min".
         if minutes < 1 { return ("\(Int((minutes * 60).rounded()))", "sec") }
         if minutes < 60 { return ("\(Int(minutes.rounded()))", "min") }
         let hours = minutes / 60
@@ -21,31 +13,16 @@ enum StatFormat {
     }
 }
 
-// MARK: - Home
-
-/// The Home section: the transcript history log + stats rail that used to be
-/// the whole main window, now one view inside the sidebar shell. Modals (the
-/// Settings sheet, the delete-all confirm) live on the shell so their scrims
-/// cover the sidebar too — Home asks for them through the two closures.
 struct HomeView: View {
     @EnvironmentObject var coordinator: AppCoordinator
     @EnvironmentObject var settings: SettingsStore
     @EnvironmentObject var history: TranscriptHistoryStore
-    /// Durable day aggregates — the stat band's streak reads the same source
-    /// Insights does.
     @EnvironmentObject var aggregates: UsageAggregateStore
 
-    /// Opens the Settings modal on a given pane (the Polish nudge and the
-    /// Polish-issue card deep-link to `.polish`).
     let onOpenSettings: (SettingsView.Pane) -> Void
-    /// Asks the shell to run the delete-all confirm flow.
     let onRequestDeleteAll: () -> Void
 
     @State private var copiedID: UUID?
-    // History controls. Search collapses to a single icon at rest and expands
-    // inline; the field stays open while there's a query and collapses only when
-    // emptied (macOS toolbar-search convention). Sort persists across launches —
-    // it's a stated preference. Delete-all routes through the shell's confirm.
     @State private var searchExpanded = false
     @State private var searchQuery = ""
     @FocusState private var searchFocused: Bool
@@ -71,8 +48,6 @@ struct HomeView: View {
         return f
     }()
 
-    // Case-insensitive substring match on the visible transcript text. Empty
-    // query returns everything, so the list renders unchanged when search is idle.
     private var filteredEntries: [TranscriptHistoryStore.Entry] {
         let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return history.entries }
@@ -85,8 +60,6 @@ struct HomeView: View {
             calendar.startOfDay(for: entry.timestamp)
         }
 
-        // Day groups and the rows within them both follow the sort toggle, so
-        // "Oldest first" flips the whole list, not just the order inside a day.
         return grouped.keys
             .sorted(by: newestFirst ? (>) : (<))
             .map { day in
@@ -97,10 +70,6 @@ struct HomeView: View {
             }
     }
 
-    // The round-12 composed Home: one scrolling column on the content sheet.
-    // The page opens with the hero (the product's one promise), then the flat
-    // stat band, then the Polish row when relevant, then full-width history.
-    // One statement per band — no side rail, no competing columns.
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
@@ -117,11 +86,6 @@ struct HomeView: View {
                         .padding(.bottom, 20)
                 }
                 if history.entries.isEmpty {
-                    // A completed onboarding trial seeds the very first transcript
-                    // (see AppCoordinator's trial logging), so most users never see
-                    // this. It's reached only when they skipped Try-it — so rather
-                    // than a dead-end "nothing here," offer a live try box that
-                    // turns the first take into a real history row.
                     HomeTryItPanel()
                         .padding(.top, 20)
                 } else {
@@ -137,17 +101,11 @@ struct HomeView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollIndicators(.hidden)
-        // The shell owns Delete All; when the wipe lands (or anything else
-        // empties the list) an open search field has nothing left to filter,
-        // so it collapses — same reset `confirmDeleteAll` used to do inline.
         .onChange(of: history.entries.isEmpty) { _, isEmpty in
             if isEmpty { collapseSearch() }
         }
     }
 
-    // History header: title + its two quiet actions (search, manage). The hero
-    // above already carries the hotkey cue, and live state lives in the sidebar
-    // pill + notch HUD — nothing else competes with the list.
     private var historyHeader: some View {
         HStack(spacing: 8) {
             Text("History")
@@ -161,8 +119,6 @@ struct HomeView: View {
         .padding(.horizontal, 4)
         .padding(.bottom, 12)
         .animation(Motion.expand, value: searchExpanded)
-        // ⌘F opens (and focuses) search from anywhere in the window. Zero-opacity
-        // so it carries the shortcut without drawing anything.
         .background(
             Button(action: expandSearch) { EmptyView() }
                 .keyboardShortcut("f", modifiers: .command)
@@ -171,8 +127,6 @@ struct HomeView: View {
         )
     }
 
-    // Collapsed: a lone magnifier. Expanded: an inline field on a card. The field
-    // collapses only when it loses focus while empty (see onChange below).
     @ViewBuilder private var searchControl: some View {
         if searchExpanded {
             searchField
@@ -218,18 +172,9 @@ struct HomeView: View {
             RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
                 .strokeBorder(Color.line)
         )
-        // Click anywhere outside the field collapses it and drops the caret,
-        // reusing the app's shared click-outside dismisser (a non-consuming
-        // NSEvent monitor — the click still does its normal job). Esc and the ✕
-        // also collapse; clicks inside the field keep it open.
         .dismissOnClickOutside(isActive: searchExpanded) { collapseSearch() }
     }
 
-    // The "Manage transcripts" overflow: sort order (checkmarked) + the
-    // destructive Delete All. Built as a HeaderIconButton (so it inherits the
-    // working hover fill + hand cursor, exactly like search and the gear) opening
-    // an inkDetailPopover — SwiftUI's Menu swallows hover on its label, so it
-    // can't carry the affordance the rest of the chrome has.
     private var manageMenu: some View {
         HeaderIconButton(systemName: "ellipsis", hint: "Manage transcripts") {
             showManageMenu.toggle()
@@ -259,7 +204,6 @@ struct HomeView: View {
 
     private func expandSearch() {
         withAnimation(Motion.expand) { searchExpanded = true }
-        // Focus on the next runloop tick so the field exists before we target it.
         DispatchQueue.main.async { searchFocused = true }
     }
 
@@ -269,13 +213,7 @@ struct HomeView: View {
         withAnimation(Motion.expand) { searchExpanded = false }
     }
 
-    // The history log lives directly on the sheet (round 12) — no inner card.
-    // Day headers, then rows divided by faint full-width hairlines. These
-    // Sections sit inside the body's pinned-headers LazyVStack, so the current
-    // day sticks to the sheet top as the page scrolls.
     @ViewBuilder private var historyGroups: some View {
-        // Reached only with an active query (the empty-history case shows
-        // the Try-It panel upstream), so this is always a "no match" state.
         if groupedEntries.isEmpty {
             Text("No transcripts match “\(searchQuery)”")
                 .font(.inkCallout)
@@ -300,8 +238,6 @@ struct HomeView: View {
         }
     }
 
-    // Pinned day header. Carries the sheet fill so scrolling rows pass cleanly
-    // beneath it; full-width so nothing peeks through at the edges.
     private func dayHeader(_ title: String) -> some View {
         Text(title)
             .font(.inkEyebrow)
@@ -315,10 +251,6 @@ struct HomeView: View {
             .background(Color.canvas)
     }
 
-    // The stat band (round 12): one flat panel, label over value, no icons —
-    // the serif numerals are the graphic. Latency is not shown here (it is
-    // never prominent, per DESIGN_SYSTEM); the fourth cell is the user's own
-    // speaking speed.
     private var statBand: some View {
         HStack(alignment: .top, spacing: 0) {
             statCell(label: "Total words",
@@ -373,8 +305,6 @@ struct HomeView: View {
         !settings.correctionEnabled && !settings.polishNudgeDismissed
     }
 
-    // The Polish (provider) problem as a calm rail card below the stats. Soft
-    // amber, same language as the stats/nudge — guidance, not alarm.
     @ViewBuilder private var polishIssueCard: some View {
         if let issue = settings.polishIssue {
             statusCard(
@@ -432,8 +362,6 @@ struct HomeView: View {
         )
     }
 
-    // MARK: Polish-issue copy + actions
-
     private func polishIssueMessage(_ issue: SettingsStore.ServiceIssue) -> String {
         let p = settings.rewriteProvider.displayName
         switch issue {
@@ -459,9 +387,6 @@ struct HomeView: View {
         }
     }
 
-    // The Polish nudge (round 12): one flat row — glyph, pitch, CTA. The
-    // before→after demo lives behind the CTA (the Settings Polish pane), not
-    // on Home; this row's action is the accent's one Home spend.
     private var polishNudgeRow: some View {
         HStack(alignment: .center, spacing: 13) {
             ZStack {
@@ -515,21 +440,14 @@ struct HomeView: View {
         )
     }
 
-    // MARK: Stat sources
-
     private var timeSavedParts: (value: String, unit: String) {
         StatFormat.timeSaved(words: history.lifetimeWords)
     }
 
-    /// Consecutive active days, from the same durable aggregates Insights reads
-    /// — the two surfaces can never disagree about the streak.
     private var currentStreak: Int {
         InsightsMath.currentStreak(days: aggregates.days, today: Date())
     }
 
-    /// Lifetime mean speaking speed. Shares `InsightsMath.averageWordsPerMinute`
-    /// with the Insights hero so the two surfaces can't show different numbers;
-    /// "—" until a minute of timed dictation has accrued.
     private var averageWpm: String {
         InsightsMath.averageWordsPerMinute(entries: history.entries).map(String.init) ?? "—"
     }

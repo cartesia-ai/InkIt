@@ -1,20 +1,6 @@
 import Foundation
 import Combine
 
-/// Advisory check that an API key authenticates against a service, used during
-/// onboarding so a good key earns a reassuring "verified" before the user
-/// proceeds.
-///
-/// The shared machinery lives here: a 0.6s keystroke debounce, a generation
-/// counter so stale (or cancelled) completions are ignored, and `settledKey`
-/// caching so a key that already has a verdict isn't re-hit. Subclasses supply
-/// only the credit-free probe request via `makeRequest`. The HTTP status is the
-/// verdict:
-///   - 2xx                   → key authenticated (`verified`)
-///   - 401 / 403             → key rejected (`invalidKey`) — we can say so plainly
-///   - other / transport err → `couldNotVerify` (most likely offline)
-///
-/// This is purely advisory and never blocks the flow.
 @MainActor
 class APIKeyValidator: ObservableObject {
     enum State: Equatable {
@@ -27,12 +13,8 @@ class APIKeyValidator: ObservableObject {
 
     @Published private(set) var state: State = .idle
 
-    /// Builds the credit-free probe request for a given key. Should target an
-    /// endpoint that needs auth but costs nothing (e.g. a list call). Settable
-    /// so a provider-aware validator can re-point it when the provider changes.
     private var makeRequest: (String) -> URLRequest
 
-    /// Swap the probe builder (e.g. after the user picks a different provider).
     func updateRequest(_ make: @escaping (String) -> URLRequest) {
         makeRequest = make
     }
@@ -46,7 +28,6 @@ class APIKeyValidator: ObservableObject {
         self.makeRequest = makeRequest
     }
 
-    /// Debounced entry point: call on every keystroke. Empty keys reset to idle.
     func keyChanged(_ raw: String) {
         let key = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         debounce?.cancel()
@@ -57,7 +38,6 @@ class APIKeyValidator: ObservableObject {
             settledKey = nil
             return
         }
-        // Already have a verdict for this exact key — don't re-hit the network.
         if key == settledKey, state != .checking { return }
 
         let work = DispatchWorkItem { [weak self] in self?.start(key: key) }
@@ -78,10 +58,6 @@ class APIKeyValidator: ObservableObject {
             } else {
                 switch (response as? HTTPURLResponse)?.statusCode ?? 0 {
                 case 200...299:      verdict = .verified
-                // Our probe is a fixed, well-formed GET /models with no body or
-                // query, so a 4xx back is the key being rejected, not a bad
-                // request. Gemini answers a bad key with 400 (API_KEY_INVALID)
-                // where the others use 401/403 — treat the whole range as invalid.
                 case 400, 401, 403:  verdict = .invalidKey
                 default:             verdict = .couldNotVerify
                 }
@@ -92,7 +68,6 @@ class APIKeyValidator: ObservableObject {
     }
 
     private func settle(_ result: State, key: String, gen: Int) {
-        // Ignore stale callbacks from a superseded (or cancelled) check.
         guard gen == generation, state == .checking else { return }
         state = result
         settledKey = key
@@ -105,10 +80,6 @@ class APIKeyValidator: ObservableObject {
     }
 }
 
-/// Validates a Cartesia key via a credit-free `GET /voices?limit=1`: listing
-/// voices costs nothing and requires a valid key. Using HTTP (rather than the
-/// STT websocket handshake, where a rejected key and an offline machine look
-/// identical) lets us tell those two failures apart.
 @MainActor
 final class CartesiaKeyValidator: APIKeyValidator {
     init() {
@@ -125,9 +96,6 @@ final class CartesiaKeyValidator: APIKeyValidator {
     }
 }
 
-/// Validates a rewrite-provider key against whichever provider is currently
-/// selected, re-pointing its probe when the user switches providers in the
-/// Polish settings pane. Advisory, like its base. See `LLMProvider.validationRequest`.
 @MainActor
 final class LLMKeyValidator: APIKeyValidator {
     private(set) var provider: LLMProvider
@@ -137,8 +105,6 @@ final class LLMKeyValidator: APIKeyValidator {
         super.init(makeRequest: { key in provider.validationRequest(key: key) })
     }
 
-    /// Point the validator at a new provider (clears no state; caller should
-    /// re-run `keyChanged` with that provider's key).
     func setProvider(_ provider: LLMProvider) {
         self.provider = provider
         updateRequest { key in provider.validationRequest(key: key) }

@@ -258,7 +258,6 @@ struct HoverBackdrop: ViewModifier {
 }
 
 extension View {
-    /// Lift the app's standard soft hover backdrop. See `HoverBackdrop`.
     func hoverBackdrop(cornerRadius: CGFloat = 8, isActive: Bool = false,
                        activeFill: Color = .accentSoft) -> some View {
         modifier(HoverBackdrop(cornerRadius: cornerRadius, isActive: isActive,
@@ -266,8 +265,6 @@ extension View {
     }
 }
 
-/// Swaps the cursor to the pointing-hand while hovering, signalling that a
-/// control is clickable. Shared across Home / Settings / Onboarding.
 struct PointingHandCursor: ViewModifier {
     func body(content: Content) -> some View {
         content.onHover { hovering in
@@ -280,17 +277,6 @@ struct PointingHandCursor: ViewModifier {
     }
 }
 
-/// The app's one hyperlink treatment: brand-orange (`accentColor`) text with a
-/// trailing `arrow.up.right` that signals "opens externally." Trailing — not
-/// leading — because the arrow modifies the label, matching web convention
-/// (GitHub Primer, Material, Apple HIG). Used for every "Get your … key" link
-/// across Onboarding and Settings so they read identically. Pass a `font` to
-/// match the surrounding text; the layout stays left-aligned.
-///
-/// The color is set with `.foregroundStyle` on the label, not `.tint`: on macOS
-/// `Link` renders its text in the system link color (blue) and ignores `.tint`,
-/// so tinting alone left every link blue. `.buttonStyle(.plain)` keeps the label
-/// from re-applying the default link styling on top.
 struct ExternalLink: View {
     let title: String
     let url: URL
@@ -310,12 +296,6 @@ struct ExternalLink: View {
     }
 }
 
-/// The shared visual for a quiet 28×28 header affordance: a tinted glyph that
-/// lifts a soft rounded backdrop on hover, with the hand cursor + a hover hint —
-/// the same treatment as `IconChip`/`CopyTranscriptGlyph`, sized for the header.
-/// Hover state lives on the glyph itself so it works whether the parent is a
-/// plain `Button` (search) or a `Menu` label (manage) — a `Menu` doesn't forward
-/// hover to its container, which is why the affordance must sit on the label.
 private struct HeaderIconLabel: View {
     let systemName: String
     let hint: String
@@ -331,8 +311,6 @@ private struct HeaderIconLabel: View {
     }
 }
 
-/// A quiet header icon *button* (History search). Wraps the shared
-/// `HeaderIconLabel`, so it reads as one family with the manage menu and the gear.
 struct HeaderIconButton: View {
     let systemName: String
     let hint: String
@@ -346,9 +324,6 @@ struct HeaderIconButton: View {
     }
 }
 
-/// One row in the "Manage transcripts" popover. Leading column is either a
-/// checkmark (sort rows, shown when selected) or an icon (Delete All), so labels
-/// stay aligned. Lifts the same soft hover backdrop as the rest of the chrome.
 struct ManageMenuRow: View {
     let title: String
     var icon: String? = nil
@@ -378,11 +353,6 @@ struct ManageMenuRow: View {
     }
 }
 
-/// The app's one modal treatment: a centered card on the warm paper (`Color.canvas`,
-/// 16pt continuous corners, a hairline border, a soft drop shadow) over a dimmed
-/// backdrop. Defining it once keeps "an InkIt modal" a single source of truth, so
-/// Settings and the Delete-all confirm can't drift apart. Tap-out runs `onDismiss`;
-/// the caller owns Esc/Return via the content's keyboard shortcuts.
 struct InkModal<Content: View>: View {
     let onDismiss: () -> Void
     var scrim: Color = .scrim
@@ -403,19 +373,11 @@ struct InkModal<Content: View>: View {
                 )
                 .shadow(color: Elevation.modal, radius: 40, y: 18)
         }
-        // Dim the whole window — traffic-light strip included — and center the
-        // card in the full frame, so the breathing room reads equal on every
-        // side rather than adding the titlebar band to the top gap.
         .ignoresSafeArea()
         .transition(.opacity)
     }
 }
 
-/// The app's icon ✕ — a 26pt circle that lifts the standard hover backdrop,
-/// for the Settings header and any modal that needs a corner dismiss. One source
-/// of truth so every close affordance reads identically. Callers add the Esc
-/// shortcut themselves only where one isn't already claimed (e.g. by a Cancel
-/// button), so two `.cancelAction`s never collide in the same view.
 struct InkCloseButton: View {
     let onClose: () -> Void
     var help: String = "Close"
@@ -436,23 +398,15 @@ struct InkCloseButton: View {
 }
 
 extension Notification.Name {
-    /// Posted by the "Settings…" menu command (⌘,); the main window opens the
-    /// settings modal in response. Lets the menu reach in-window @State.
     static let openSettings = Notification.Name("InkIt.openSettings")
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    // Apply the saved appearance (default Light) as early as possible so the
-    // first window doesn't flash the system appearance before settling.
     func applicationDidFinishLaunching(_ notification: Notification) {
         SettingsStore.shared.applyAppearance()
         UpdateManager.shared.start()
     }
 
-    // Restore the main window when the user clicks the Dock icon after
-    // closing it. SwiftUI's WindowGroup default activates the app but
-    // doesn't reliably re-show the window on macOS, causing a "flash" with
-    // nothing visible.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag {
             for window in sender.windows where !(window is NSPanel) && window.canBecomeMain {
@@ -472,9 +426,6 @@ struct InkItApp: App {
     @StateObject private var coordinator = AppCoordinator()
     @StateObject private var settings = SettingsStore.shared
     @StateObject private var history = TranscriptHistoryStore.shared
-    // Created at launch on purpose: seeding reads the persisted transcript
-    // rows, so the store must exist before the first dictation is added (see
-    // UsageAggregateStore.shared).
     @StateObject private var aggregates = UsageAggregateStore.shared
 
     var body: some Scene {
@@ -485,41 +436,22 @@ struct InkItApp: App {
                 .environmentObject(history)
                 .environmentObject(aggregates)
         }
-        // Share the history store's single SwiftData container with the
-        // environment so any future `@Query`-based read can use it directly,
-        // while the store keeps owning all writes.
         .modelContainer(history.modelContainer)
         .windowResizability(.contentMinSize)
-        // The onboarding view is flexible (maxWidth/maxHeight: .infinity), so its
-        // idealWidth/idealHeight never reach the window — SwiftUI falls back to a
-        // small default. defaultSize is the reliable way to set the first-launch
-        // window size; once a frame is saved it takes over on later launches.
-        //
-        // Width lands the Home content column (capped at 860, with a 44pt gutter
-        // each side) flush against the sheet's right edge: 220 sidebar + 860 +
-        // 2×44 + 10 sheet inset ≈ 1178. Anything wider just opens dead canvas on
-        // the right, since the column stays left-aligned at its cap.
         .defaultSize(width: 1180, height: 860)
         .commands {
-            // Strip the system menu bar down to the bare minimum. macOS won't
-            // let us remove the leading "InkIt" menu (About/Quit live there)
-            // while we keep the Dock icon, but everything else can go.
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") {
                     UpdateManager.shared.checkForUpdates()
                 }
                 .disabled(!UpdateManager.shared.canCheckForUpdates)
             }
-            // Real "Settings…" item in the app menu. This replaces the invisible
-            // in-window ⌘, button so the macOS-standard shortcut is discoverable
-            // and fires whenever InkIt is active, not only when the window is key.
             CommandGroup(replacing: .appSettings) {
                 Button("Settings…") {
                     NotificationCenter.default.post(name: .openSettings, object: nil)
                 }
                 .keyboardShortcut(",", modifiers: .command)
             }
-            // A small Help menu — the OSS on-ramp. Source + issues, nothing else.
             CommandGroup(replacing: .help) {
                 Button("InkIt on GitHub") {
                     NSWorkspace.shared.open(URL(string: "https://github.com/cartesia-ai/InkIt")!)
@@ -529,8 +461,6 @@ struct InkItApp: App {
                 }
             }
         }
-        // CommandsBuilder caps at 10 groups per block, so the strip-down empties
-        // live in a second .commands modifier (SwiftUI merges them).
         .commands {
             CommandGroup(replacing: .newItem) {}
             CommandGroup(replacing: .saveItem) {}
@@ -549,16 +479,6 @@ struct RootView: View {
     var body: some View {
         Group {
             if settings.hasCompletedOnboarding {
-                // Floor: the Settings modal must always fit with a little
-                // breathing room on every side. That card (840×600) is the
-                // largest thing the window ever hosts, so it — not the history
-                // panel — sets the minimum. See SettingsPopover.size.
-                //
-                // The card centers in the full window (the scrim ignores the
-                // safe area), so the target window *frame* is card + 2×room. The
-                // SwiftUI minimum sizes the content region below the titlebar, so
-                // subtract the titlebar band from the height to land the frame
-                // exactly there; width has no such inset.
                 MainWindowView()
                     .frame(minWidth: SettingsPopover.size.width + 2 * SettingsPopover.breathingRoom,
                            minHeight: SettingsPopover.size.height + 2 * SettingsPopover.breathingRoom
@@ -569,38 +489,22 @@ struct RootView: View {
                            minHeight: 560, idealHeight: 860, maxHeight: .infinity)
             }
         }
-        // Hide the centered "InkIt" window title on every surface, onboarding
-        // included (MainWindowView also carries this, harmlessly idempotent).
         .background(WindowChrome())
         .onAppear { settings.applyAppearance() }
     }
 }
 
 struct MainWindowView: View {
-    /// The standard macOS titlebar band. `.windowResizability(.contentMinSize)`
-    /// applies the SwiftUI minimum to the content region below the titlebar, so
-    /// the window frame ends up this much taller than the requested minHeight —
-    /// the minimum-size math subtracts it back out.
     static let titlebarHeight: CGFloat = 28
 
     @EnvironmentObject var coordinator: AppCoordinator
     @EnvironmentObject var settings: SettingsStore
     @EnvironmentObject var history: TranscriptHistoryStore
 
-    // The round-10 shell: a fixed sidebar (Home · Insights · Settings + the
-    // armed pill) beside one switched content column. Modals, toasts, and the
-    // update pill overlay the *whole* shell so scrims dim the sidebar too;
-    // the dictation-issue banner sits above the switched view so a paused
-    // dictation is visible from every section.
-    // "--open-insights" / "--open-settings" are for the screenshot-based
-    // design-review protocol: they land the window on a specific surface
-    // without UI scripting. No-ops in normal use.
     @State private var section: MainSection =
         ProcessInfo.processInfo.arguments.contains("--open-insights") ? .insights : .home
     @State private var showSettings =
         ProcessInfo.processInfo.arguments.contains("--open-settings")
-    // "--settings-pane <general|dictation|polish>" lands Settings on a specific
-    // pane for the screenshot-based design-review protocol (no-op in normal use).
     @State private var settingsPane: SettingsView.Pane = {
         let args = ProcessInfo.processInfo.arguments
         guard let i = args.firstIndex(of: "--settings-pane"), args.indices.contains(i + 1),
@@ -613,10 +517,6 @@ struct MainWindowView: View {
         HStack(spacing: 0) {
             SidebarView(section: $section,
                         onOpenSettings: { openSettings(pane: .general) })
-            // The one sheet (round 12): all content lives on a single rounded
-            // canvas panel floating on the sidebar paper. No divider hairline
-            // between sidebar and content, no titlebar separator — the sheet's
-            // own edge is the only structural line the window has.
             VStack(spacing: 0) {
                 dictationIssueBanner
                 switch section {
@@ -637,11 +537,6 @@ struct MainWindowView: View {
                     .strokeBorder(Color.line, lineWidth: 1)
             )
             .shadow(color: Elevation.ambient, radius: 8, y: 1)
-            // Start the sheet below the traffic-light row so the top of the
-            // window is one uninterrupted band of sidebar paper — the close/
-            // minimize controls float on the same ground as the wordmark, with
-            // no separate titlebar-colored strip (round 13, matching the sheet
-            // top to the sidebar wordmark).
             .padding(.top, 26)
             .padding([.trailing, .bottom], 10)
         }
@@ -651,25 +546,17 @@ struct MainWindowView: View {
             .overlay { UpdateModal() }
             .overlay { settingsModal }
             .overlay { deleteConfirmModal }
-            // Toasts live on the main window's lower-right, above any modal, so a
-            // confirmation/error stays put rather than riding the Settings card.
             .overlay(alignment: .bottomTrailing) { ToastOverlay() }
-            // The "Settings…" menu item (⌘,) posts this; open the modal in response.
             .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
                 openSettings(pane: .general)
             }
     }
 
-    // Always lands on the caller's pane (General from the sidebar/⌘, — Settings
-    // doesn't remember the last pane; a deep link names its own).
     private func openSettings(pane: SettingsView.Pane) {
         settingsPane = pane
         withAnimation(Motion.quick) { showSettings = true }
     }
 
-    // Settings as a centered modal over a dimmed backdrop (Flow-style), not a
-    // gear-anchored popover. Click-out or the pane's ✕ / Esc dismisses it.
-    // The backdrop + card chrome come from the shared `InkModal`.
     @ViewBuilder private var settingsModal: some View {
         if showSettings {
             InkModal(onDismiss: dismissSettings) {
@@ -682,10 +569,6 @@ struct MainWindowView: View {
         withAnimation(Motion.quick) { showSettings = false }
     }
 
-    // Destructive confirm, on the same warm centered-card chrome as the Settings
-    // modal (dimmed backdrop, Color.canvas card, 16pt corners). Click-out or
-    // Cancel/Esc backs out; Delete All clears history (HomeView collapses its
-    // own search when the list empties).
     @ViewBuilder private var deleteConfirmModal: some View {
         if showDeleteConfirm {
             InkModal(onDismiss: dismissDeleteConfirm) {
@@ -715,8 +598,6 @@ struct MainWindowView: View {
                 .padding(.top, 36)
                 .padding(.bottom, 32)
                 .frame(width: 400)
-                // Corner ✕ — the same icon close button used in the Settings
-                // header — so the modal reads as dismissable at a glance.
                 .overlay(alignment: .topTrailing) {
                     InkCloseButton(onClose: dismissDeleteConfirm)
                         .padding(10)
@@ -725,8 +606,6 @@ struct MainWindowView: View {
         }
     }
 
-    // Exact count + plural so the number itself adds a beat of friction before an
-    // irreversible wipe. "will be permanently removed" per the locked copy.
     private var deleteConfirmMessage: String {
         let n = history.entries.count
         let noun = n == 1 ? "transcript" : "transcripts"
@@ -742,12 +621,6 @@ struct MainWindowView: View {
         dismissDeleteConfirm()
     }
 
-    // A lost dictation is critical (the core feature is down), so a Cartesia key
-    // /credit problem gets a full-width banner across the top of the content
-    // column — more noticeable than a rail card, and visible from every section.
-    // Polish failing is only degraded (raw text still pastes), so it stays a calm
-    // rail card on Home. Both are driven by the persisted flags, so they're
-    // sticky until fixed — never a 2.5s flash.
     @ViewBuilder private var dictationIssueBanner: some View {
         if let issue = settings.transcriptionIssue {
             HStack(spacing: 12) {
@@ -789,7 +662,6 @@ struct MainWindowView: View {
         }
     }
 
-    // MARK: Dictation-issue copy + actions
 
     private func transcriptionIssueMessage(_ issue: SettingsStore.ServiceIssue) -> String {
         switch issue {
@@ -815,10 +687,6 @@ struct MainWindowView: View {
     }
 }
 
-/// The current hotkey as one amber highlight, tokens joined by "+", e.g.
-/// "⌃ Ctrl + s". Sets the shortcut apart from surrounding prose. Inherits the
-/// ambient font; the vertical padding gives the highlight breathing room so it
-/// reads as a proper keycap against the hero line rather than a thin band.
 struct HotkeyCaps: View {
     let tokens: [String]
 
@@ -834,11 +702,6 @@ struct HotkeyCaps: View {
     }
 }
 
-/// The Home hero (round 12): the page opens with the product's one promise —
-/// "Hold fn to dictate in …" — set in the New York display voice. The category
-/// word + its three app logos swap together on a soft cross-fade so the line
-/// reads as one alive cue rather than a static banner. Pauses on hover so a
-/// bucket is readable; honors Reduce Motion by holding the first bucket still.
 struct RotatingDictateHeader: View {
     let tokens: [String]
 
@@ -848,13 +711,10 @@ struct RotatingDictateHeader: View {
     @State private var hovering = false
     @State private var timer: Timer?
 
-    /// Seconds each bucket holds before the next swaps in.
     private static let dwell: TimeInterval = 2.4
 
     private struct Bucket { let category: String; let logos: [String] }
 
-    // Asset names live in Assets.xcassets (Logo*). AI leads; the rest are the
-    // everyday surfaces a dictation user lands in.
     private static let buckets: [Bucket] = [
         .init(category: "AI",       logos: ["LogoClaude", "LogoChatgpt", "LogoGemini"]),
         .init(category: "email",    logos: ["LogoGmail", "LogoMail", "LogoOutlook"]),
@@ -882,9 +742,6 @@ struct RotatingDictateHeader: View {
                 ))
             Spacer(minLength: 0)
         }
-        // The display voice: New York at hero scale. Layout padding belongs to
-        // the caller (HomeView owns the page grid). The whole promise is one
-        // line — never let a narrow window wrap it.
         .font(.inkHero)
         .lineLimit(1)
         .fixedSize(horizontal: false, vertical: true)
@@ -905,8 +762,6 @@ struct RotatingDictateHeader: View {
     }
 
     private func logoTile(_ name: String) -> some View {
-        // The image already carries its own optical padding (normalized to ~80%
-        // of a square), so it fills the tile directly.
         Image(name)
             .resizable()
             .interpolation(.high)
@@ -936,11 +791,6 @@ struct RotatingDictateHeader: View {
     }
 }
 
-/// Shown on Home only when there's no history at all — i.e. the user skipped the
-/// onboarding Try-it step. Rather than dead-ending, it offers the same practice
-/// card as onboarding: read the line, hold the key, fix anything, send. The card
-/// logs each sent take to history; that first row flips Home off this empty state
-/// and the transcript list takes over, so `onSend` here stays a no-op.
 struct HomeTryItPanel: View {
     @EnvironmentObject var settings: SettingsStore
 
@@ -960,8 +810,6 @@ struct HomeTryItPanel: View {
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
-        // Sized to content — it now sits inside Home's scrolling column
-        // (round 12), not a full-window switch.
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 32)
         .padding(.vertical, 16)
@@ -972,16 +820,9 @@ struct TranscriptHistoryRow: View {
     let text: String
     let timestamp: String
     let latency: TranscriptHistoryStore.Latency?
-    /// Raw pre-rewrite transcript; non-nil whenever correction ran successfully
-    /// (identical to `text` for a no-op rewrite). Feeds the before/after diff.
     let original: String?
-    /// How AI correction turned out; drives the row indicator.
     let polish: TranscriptHistoryStore.PolishOutcome?
-    /// Why polish failed (when `polish == .failed`); drives the warning tooltip.
     let failure: TranscriptHistoryStore.PolishFailure?
-    /// Where the dictation landed (Slack, Mail, …) — the resting label in the
-    /// trailing column; the hover affordances take its place. Nil pre-shell rows
-    /// simply rest empty.
     let appName: String?
     let copied: Bool
     let copy: () -> Void
@@ -990,19 +831,11 @@ struct TranscriptHistoryRow: View {
     @State private var showingLatency = false
     @State private var showingFailure = false
 
-    /// Resolves the indicator to show. Legacy entries (no stored `polish`) fall
-    /// back to "polished if there's a diff to show, otherwise nothing."
     private var outcome: TranscriptHistoryStore.PolishOutcome {
         if let polish { return polish }
         return original != nil ? .polished : .off
     }
 
-    // A compact transcript-log entry: timestamp in a fixed left gutter, the
-    // cleaned-up text in the middle, affordances on the trailing edge. Polish /
-    // time / copy are hover-only so resting rows are just time + words and stay
-    // tight — except a *failed* polish, which shows at rest (silently hiding a
-    // failure is worse than a touch of clutter). The trailing column is a fixed
-    // width so text wraps consistently and nothing shifts on hover.
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
             Text(timestamp)
@@ -1017,13 +850,9 @@ struct TranscriptHistoryRow: View {
                 .foregroundStyle(.primary)
                 .lineSpacing(3)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                // Keep long text clear of the icon cluster, especially with all
-                // three chips visible.
                 .padding(.trailing, 16)
 
             trailingControls
-                // Wide enough to hold all three chips (3×24 + 2×8) without
-                // spilling back into the text.
                 .frame(width: 88, alignment: .trailing)
                 .padding(.top, 2)
         }
@@ -1035,8 +864,6 @@ struct TranscriptHistoryRow: View {
             RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
                 .fill(hovering ? Color.accentColor.opacity(Hover.rowTintOpacity) : Color.clear)
         )
-        // Whole row is click-to-copy. The chips swallow their own taps so
-        // inspecting the diff/latency never triggers a copy.
         .onTapGesture { copy() }
         .modifier(PointingHandCursor())
         .onHover { isHovering in
@@ -1050,8 +877,6 @@ struct TranscriptHistoryRow: View {
         .accessibilityLabel(copied ? "Copied transcript" : "Copy transcript")
     }
 
-    // Trailing column: the faint app name at rest, swapped for the affordances
-    // on hover — so resting rows stay time + words + where it landed.
     private var trailingControls: some View {
         ZStack(alignment: .trailing) {
             if let appName, !hovering, !copied {
@@ -1077,8 +902,6 @@ struct TranscriptHistoryRow: View {
         }
     }
 
-    /// Sparkle glyph — a single click reveals the before/after diff. The label
-    /// and exact stats live in the popover so the row stays uncluttered.
     private var polishPill: some View {
         IconChip(systemName: "sparkles", fg: Color.accentColor, help: "See what changed")
             .onTapGesture { showingDiff.toggle() }
@@ -1089,10 +912,6 @@ struct TranscriptHistoryRow: View {
             .accessibilityLabel("Polished — show changes")
     }
 
-    /// Warning triangle in soft amber — polish failed and raw text was pasted.
-    /// Click for the actionable reason. (The earlier `sparkles.slash` glyph drew
-    /// nothing — SF Symbols has no such symbol — so the row looked iconless
-    /// while the hover hint still fired.)
     private var failurePill: some View {
         IconChip(systemName: "exclamationmark.triangle.fill", fg: .orange, help: "Polish failed")
             .onTapGesture { showingFailure.toggle() }
@@ -1108,8 +927,6 @@ struct TranscriptHistoryRow: View {
             .accessibilityLabel(Text(Self.failureMessage(failure)))
     }
 
-    /// Clock glyph — the exact total and per-stage split stay hidden until the
-    /// click opens the breakdown, keeping the row quiet.
     private func timePill(_ latency: TranscriptHistoryStore.Latency) -> some View {
         IconChip(systemName: "clock", fg: .secondary, help: "Speed")
             .onTapGesture { showingLatency.toggle() }
@@ -1120,8 +937,6 @@ struct TranscriptHistoryRow: View {
             .accessibilityLabel("Time to text \(Self.fmt(latency.totalMs)) — show breakdown")
     }
 
-    /// Terse, provider-aware reason for why polish failed, with the action the
-    /// user can take. Computed at hover time so the rate-limit countdown is live.
     static func failureMessage(_ failure: TranscriptHistoryStore.PolishFailure?) -> String {
         guard let failure else {
             return "Polish failed — raw text pasted. Re-dictate to retry."
@@ -1159,19 +974,8 @@ struct TranscriptHistoryRow: View {
     }
 }
 
-/// Per-stage breakdown shown when hovering the "Time to text" stat on a row.
-/// The row keeps the clean total; this reveals where the time went —
-/// transcribe (release → final transcript) and polish (the AI rewrite). Paste
-/// is omitted on purpose: it's a fixed floor the user can't influence, so it's
-/// recorded but not shown (see `Latency.totalMs`). The polish row is omitted
-/// when correction didn't run (polishMs == 0), so it never reads as a stalled 0ms.
-/// When polish ran but failed, the same time exists but produced no rewrite, so
-/// the row reads "Polish attempt" — honest about the cost without implying the
-/// text was actually polished.
 private struct LatencyPopover: View {
     let latency: TranscriptHistoryStore.Latency
-    /// Polish was attempted but failed (rate limit, timeout, …); the time landed
-    /// in `polishMs` even though the rewrite was discarded for raw text.
     var polishFailed = false
 
     var body: some View {
@@ -1220,8 +1024,6 @@ private struct LatencyPopover: View {
     }
 }
 
-/// Inline word-level before/after diff shown when hovering a polished row's
-/// sparkle. Additions/fixes are highlighted; dropped words are struck through.
 private struct DiffPopover: View {
     let before: String
     let after: String
@@ -1239,13 +1041,6 @@ private struct DiffPopover: View {
                 .font(.callout)
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
-                // Definite width, not a ceiling: `fixedSize(vertical:)` computes
-                // height for the proposed width, and the popover's ideal-size pass
-                // proposes an unspecified width. With only `maxWidth` the text
-                // collapsed to a near-zero width on some macOS builds → a runaway
-                // intrinsic height → an 800pt popover. A fixed width pins the
-                // height pass to the real wrap width on every OS version, matching
-                // the sibling Latency/failure popovers (which already use width:).
                 .frame(width: 280, alignment: .leading)
 
             if changed {
@@ -1260,28 +1055,19 @@ private struct DiffPopover: View {
             }
         }
         .padding(14)
-        // Size to content (capped at 280pt by the text frame) instead of a
-        // fixed 300pt box, so short diffs read tight and left-aligned rather
-        // than a stub of text floating in dead space.
         .frame(maxWidth: 308, alignment: .leading)
     }
 
     private static let addColor = Color.diffAdd
 
     private enum Kind { case same, added, removed }
-    // A character-level run inside a single displayed word.
     private struct Piece { let kind: Kind; let text: String }
-    // One whitespace-delimited slot in the diff output. Most slots hold a single
-    // piece; a refined replacement (e.g. "100%" → "100%.") holds several so only
-    // the changed characters get marked.
     private struct WordToken { let pieces: [Piece] }
 
     private static func tokenize(_ s: String) -> [String] {
         s.split(whereSeparator: { $0.isWhitespace }).map(String.init)
     }
 
-    /// Alphanumeric, lowercased skeleton of a word — used to recognise that a
-    /// removed/added pair differs only in punctuation or case ("So," vs "so").
     private static func core(_ word: String) -> String {
         word.lowercased().filter { $0.isLetter || $0.isNumber }
     }
@@ -1304,8 +1090,6 @@ private struct DiffPopover: View {
                 }
                 result += s
             }
-            // Space only *between* word slots — pieces within a slot stay tight,
-            // so a refined punctuation change reads as one word.
             if i < tokens.count - 1 {
                 result += AttributedString(" ")
             }
@@ -1327,7 +1111,6 @@ private struct DiffPopover: View {
             }
         }
 
-        // Flatten into an ordered stream of word-level changes.
         struct Raw { let kind: Kind; let word: String }
         var raw: [Raw] = []
         var bi = 0, ai = 0
@@ -1347,9 +1130,6 @@ private struct DiffPopover: View {
             }
         }
 
-        // Collapse each removed-run-followed-by-added-run (a replacement region)
-        // so look-alike pairs are refined to a character-level diff instead of a
-        // full strike + re-add.
         var tokens: [WordToken] = []
         var i = 0
         while i < raw.count {
@@ -1384,7 +1164,6 @@ private struct DiffPopover: View {
         }
 
         var tokens: [WordToken] = []
-        // Unpaired removals (genuine deletions) lead, in original order.
         for rIdx in removed.indices where !usedRemoved[rIdx] {
             tokens.append(WordToken(pieces: [Piece(kind: .removed, text: removed[rIdx])]))
         }
@@ -1398,7 +1177,6 @@ private struct DiffPopover: View {
         return tokens
     }
 
-    /// Character-level diff between two similar words, coalescing runs.
     private static func charPieces(from before: String, to after: String) -> [Piece] {
         let b = Array(before), a = Array(after)
         let changes = a.difference(from: b)
@@ -1434,7 +1212,6 @@ private struct DiffPopover: View {
     }
 }
 
-/// Tiny dot + caption used for the diff legend.
 private struct DiffLegendLabelStyle: LabelStyle {
     func makeBody(configuration: Configuration) -> some View {
         HStack(spacing: 4) {
@@ -1444,9 +1221,6 @@ private struct DiffLegendLabelStyle: LabelStyle {
     }
 }
 
-/// Hides the window's title text while keeping the unified toolbar and traffic
-/// lights, so the toolbar shows just the status item and the Home/Settings
-/// tabs. The leading status item already identifies the app.
 private struct WindowChrome: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
@@ -1524,19 +1298,11 @@ private struct HoverHintLabel: View {
     }
 }
 
-/// Padded host content for the floating panel — the transparent inset gives the
-/// pill's drop shadow room so the panel doesn't clip it.
 private struct HoverHintPanelContent: View {
     let text: String
     var body: some View { HoverHintLabel(text: text).padding(6) }
 }
 
-/// A borderless floating panel that renders the hover hint OUTSIDE the SwiftUI
-/// view tree. The transcript list clips its content to a rounded card and pins
-/// section headers on top, so an in-tree overlay gets cut off near the edges —
-/// a window sits above all of that, unclipped. One shared instance: you can
-/// only hover one control at a time. Any click dismisses it, so a detail
-/// popover opening on the same glyph never fights the hint for space.
 @MainActor
 final class HoverHintWindow {
     static let shared = HoverHintWindow()
@@ -1584,8 +1350,6 @@ final class HoverHintWindow {
     }
 }
 
-/// Captures the host's backing `NSView` so the hint can be positioned in screen
-/// coordinates at show time (recomputed each time, so scrolling stays correct).
 private struct HostViewReader: NSViewRepresentable {
     let onView: (NSView) -> Void
     func makeNSView(context: Context) -> NSView {
@@ -1598,8 +1362,6 @@ private struct HostViewReader: NSViewRepresentable {
 
 private final class AnchorBox: ObservableObject { weak var view: NSView? }
 
-/// Shows a `HoverHintLabel` floating above the host after a short grace delay,
-/// via `HoverHintWindow` so it's never clipped. Dismisses on exit.
 private struct HoverHint: ViewModifier {
     let text: String
     @State private var hovering = false
@@ -1631,22 +1393,14 @@ private struct HoverHint: ViewModifier {
 }
 
 extension View {
-    /// Style A — a fast dark hover hint naming this control. No click behavior.
     func inkHoverHint(_ text: String) -> some View { modifier(HoverHint(text: text)) }
 
-    /// Style B — the light detail card opened by a click. Distinct from the
-    /// hover hint on purpose: richer content, an arrow, opens on tap.
     func inkDetailPopover<C: View>(isPresented: Binding<Bool>,
                                    @ViewBuilder content: @escaping () -> C) -> some View {
         popover(isPresented: isPresented, arrowEdge: .bottom, content: content)
     }
 }
 
-/// A bare SF Symbol affordance with its own hover backdrop and tooltip. No
-/// label or fill at rest — just a tinted glyph in a comfortable tap target that
-/// lifts a soft rounded backdrop while hovered, and surfaces a hover hint
-/// naming the action. The caller's tap gesture swallows the click so the row's
-/// click-to-copy never fires when inspecting a chip.
 private struct IconChip: View {
     let systemName: String
     let fg: Color
@@ -1670,7 +1424,6 @@ private struct CopyTranscriptGlyph: View {
             .font(.system(size: 12, weight: .medium))  // ds-allow: icon
             .foregroundStyle(copied ? Color.accentColor : .secondary)
             .frame(width: 24, height: 24)
-            // `copied` holds the amber fill; otherwise the standard hover lift.
             .hoverBackdrop(cornerRadius: Radius.chip, isActive: copied)
             .inkHoverHint("Copy")
             .animation(Motion.state, value: copied)

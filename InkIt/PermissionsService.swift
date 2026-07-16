@@ -4,22 +4,12 @@ import AppKit
 import ApplicationServices
 import Combine
 
-/// Tri-state for a single permission, used to drive the onboarding card UI.
-///
-/// `needsManual` is the important one: macOS shows its TCC prompt only once per
-/// decision, so after a denial — or after we've already fired the prompt — a
-/// second "Enable" tap silently no-ops (just re-opening Settings). That's the
-/// "bubble keeps popping" loop. In `needsManual` the card stops offering a
-/// re-prompt and instead walks the user to the manual toggle.
 enum PermissionState: Equatable {
     case granted
     case notRequested
     case needsManual
 }
 
-/// Observable permission status with periodic polling. macOS gives no
-/// notification when the user toggles Accessibility in System Settings, so
-/// polling is the pragmatic option.
 @MainActor
 final class PermissionsService: ObservableObject {
     static let shared = PermissionsService()
@@ -51,9 +41,6 @@ final class PermissionsService: ObservableObject {
             return
         }
         timer?.invalidate()
-        // Use .common modes so the timer keeps firing across runloop modes
-        // (notably when our app is backgrounded while the user is in System
-        // Settings granting permissions).
         let t = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
@@ -62,9 +49,6 @@ final class PermissionsService: ObservableObject {
     }
 
     func stopPolling() {
-        // Permission polling is shared by onboarding, settings, and the
-        // coordinator. Keep it alive for the process lifetime so one surface
-        // disappearing cannot make another surface show stale permission state.
         refresh()
     }
 
@@ -112,9 +96,6 @@ final class PermissionsService: ObservableObject {
                     completion(granted)
                 }
             }
-            // Also kick the audio engine — AVCaptureDevice.requestAccess
-            // doesn't always surface a prompt on its own with hardened runtime;
-            // touching AVAudioEngine.start forces TCC to evaluate.
             DispatchQueue.global(qos: .userInitiated).async {
                 let engine = AVAudioEngine()
                 _ = engine.inputNode.inputFormat(forBus: 0)

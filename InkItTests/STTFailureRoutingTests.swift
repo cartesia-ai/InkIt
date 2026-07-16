@@ -1,23 +1,13 @@
 import XCTest
 @testable import InkIt
 
-/// Locks the end-of-session contract: the "Couldn't transcribe" notch fires only
-/// for a *named* failure with nothing to show. A `.unknown` (unexplained) ending
-/// — a normal server close that raced the receive loop, a benign socket
-/// disconnect, an unclassified 400 — never errors: it delivers whatever
-/// transcript we have, or finishes silently. Two regressions this guards against:
-/// dropping a finished transcript on a graceful goodbye, and showing an error
-/// when the user simply said nothing.
 final class STTFailureRoutingTests: XCTestCase {
 
-    /// Feed a completed turn so the client has transcript content in hand.
     private func clientWithTranscript(_ text: String) -> CartesiaStreamingClient {
         let client = CartesiaStreamingClient(apiKey: "test-key")
         client.handleMessage(#"{"type":"turn.end","transcript":"\#(text)"}"#)
         return client
     }
-
-    // MARK: - Graceful goodbye → deliver the words, no error
 
     func testUnknownWithContentDeliversTranscriptAndNeverErrors() {
         let client = clientWithTranscript("hello world")
@@ -26,14 +16,11 @@ final class STTFailureRoutingTests: XCTestCase {
         client.onClosed = { delivered = $0 }
         client.onError = { erroredWith = $0 }
 
-        // A normal close racing the receive loop classifies as `.unknown`.
         client.reportFailureOrCollapse(.unknown, errorReason: .receiveFailed)
 
         XCTAssertEqual(delivered, "hello world", "graceful goodbye must deliver the finished transcript")
         XCTAssertNil(erroredWith, "a benign disconnect must not surface an error")
     }
-
-    // MARK: - Said nothing → silent, no error
 
     func testUnknownWithNoContentCollapsesSilently() {
         let client = CartesiaStreamingClient(apiKey: "test-key")
@@ -49,8 +36,6 @@ final class STTFailureRoutingTests: XCTestCase {
         XCTAssertEqual(closedCount, 1, "must finish cleanly via onClosed")
         XCTAssertEqual(delivered, "", "no speech means an empty transcript, not an error")
     }
-
-    // MARK: - Named, actionable failures still surface (even with content)
 
     func testNamedFailureSurfacesError() {
         for failure: STTFailure in [.offline, .serverError, .rateLimited, .outOfCredits, .invalidKey] {
@@ -88,9 +73,6 @@ final class STTFailureRoutingTests: XCTestCase {
         XCTAssertEqual(delivered, "", "must finish via the clean empty-transcript path")
     }
 
-    /// The carve-out is narrow: a 5xx while the user is still holding (close
-    /// not yet requested) is a real, actionable failure — they'd otherwise
-    /// speak a whole sentence into a dead session and release to nothing.
     func testServerErrorMidHoldWithNoContentStillSurfaces() {
         let client = CartesiaStreamingClient(apiKey: "test-key")
         var erroredWith: STTFailure?
@@ -101,9 +83,6 @@ final class STTFailureRoutingTests: XCTestCase {
         XCTAssertEqual(erroredWith, .serverError, "a mid-hold 5xx must reach the user")
     }
 
-    /// And a post-close 500 with words in hand still surfaces (covered by the
-    /// named-failure loop above too, but locked here against the carve-out
-    /// widening to "any post-close server error").
     func testServerErrorAfterCloseWithContentStillSurfaces() {
         let client = clientWithTranscript("partial words")
         client.awaitingClose = true

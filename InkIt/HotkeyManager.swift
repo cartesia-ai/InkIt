@@ -83,8 +83,6 @@ final class HotkeyManager {
         }
         if let tap = fnEventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
-            // Tear the source out of the dedicated tap thread's run loop and stop
-            // that run loop so the thread returns from CFRunLoopRun and exits.
             if let runLoop = fnTapRunLoop {
                 if let src = fnRunLoopSource {
                     CFRunLoopRemoveSource(runLoop, src, .commonModes)
@@ -114,8 +112,6 @@ final class HotkeyManager {
         if let m = modLocalMonitor { NSEvent.removeMonitor(m); modLocalMonitor = nil }
         modIsDown = false
     }
-
-    // MARK: - Carbon path
 
     private func registerCarbon(keyCode: UInt32, modifiers: UInt32) {
         var ref: EventHotKeyRef?
@@ -147,10 +143,6 @@ final class HotkeyManager {
         }, 2, &spec, selfPtr, &eventHandler)
     }
 
-    // MARK: - Fn path
-
-    /// Try the suppressing CGEventTap first; if that fails (no Accessibility
-    /// permission yet, or otherwise), fall back to a passive NSEvent monitor.
     private func registerFn() {
         if installFnEventTap() { return }
         installFnPassiveMonitor()
@@ -164,7 +156,6 @@ final class HotkeyManager {
             guard let userInfo else { return Unmanaged.passUnretained(event) }
             let manager = Unmanaged<HotkeyManager>.fromOpaque(userInfo).takeUnretainedValue()
 
-            // System may disable the tap (timeout, user input excess). Re-enable.
             if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
                 if let tap = manager.fnEventTap { CGEvent.tapEnable(tap: tap, enable: true) }
                 return Unmanaged.passUnretained(event)
@@ -177,7 +168,6 @@ final class HotkeyManager {
             }
 
             let fnDown = event.flags.contains(.maskSecondaryFn)
-            // Only react (and consume) when this event actually toggles Fn.
             if fnDown != manager.fnIsDown {
                 manager.fnIsDown = fnDown
                 if fnDown {
@@ -185,7 +175,6 @@ final class HotkeyManager {
                 } else {
                     DispatchQueue.main.async { manager.onRelease?() }
                 }
-                // Swallow the event so macOS doesn't fire Globe / Dictation / Emoji.
                 return nil
             }
             return Unmanaged.passUnretained(event)
@@ -206,13 +195,6 @@ final class HotkeyManager {
         fnEventTap = tap
         fnRunLoopSource = source
 
-        // Service the tap on a dedicated thread rather than the main run loop, so
-        // a busy main thread can never stall modifier-key delivery (see the
-        // `fnTapThread` note above). The callback only does a tiny async hop to
-        // main, so this thread stays responsive regardless of app workload. The
-        // source keeps the run loop alive; `unregister()` stops it so the thread
-        // exits. `fnTapRunLoop` is written once here at thread start and read
-        // later on `unregister` (a user action, well separated in time).
         let thread = Thread { [weak self] in
             let runLoop = CFRunLoopGetCurrent()
             self?.fnTapRunLoop = runLoop
@@ -246,8 +228,6 @@ final class HotkeyManager {
         }
     }
 
-    // MARK: - Modifier path
-
     private func registerModifier(keyCode: UInt32) {
         modKeyCode = Int64(keyCode)
         modMask = Self.cgFlag(forModifierKeyCode: keyCode)
@@ -271,8 +251,6 @@ final class HotkeyManager {
 
             guard type == .flagsChanged else { return Unmanaged.passUnretained(event) }
 
-            // React only to our specific physical key; the mask tells down from
-            // up. Everything passes through untouched.
             if event.getIntegerValueField(.keyboardEventKeycode) == manager.modKeyCode {
                 let isDown = event.flags.contains(manager.modMask)
                 if isDown != manager.modIsDown {
@@ -287,8 +265,6 @@ final class HotkeyManager {
             return Unmanaged.passUnretained(event)
         }
 
-        // Listen-only: a bare modifier must keep functioning for normal combos,
-        // so unlike the Fn tap we never return nil to swallow the event.
         guard let tap = CGEvent.tapCreate(
             tap: .cghidEventTap,
             place: .headInsertEventTap,
@@ -350,7 +326,6 @@ final class HotkeyManager {
     }
 }
 
-/// Helpers for converting between AppKit modifier flags and Carbon modifier masks.
 enum HotkeyConversion {
     static func carbonModifiers(from flags: NSEvent.ModifierFlags) -> UInt32 {
         var m: UInt32 = 0
@@ -371,8 +346,6 @@ enum HotkeyConversion {
         return s
     }
 
-    /// The eight bare modifier keys allowed as standalone hotkeys, by physical
-    /// keyCode. Left and right are distinct so the recorder can show the side.
     static let modifierKeyCodes: Set<UInt32> = [
         UInt32(kVK_Command), UInt32(kVK_RightCommand),
         UInt32(kVK_Option),  UInt32(kVK_RightOption),
@@ -384,8 +357,6 @@ enum HotkeyConversion {
         modifierKeyCodes.contains(keyCode)
     }
 
-    /// The AppKit flag a given modifier keyCode toggles — lets the recorder tell
-    /// a press from a release on a flagsChanged event.
     static func nsModifierFlag(for keyCode: UInt32) -> NSEvent.ModifierFlags {
         switch Int(keyCode) {
         case kVK_Command, kVK_RightCommand: return .command
@@ -396,8 +367,6 @@ enum HotkeyConversion {
         }
     }
 
-    /// Glyph + label for a bare modifier hotkey, e.g. "⌥ Opt →". Right-hand keys
-    /// get a trailing arrow; left-hand keys are shown plain.
     static func modifierLabel(for keyCode: UInt32) -> String {
         switch Int(keyCode) {
         case kVK_Command:      return "⌘ Cmd"
@@ -424,9 +393,6 @@ enum HotkeyConversion {
         functionKeyCodes.contains(UInt32(keyCode))
     }
 
-    /// One display token per key, e.g. ["⌃ Ctrl", "⌥ Opt", "S"] — rendered as a
-    /// keycap each, joined by "+". A single letter is uppercased to match how
-    /// keys are labelled on a physical keyboard.
     static func displayTokens(for binding: HotkeyBinding) -> [String] {
         switch binding {
         case .fn:

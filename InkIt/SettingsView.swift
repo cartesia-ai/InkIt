@@ -2,30 +2,17 @@ import SwiftUI
 import AppKit
 import Carbon.HIToolbox
 
-/// Shared style tokens for the editable controls in Settings (API-key fields
-/// and the hotkey recorder) so they read as one consistent family. Colors are
-/// semantic system tokens, never hardcoded literals — see DESIGN_SYSTEM.md.
 private enum SettingsMetrics {
-    /// Shared height for text-entry controls.
     static let fieldHeight: CGFloat = 30
-    /// Corner radius for those fields.
     static let fieldCornerRadius = Radius.keycap
-    /// Gap between a control and its caption.
     static let captionSpacing: CGFloat = 3
 
-    /// Editable-field surface. The same token backs every text field and the
-    /// hotkey recorder so they match exactly. Uses the modal-sheet card surface so
-    /// fields lift with the rest of the sheet in Dark mode.
     static let fieldBackground = Color.modalCard
-    /// Resting field border.
     static let fieldBorder = Color(nsColor: .separatorColor)
     static let fieldBorderWidth: CGFloat = 1
-    /// Border while focused / actively recording (accent, slightly heavier).
     static let fieldFocusBorderWidth: CGFloat = 2
 }
 
-/// The bordered surface shared by every editable control in Settings — one
-/// definition so the API-key fields and the hotkey recorder are pixel-identical.
 private struct FieldSurface: ViewModifier {
     var focused: Bool
     func body(content: Content) -> some View {
@@ -51,7 +38,6 @@ private extension View {
     }
 }
 
-/// A switch styled the one way switches are styled across Settings.
 private struct SettingsToggle: View {
     let title: String
     let caption: String?
@@ -64,8 +50,6 @@ private struct SettingsToggle: View {
     }
 
     var body: some View {
-        // Spread the label and switch to the row's edges ourselves — outside a
-        // grouped `Form`, a `Toggle`'s label and knob hug together instead.
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: SettingsMetrics.captionSpacing) {
                 Text(title)
@@ -89,12 +73,6 @@ private struct SettingsToggle: View {
     }
 }
 
-/// A secure API-key entry: bordered field sharing the Settings field surface,
-/// show/hide eye toggle, and a caption link to where the key is managed.
-///
-/// Reports its own frame in window coordinates (bottom-left origin, matching
-/// `NSEvent.locationInWindow`) so a mouse-down monitor can tell inside-clicks
-/// from outside-clicks without any coordinate flipping.
 private struct WindowFrameReader: NSViewRepresentable {
     let onFrame: (CGRect) -> Void
 
@@ -111,10 +89,6 @@ private struct WindowFrameReader: NSViewRepresentable {
     final class TrackingView: NSView {
         var onFrame: ((CGRect) -> Void)?
         private var lastReported: CGRect?
-        // Only emit when the window-space frame actually changes. report() runs on
-        // every layout() pass; the callback writes SwiftUI @State, so an
-        // unconditional emit re-renders → re-lays-out → re-emits, an infinite loop
-        // that pegs the main thread (and, here, freezes the app's CGEventTap).
         private func report() {
             guard window != nil else { return }
             let frame = convert(bounds, to: nil)
@@ -127,10 +101,6 @@ private struct WindowFrameReader: NSViewRepresentable {
     }
 }
 
-/// Restores an inline editing state when the user clicks anywhere outside the
-/// modified view while `isActive`. Uses a local mouse-down monitor + the view's
-/// window-space frame, so it catches clicks a `Form` won't forward as taps (dead
-/// space, labels, other rows). Window-switch dismissal stays the caller's job.
 private struct ClickOutsideDismiss: ViewModifier {
     let isActive: Bool
     let onDismiss: () -> Void
@@ -140,9 +110,6 @@ private struct ClickOutsideDismiss: ViewModifier {
     func body(content: Content) -> some View {
         content
             .background(WindowFrameReader { frameInWindow = $0 })
-            // Install on appear too: a view that's conditionally rendered only
-            // while active (e.g. the History search field) is born with
-            // isActive == true, so onChange never fires for it.
             .onAppear { if isActive { install() } }
             .onChange(of: isActive) { _, active in active ? install() : remove() }
             .onDisappear(perform: remove)
@@ -166,26 +133,17 @@ private struct ClickOutsideDismiss: ViewModifier {
 }
 
 extension View {
-    /// Calls `onDismiss` on a click outside this view while `isActive`.
     func dismissOnClickOutside(isActive: Bool, perform onDismiss: @escaping () -> Void) -> some View {
         modifier(ClickOutsideDismiss(isActive: isActive, onDismiss: onDismiss))
     }
 }
 
-/// Secret-field handling follows the minimal convention used by macOS
-/// dictation apps (e.g. VoiceInk): the key is always redacted — a `SecureField`
-/// renders bullets and never reveals the plaintext — and there is no eye or
-/// copy accessory. The field owns its own clicks, so clicking in places the
-/// caret and you edit (or replace) the key in place while it stays masked.
 private struct APIKeyField: View {
     let title: String
     @Binding var text: String
     let placeholder: String
     let linkTitle: String
     let linkURL: URL
-    /// Drives the field's verdict, all rendered against the field itself: a glyph
-    /// inside the trailing edge (spinner / green check / red ✗) and, for the error
-    /// states, a one-line message directly beneath it — never a separate row.
     var validationState: APIKeyValidator.State = .idle
 
     @State private var isFocused = false
@@ -235,8 +193,6 @@ private struct APIKeyField: View {
         }
     }
 
-    /// Spelled out directly under the field for the two error states; checking
-    /// and verified speak through the inline glyph alone.
     @ViewBuilder private var statusMessage: some View {
         switch validationState {
         case .invalidKey:
@@ -253,13 +209,6 @@ private struct APIKeyField: View {
     }
 }
 
-/// A single-line credential field that reveals its plaintext while it is the
-/// first responder and masks to bullets at rest — focus-reveal without an eye
-/// toggle. It toggles secure entry *in place* on one `NSTextField` (swapping
-/// the cell at a safe moment) rather than swapping a SwiftUI `TextField` for a
-/// `SecureField`, which crashes AppKit's layout pass when the swap lands inside
-/// a focus change. Native placeholder rendering gives the leading, gray hint
-/// for free.
 private struct RevealableSecureField: NSViewRepresentable {
     @Binding var text: String
     let placeholder: String
@@ -285,7 +234,6 @@ private struct RevealableSecureField: NSViewRepresentable {
         context.coordinator.parent = self
         field.onFocusChange = onFocusChange
         if field.placeholderString != placeholder { field.placeholderString = placeholder }
-        // Don't clobber what the user is mid-edit; only sync external changes.
         if !field.isEditing, field.stringValue != text { field.stringValue = text }
     }
 
@@ -300,8 +248,6 @@ private struct RevealableSecureField: NSViewRepresentable {
     }
 }
 
-/// `NSTextField` that swaps between a plain and a secure cell as it gains and
-/// loses first-responder status, preserving its string, font, and placeholder.
 private final class RevealingTextField: NSTextField {
     var onFocusChange: ((Bool) -> Void)?
     private(set) var isEditing = false
@@ -309,8 +255,6 @@ private final class RevealingTextField: NSTextField {
 
     deinit { removeClickMonitor() }
 
-    /// Rebuilds the cell as secure (bullets) or plain (plaintext), carrying the
-    /// styling and current value across the swap.
     func applySecure(_ secure: Bool) {
         let value = stringValue
         let cell: NSTextFieldCell = secure ? NSSecureTextFieldCell() : NSTextFieldCell()
@@ -332,8 +276,6 @@ private final class RevealingTextField: NSTextField {
         self.stringValue = value
     }
 
-    // Reveal just before we actually take focus, while we are not yet the first
-    // responder, so the cell swap can't reenter AppKit's editing machinery.
     override func becomeFirstResponder() -> Bool {
         applySecure(false)
         let became = super.becomeFirstResponder()
@@ -378,10 +320,6 @@ private final class RevealingTextField: NSTextField {
 struct SettingsView: View {
     @EnvironmentObject var settings: SettingsStore
 
-    /// Settings is organized into a small sidebar. Dictation holds the core
-    /// flow (activation, shortcut, microphone, transcription key); Polish is its
-    /// own rich, multi-state pane; General gathers app chrome, the OS permission
-    /// grants, and the lone Advanced toggle.
     enum Pane: String, CaseIterable, Identifiable {
         case general, dictation, polish
         var id: String { rawValue }
@@ -423,20 +361,8 @@ struct SettingsView: View {
     }
 }
 
-/// Settings as a popover: a seamless sidebar → detail layout in a fixed-size
-/// panel, opened from the Home gear button. There's no divider between the two
-/// columns and none under the detail header — sidebar and detail read as one
-/// warm sheet. Dismisses on the ✕, on Esc, or by clicking outside (the modal
-/// host handles click-out). A sidebar search field surfaces matching settings
-/// as editable controls in the detail. Reuses the existing panes so there's one
-/// source of truth for each.
 struct SettingsPopover: View {
-    /// The modal card's fixed size. Shared so the main window's minimum size can
-    /// be derived from it — the window must never shrink below the modal plus a
-    /// little breathing room on every side (see `MainWindowView`).
     static let size = CGSize(width: 840, height: 600)
-    /// Breathing room between the modal card and the window edge at the minimum
-    /// window size — just enough padding above/below and left/right.
     static let breathingRoom: CGFloat = 28
 
     @EnvironmentObject var settings: SettingsStore
@@ -460,7 +386,6 @@ struct SettingsPopover: View {
                 .padding(.bottom, 10)
 
             ForEach(SettingsView.Pane.allCases) { p in
-                // While searching, no pane is "current", so nothing reads as selected.
                 SidebarItem(pane: p, selected: !search.isSearching && pane == p) {
                     search.query = ""
                     pane = p
@@ -499,21 +424,14 @@ struct SettingsPopover: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            // The modal-sheet ground behind the grouped Forms (each hides its own
-            // system scroll background) so the sheet reads as one continuous paper.
             .background(Color.modalBG)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // With no divider, a left gutter keeps the detail from crowding the
-        // sidebar — the breathing room the divider used to imply.
         .padding(.leading, 20)
     }
 
 }
 
-/// A single Settings sidebar row. Selected rows hold the amber soft-fill and stay
-/// put; unselected rows lift an 8% backdrop on hover — the same quiet treatment as
-/// the header chips elsewhere in the app.
 private struct SidebarItem: View {
     let pane: SettingsView.Pane
     let selected: Bool
@@ -521,9 +439,6 @@ private struct SidebarItem: View {
 
     var body: some View {
         Button(action: action) {
-            // Same type as the main window's sidebar rows (15pt body, medium
-            // when selected) so the two navs read at one scale — the Settings
-            // rail was a step smaller and harder to scan.
             HStack(spacing: 10) {
                 Image(systemName: pane.icon)
                     .font(.inkBody)
@@ -535,7 +450,6 @@ private struct SidebarItem: View {
             .foregroundStyle(selected ? Color.accentColor : .primary)
             .padding(.horizontal, 10)
             .padding(.vertical, 9)
-            // Selected row holds the amber fill; others lift the standard backdrop.
             .hoverBackdrop(cornerRadius: Radius.control, isActive: selected)
         }
         .buttonStyle(.plain)
@@ -543,23 +457,15 @@ private struct SidebarItem: View {
     }
 }
 
-/// The Settings ✕ in the top-right; carries the Esc shortcut so the keyboard path
-/// the old hidden button owned still works, and lifts the same hover backdrop as
-/// the rest of the icon-button family (26pt frame, radius 13 → a circle).
 private struct SettingsCloseButton: View {
     let onClose: () -> Void
 
     var body: some View {
-        // Reuse the shared icon ✕ and add the Esc path the old hidden button owned.
         InkCloseButton(onClose: onClose, help: "Close settings")
             .keyboardShortcut(.cancelAction)
     }
 }
 
-// MARK: - Settings search
-
-/// Cross-pane Settings search: holds the live `query` and resolves it to the
-/// matching settings, which the detail renders inline as editable controls.
 final class SettingsSearch: ObservableObject {
     @Published var query: String = ""
 
@@ -574,10 +480,6 @@ final class SettingsSearch: ObservableObject {
     }
 }
 
-/// One searchable setting: its display title, the pane it lives in, a stable
-/// `anchor` (the key the results view switches on to render the control), and
-/// extra keywords so a search finds it by intent ("mic" → Microphone) not just
-/// by its exact label.
 struct SettingsSearchItem: Identifiable {
     let title: String
     let pane: SettingsView.Pane
@@ -623,11 +525,6 @@ struct SettingsSearchItem: Identifiable {
     ]
 }
 
-/// The sidebar search field: magnifying glass, plain text entry, and a clear
-/// button once there's text. Taller than the shared field surface, with its own
-/// rounded background, and it gives up focus on any click outside it (otherwise
-/// the caret keeps blinking after you click away — a SwiftUI `Form`/window quirk
-/// where clicks elsewhere don't resign first responder).
 private struct SettingsSearchField: View {
     @Binding var text: String
     @FocusState private var focused: Bool
@@ -666,26 +563,16 @@ private struct SettingsSearchField: View {
                     lineWidth: focused ? SettingsMetrics.fieldFocusBorderWidth : SettingsMetrics.fieldBorderWidth
                 )
         )
-        // Click anywhere outside the field → drop the caret. Without this the
-        // text field stays first responder and keeps blinking.
         .dismissOnClickOutside(isActive: focused) { focused = false }
     }
 }
 
-/// The search results shown in the detail while searching. Rather than redirect
-/// to a pane, it renders each matching setting's *actual* control inline, grouped
-/// under its pane, so it can be edited right here. The stateful rows reuse the
-/// same extracted components as the panes (CartesiaKeyField / PolishKeyField /
-/// MicrophonePickerRow), so behavior stays identical; the rest are plain bindings
-/// to the shared `SettingsStore`.
 private struct SettingsSearchResults: View {
     let items: [SettingsSearchItem]
 
     @EnvironmentObject var settings: SettingsStore
     @StateObject private var permissions = PermissionsService.shared
 
-    /// Matches grouped by pane, preserving the canonical pane and within-pane
-    /// order from `SettingsSearchItem.all`.
     private var grouped: [(pane: SettingsView.Pane, matches: [SettingsSearchItem])] {
         SettingsView.Pane.allCases.compactMap { pane in
             let matches = items.filter { $0.pane == pane }
@@ -791,9 +678,6 @@ private struct SettingsSearchResults: View {
 }
 
 private extension View {
-    /// Section-header styling for Settings: a small, muted label that sits
-    /// quietly above its card, instead of the bold near-black default that
-    /// grouped `Form` headers ship with. Sentence case, never uppercased.
     func settingsSectionHeader() -> some View {
         font(.inkSectionHeader)
             .foregroundStyle(.secondary)
@@ -801,25 +685,6 @@ private extension View {
     }
 }
 
-// MARK: - Grouped settings layout
-//
-// Replaces SwiftUI's `.formStyle(.grouped)`. The native grouped section
-// background lands *below* `Color.canvas`, so every section read as a sunken
-// well — the chrome inverted, content felt recessed instead of raised. These
-// primitives put each section on `Color.lift` with a hairline (no shadow): one
-// calm step *above* the canvas, in line with the app's surface ladder
-// (canvas → surface → lift → card). See DESIGN_SYSTEM.md › Color and
-// prototypes/settings-surface-elevation.html.
-
-/// Spreads a `LabeledContent`'s label to the leading edge and its control to the
-/// trailing edge — the label-left / control-right row a grouped `Form` gave us for
-/// free, restored now that Settings rows live on the custom `SettingsCard` surface
-/// instead of inside a `Form` (which otherwise packs the two together on the left).
-/// Applied once at the `SettingsStack` level so every row shares the one pattern:
-/// API-key fields, the provider/microphone pickers, the hotkey recorder, and the
-/// permission buttons. The activation-mode and appearance pickers are full-width
-/// card pickers, not `LabeledContent`, so they stay full-width — the two intended
-/// exceptions.
 private struct SettingsRowLabeledContentStyle: LabeledContentStyle {
     func makeBody(configuration: Configuration) -> some View {
         HStack(spacing: 12) {
@@ -835,8 +700,6 @@ private extension LabeledContentStyle where Self == SettingsRowLabeledContentSty
     static var settingsRow: SettingsRowLabeledContentStyle { .init() }
 }
 
-/// Scrolling column of sections on the warm canvas. Drop-in replacement for
-/// `Form { … }.formStyle(.grouped).scrollContentBackground(.hidden)`.
 private struct SettingsStack<Content: View>: View {
     @ViewBuilder var content: Content
     var body: some View {
@@ -848,22 +711,13 @@ private struct SettingsStack<Content: View>: View {
             .padding(.top, 8)
             .padding(.bottom, 28)
             .frame(maxWidth: .infinity, alignment: .leading)
-            // Restore the label-left / control-right row the grouped Form gave us;
-            // every LabeledContent in the panes and search inherits it from here.
             .labeledContentStyle(.settingsRow)
-            // Base Settings text at the app's 15pt body scale, matching Home and
-            // Insights. Without this, row labels fall back to macOS's ~13pt
-            // system default and read noticeably smaller than the rest of the app.
-            // Explicit .caption / section-header fonts still win where set.
             .font(.inkBody)
         }
         .background(Color.modalBG)
     }
 }
 
-/// The `lift` card a group's rows sit on: hairline border, no shadow, rows split
-/// by leading-inset hairline dividers — the macOS grouped inset, recolored to the
-/// app's paper. Auto-divides whatever rows it's handed.
 private struct SettingsCard<Content: View>: View {
     @ViewBuilder var content: Content
     var body: some View {
@@ -879,9 +733,6 @@ private struct SettingsCard<Content: View>: View {
     }
 }
 
-/// Lays each row with the shared inset and drops a hairline between rows (never
-/// after the last). `_VariadicView` is what lets a `SettingsCard { rowA; rowB }`
-/// call site read like a `Section` while we own the divider + padding.
 private struct SettingsRows: _VariadicView.MultiViewRoot {
     @ViewBuilder func body(children: _VariadicView.Children) -> some View {
         let last = children.last?.id
@@ -899,8 +750,6 @@ private struct SettingsRows: _VariadicView.MultiViewRoot {
     }
 }
 
-/// A muted header above a `lift` card — the standard section. Mirrors
-/// `Section(content:header:)` so call sites read the same.
 private struct SettingsGroup<Header: View, Content: View>: View {
     @ViewBuilder var content: Content
     @ViewBuilder var header: Header
@@ -912,9 +761,6 @@ private struct SettingsGroup<Header: View, Content: View>: View {
     }
 }
 
-/// A header above bare content with no card chrome — for sections whose content
-/// is already a self-contained surface (the activation / appearance card pickers
-/// bring their own `lift` cards, so wrapping them in another would be lift-on-lift).
 private struct SettingsPlainGroup<Header: View, Content: View>: View {
     @ViewBuilder var content: Content
     @ViewBuilder var header: Header
@@ -926,10 +772,6 @@ private struct SettingsPlainGroup<Header: View, Content: View>: View {
     }
 }
 
-/// Dictation pane — the core flow: how you trigger dictation (activation mode,
-/// shortcut), what it listens to (microphone), and what powers transcription
-/// (the Cartesia key + language). The settings a user actually configures to
-/// dictate, gathered under one purpose-named tab.
 private struct DictationSettingsPane: View {
     @EnvironmentObject var settings: SettingsStore
 
@@ -962,11 +804,6 @@ private struct DictationSettingsPane: View {
     }
 }
 
-/// General pane — app chrome (appearance, launch behavior), the OS permission
-/// grants, and the lone Advanced (debug) toggle. Everything that isn't the
-/// dictation flow or Polish. Permissions live here (rather than a dedicated
-/// tab) because they're two static rows once granted; onboarding and the Home
-/// status cards still surface a missing grant, and search finds them directly.
 private struct GeneralSettingsPane: View {
     @EnvironmentObject var settings: SettingsStore
     @StateObject private var permissions = PermissionsService.shared
@@ -1019,10 +856,6 @@ private struct GeneralSettingsPane: View {
     }
 }
 
-/// Activation-mode chooser as two selectable cards, side by side — each shows
-/// the mode name and its one-line gesture, so the two options can be compared
-/// at a glance and picked directly (the same card pattern as Appearance).
-/// Shared by the General pane and search.
 private struct ActivationModeCardPicker: View {
     @Binding var mode: DictationMode
 
@@ -1061,20 +894,13 @@ private struct ActivationModeCard: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(12)
-            // Fill the tallest card's height so both cards match even when one
-            // description wraps to two lines and the other to one.
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(
                 RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
-                    // The modal-sheet card surface, so the activation cards match the
-                    // grouped section surfaces and the whole pane reads as one
-                    // ladder above the sheet ground (DESIGN_SYSTEM.md › Color).
                     .fill(Color.modalCard)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
-                    // On hover an unselected card firms its border so it reads as
-                    // pickable; the selected card keeps its amber outline.
                     .stroke(Hover.cardBorder(isSelected: isSelected, hovering: hovering),
                             lineWidth: isSelected ? 2 : 1)
             )
@@ -1090,10 +916,6 @@ private struct ActivationModeCard: View {
     }
 }
 
-/// The transcription-language row. Read-only today — Cartesia STT is
-/// English-only — with the note as subtext directly under the label (no
-/// divider between value and note). Becomes a real picker when more languages
-/// ship. Shared by the General pane and search.
 private struct LanguageRow: View {
     var body: some View {
         LabeledContent {
@@ -1110,9 +932,6 @@ private struct LanguageRow: View {
     }
 }
 
-/// The Cartesia transcription-key field: shares the redacted `APIKeyField` and
-/// owns the validator that drives its inline verdict. Extracted so the General
-/// pane and search results render the identical, self-validating control.
 private struct CartesiaKeyField: View {
     @EnvironmentObject var settings: SettingsStore
     @StateObject private var validator = CartesiaKeyValidator()
@@ -1131,12 +950,6 @@ private struct CartesiaKeyField: View {
     }
 }
 
-/// Microphone picker for the General pane. Lets the user *pin* a specific input
-/// device for dictation instead of inheriting whatever macOS routes to — the fix
-/// for AirPods/Bluetooth silently hijacking the mic and degrading transcription.
-/// "System default" follows macOS; any other choice is honored at record time,
-/// with a graceful fallback to the default if the pinned device is unplugged
-/// (surfaced here as the "unavailable" caption). See AudioCaptureService.
 private struct MicrophoneSection: View {
     var body: some View {
         SettingsGroup {
@@ -1147,29 +960,20 @@ private struct MicrophoneSection: View {
     }
 }
 
-/// The microphone input-device picker and its advisory caption, extracted so it
-/// can render both in the General pane and inline in search results. Owns its own
-/// device manager (each mount starts/stops its own polling).
 private struct MicrophonePickerRow: View {
     @EnvironmentObject var settings: SettingsStore
     @StateObject private var devices = AudioDeviceManager()
 
-    /// The pinned UID is set but no attached device matches it — we're falling
-    /// back to the system default until it's reconnected.
     private var pinnedButMissing: Bool {
         !settings.preferredInputDeviceUID.isEmpty
             && !devices.devices.contains { $0.uid == settings.preferredInputDeviceUID }
     }
 
-    /// The currently selected device, when present and pinned.
     private var selectedDevice: AudioInputDevice? {
         devices.devices.first { $0.uid == settings.preferredInputDeviceUID }
     }
 
     var body: some View {
-        // One row block: label-left / picker-right (spread via LabeledContent,
-        // since we're outside a grouped Form), with the advisory caption tucked
-        // beneath so no hairline divides it from the picker it explains.
         VStack(alignment: .leading, spacing: 6) {
             LabeledContent("Input device") {
                 Picker("", selection: $settings.preferredInputDeviceUID) {
@@ -1181,9 +985,6 @@ private struct MicrophonePickerRow: View {
                     }
                 }
                 .labelsHidden()
-                // Hug the menu's natural width — the native pop-up button — rather
-                // than stretch across the whole row, which reads as an unbalanced
-                // slab.
                 .fixedSize()
                 .modifier(PointingHandCursor())
             }
@@ -1215,18 +1016,9 @@ private struct MicrophonePickerRow: View {
     }
 }
 
-// MARK: - Polish pane
-
-/// The "Polish" settings pane. The key is the switch: with no key it's a setup
-/// screen (no toggle); a valid key turns polish on. Four honest states —
-/// setup / on / paused / key-broken — so it never silently pastes raw while
-/// claiming to be on. Provider defaults to Groq (recommended) but any of the
-/// supported providers works. See prototypes/polish-settings-sidebar.html.
 struct PolishSettingsView: View {
     @EnvironmentObject var settings: SettingsStore
 
-    /// Master on/off as the user sees it: only truly "on" when running. Turning
-    /// it off pauses (keeps the key); turning it on resumes if the key is good.
     private var masterBinding: Binding<Bool> {
         Binding(
             get: { settings.polishUIState == .on },
@@ -1251,11 +1043,6 @@ struct PolishSettingsView: View {
                 }
             }
 
-            // Polish always leads with its master toggle so turning it on is the
-            // first thing on the page. It's disabled until there's a working key
-            // (setup / key-broken) — the fix in those states is the AI section
-            // below, and the design never lets the switch read "on" while it
-            // would silently paste raw transcripts.
             SettingsGroup {
                 SettingsToggle(
                     "Polish transcripts",
@@ -1267,9 +1054,6 @@ struct PolishSettingsView: View {
                 Text("Polish").settingsSectionHeader()
             }
 
-            // Always expanded: the provider dropdown and key field are live at all
-            // times, so switching providers or pasting a new key is one click away —
-            // no Change/Done round-trip, no collapsed summary to expand first.
             SettingsGroup {
                 providerPicker
                 modelRow
@@ -1282,11 +1066,7 @@ struct PolishSettingsView: View {
         .navigationTitle("Polish")
     }
 
-    // MARK: Shared rows
-
     private var providerPicker: some View {
-        // Spread label / popup to the row edges (LabeledContent), as we're no
-        // longer inside a grouped Form that would do it automatically.
         LabeledContent("Provider") {
             Picker("", selection: $settings.rewriteProvider) {
                 ForEach(LLMProvider.allCases) { p in
@@ -1294,7 +1074,6 @@ struct PolishSettingsView: View {
                 }
             }
             .labelsHidden()
-            // Hug the native pop-up's width instead of stretching the whole row.
             .fixedSize()
             .modifier(PointingHandCursor())
         }
@@ -1304,18 +1083,11 @@ struct PolishSettingsView: View {
         PolishKeyField()
     }
 
-    /// The curated model for the selected provider — shown read-only (one model
-    /// per provider today; the picker returns automatically if that changes).
     private var modelRow: some View {
         LabeledContent("Model", value: settings.rewriteModel)
     }
 }
 
-/// The Polish provider key field. Owns the LLM validator and the policy that a
-/// verified key is the commit — it turns Polish on from setup or resumes it from
-/// a broken key (never auto-resuming a deliberate pause), and keeps the validator
-/// pointed at the current provider/key. Extracted so the Polish pane and search
-/// results share one self-contained, self-enabling control.
 private struct PolishKeyField: View {
     @EnvironmentObject var settings: SettingsStore
     @StateObject private var validator = LLMKeyValidator(provider: SettingsStore.shared.rewriteProvider)
@@ -1359,14 +1131,9 @@ private struct PolishKeyField: View {
     }
 }
 
-/// Light / Dark / System chooser rendered as three selectable preview cards
-/// (à la macOS System Settings → Appearance). Each card shows a mini window
-/// mock in the corresponding appearance with an indigo ring on the selection.
 private struct AppearanceCardPicker: View {
     @Binding var selection: AppearancePreference
 
-    // Light → Dark → System reads most naturally; the enum's own order puts
-    // System first, so we fix the display order explicitly.
     private let order: [AppearancePreference] = [.light, .dark, .system]
 
     var body: some View {
@@ -1399,8 +1166,6 @@ private struct AppearanceCard: View {
                     .clipShape(RoundedRectangle(cornerRadius: Radius.button))
                     .overlay(
                         RoundedRectangle(cornerRadius: Radius.button)
-                            // Firm the border on hover so an unselected swatch
-                            // reads as pickable; selected keeps its amber outline.
                             .stroke(Hover.cardBorder(isSelected: isSelected, hovering: hovering),
                                     lineWidth: isSelected ? 2 : 1)
                     )
@@ -1481,7 +1246,6 @@ private struct AppearanceThumbnail: View {
         switch style {
         case .light:  return lightLine
         case .dark:   return darkLine
-        // Mid gray reads on both halves of the split.
         case .system: return Color(white: 0.55)  // ds-allow: dual-appearance preview
         }
     }
@@ -1502,7 +1266,6 @@ private struct AppearanceThumbnail: View {
     }
 }
 
-/// Right-hand diagonal wedge used to split the System appearance thumbnail.
 private struct DiagonalSplit: Shape {
     func path(in rect: CGRect) -> Path {
         var path = Path()
@@ -1548,12 +1311,6 @@ struct PermissionRow: View {
     }
 }
 
-/// Records a hotkey. Two paths:
-///
-/// - Carbon combo: first qualifying key-down event (must include a modifier)
-///   wins.
-/// - Fn-only: detected via `.flagsChanged` events where `function` is the only
-///   active modifier.
 struct HotkeyRecorder: View {
     @EnvironmentObject var settings: SettingsStore
     @EnvironmentObject var coordinator: AppCoordinator
@@ -1562,8 +1319,6 @@ struct HotkeyRecorder: View {
     @State private var keyMonitor: Any?
     @State private var flagsMonitor: Any?
     @State private var fnCapture = FnKeyCapture()
-    // A lone modifier is recorded on release, but only if it was pressed by
-    // itself — this holds that pending key until release confirms it.
     @State private var modifierCandidate: UInt32?
 
     var body: some View {
@@ -1586,7 +1341,6 @@ struct HotkeyRecorder: View {
             .contentShape(Rectangle())
             .help(isEditing ? "Press a new shortcut" : "Change dictation shortcut")
             .modifier(PointingHandCursor())
-            // Click outside while recording → cancel back to the pencil button.
             .dismissOnClickOutside(isActive: isEditing) { cancelEditing() }
         } label: {
             VStack(alignment: .leading, spacing: SettingsMetrics.captionSpacing) {
@@ -1607,8 +1361,6 @@ struct HotkeyRecorder: View {
 
     private var shortcutDescription: String {
         if isEditing { return "Press a new shortcut" }
-        // The gesture is explained by the Activation mode cards above; here the
-        // caption just says what this key is, so the two don't repeat.
         return "Your dictation shortcut, active in any app"
     }
 
@@ -1664,8 +1416,6 @@ struct HotkeyRecorder: View {
                 return nil
             }
 
-            // A real key press cancels any pending lone-modifier capture: this is
-            // either a combo (handled below) or a bare key (rejected below).
             modifierCandidate = nil
 
             let carbonMods = HotkeyConversion.carbonModifiers(from: event.modifierFlags)
@@ -1693,9 +1443,6 @@ struct HotkeyRecorder: View {
             let keyCode = UInt32(event.keyCode)
             guard HotkeyConversion.isModifierKeyCode(keyCode) else { return event }
 
-            // Capture a lone modifier on release, and only if it was held by
-            // itself — pressing a key while it's down clears the candidate (see
-            // the keyDown monitor) so ⌘+E still records as a combo.
             let mask = HotkeyConversion.nsModifierFlag(for: keyCode)
             let isDown = flags.contains(mask)
             let activeCount = (flags.contains(.command) ? 1 : 0)
@@ -1739,8 +1486,6 @@ struct HotkeyRecorder: View {
 private final class FnKeyCapture {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
-    // Tap runs on a dedicated thread, not the main run loop: a main-thread
-    // stall there would freeze modifier keys system-wide (see HotkeyManager).
     private var tapThread: Thread?
     private var tapRunLoop: CFRunLoop?
     private var globalMonitor: Any?
@@ -1763,7 +1508,6 @@ private final class FnKeyCapture {
     func stop() {
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
-            // Stop the tap thread's run loop so it exits.
             if let runLoop = tapRunLoop {
                 if let source = runLoopSource {
                     CFRunLoopRemoveSource(runLoop, source, .commonModes)
@@ -1833,7 +1577,6 @@ private final class FnKeyCapture {
         eventTap = tap
         runLoopSource = source
 
-        // Run the tap on a dedicated thread (see note above); stop() ends it.
         let thread = Thread { [weak self] in
             let runLoop = CFRunLoopGetCurrent()
             self?.tapRunLoop = runLoop
@@ -1894,10 +1637,6 @@ private struct ShortcutCaptureField: View {
             }
         }
         .padding(.horizontal, 8)
-        // Hug the caps, but never grow past the right column into the "Hotkey"
-        // label/subtext: 188pt floor keeps the common case looking unchanged,
-        // 280pt ceiling stays clear of the caption. The recording placeholder
-        // centers in the field; recorded caps stay trailing-aligned.
         .frame(minWidth: 188, maxWidth: 280, alignment: placeholder == nil ? .trailing : .center)
         .fixedSize(horizontal: true, vertical: false)
         .fieldSurface(focused: isActive)

@@ -51,8 +51,6 @@ final class UpdateManager: NSObject, ObservableObject {
         updater.checkForUpdates()
     }
 
-    // MARK: - Modal actions
-
     func restartNow() {
         let reply = installReply
         installReply = nil
@@ -65,8 +63,6 @@ final class UpdateManager: NSObject, ObservableObject {
         reply?(.dismiss)
         phase = .idle
     }
-
-    // MARK: - Config
 
     private static var hasSparkleConfiguration: Bool {
         let info = Bundle.main.infoDictionary ?? [:]
@@ -86,8 +82,6 @@ final class UpdateManager: NSObject, ObservableObject {
         phase = .idle
     }
 }
-
-// MARK: - SPUUserDriver
 
 extension UpdateManager: SPUUserDriver {
     func show(_ request: SPUUpdatePermissionRequest,

@@ -2,38 +2,15 @@ import Foundation
 import Combine
 import SwiftData
 
-/// One calendar day of dictation usage, kept as a durable aggregate for
-/// Insights. Separate from `TranscriptRecord` on purpose: "Delete All" wipes
-/// transcript *content* (typed `context.delete(model: TranscriptRecord.self)`)
-/// while these content-free counters survive — the same contract as the
-/// `lifetimeWords` UserDefaults counter, so the Activity heatmap, streaks, and
-/// Records don't reset when the user clears their words.
 @Model
 final class DailyUsageRecord {
-    /// Local-calendar day key, e.g. "2026-07-11". A string (not a `Date`) so
-    /// the unique constraint can't be undermined by sub-day timestamps or
-    /// timezone drift in `Date` equality. A timezone change mid-travel can
-    /// split a "day" across two keys — acceptable for a usage stat.
     @Attribute(.unique) var dayKey: String
-    /// Start-of-day in the local calendar at write time, for range math.
     var day: Date
-    /// Words dictated that day (whitespace count, frozen per entry at save).
     var words: Int
-    /// Number of dictations that day.
     var dictations: Int
-    /// The longest single dictation (press → release) that day, in ms.
     var longestDictationMs: Int
-    /// Filler words Polish removed that day (see `InsightsMath.fillersRemoved`).
     var fillerWordsRemoved: Int
-    /// Total speaking time that day (sum of press → release), for day-level
-    /// words-per-minute. Optional: added after the first aggregate release,
-    /// so pre-existing rows read back `nil` (treated as 0 / unknown).
     var speakingMs: Int?
-    /// Words from dictations that recorded a duration — the numerator that
-    /// pairs with `speakingMs`. Distinct from `words`: seeded and pre-timing
-    /// rows add to `words` but not here, so words-per-minute never divides a
-    /// day's full (partly untimed) word count by a partial speaking time.
-    /// Optional for the same lightweight-migration reason as `speakingMs`.
     var spokenWords: Int?
 
     init(dayKey: String, day: Date, words: Int = 0, dictations: Int = 0,
@@ -50,13 +27,8 @@ final class DailyUsageRecord {
     }
 }
 
-/// Owner of the daily usage aggregates. Writes ride the same SwiftData
-/// container as the transcripts (one store, one lightweight migration, one
-/// in-memory fallback story); the UI reads the published `days` value mirror,
-/// exactly like `TranscriptHistoryStore.entries`.
 @MainActor
 final class UsageAggregateStore: ObservableObject {
-    /// A day's aggregates as a plain value for the UI / analytics math.
     struct Day: Equatable, Identifiable {
         var id: String { dayKey }
         let dayKey: String
@@ -69,29 +41,18 @@ final class UsageAggregateStore: ObservableObject {
         var spokenWords: Int
     }
 
-    /// Instantiated at app launch (InkItApp holds it), *before* any dictation
-    /// can call `record` — seeding reads the persisted transcript rows, so a
-    /// first-touch inside `TranscriptHistoryStore.add` would double-count the
-    /// row that triggered it.
     static let shared = UsageAggregateStore(
         container: TranscriptHistoryStore.shared.modelContainer,
         isPersistent: TranscriptHistoryStore.shared.isPersistent
     )
 
-    /// Every recorded day, oldest first. Rebuilt from storage on launch and
-    /// kept in step by `record`.
     @Published private(set) var days: [Day] = []
 
     private let container: ModelContainer
-    /// Mirrors `TranscriptHistoryStore.isPersistent` — durable side effects
-    /// (the seeded flag) only land against a store that survives a relaunch.
     private let isPersistent: Bool
     private var context: ModelContext { container.mainContext }
     private let defaults: UserDefaults
     private let seededKey = "usageAggregates.seeded.v1"
-    /// Legacy pre-SwiftData history blob — while it exists, the transcript
-    /// table may not yet reflect all history, so seeding must wait (mirrors
-    /// `loadLifetimeWords`'s gating).
     private let legacyHistoryKey = "transcriptHistory.v1"
 
     init(container: ModelContainer, isPersistent: Bool, defaults: UserDefaults = .standard) {
@@ -102,11 +63,6 @@ final class UsageAggregateStore: ObservableObject {
         loadDays()
     }
 
-    // MARK: - Public API
-
-    /// Folds one dictation into its local-calendar day. Called by
-    /// `TranscriptHistoryStore.add` after the transcript row durably saved, so
-    /// aggregates never outrun the history they summarize.
     func record(words: Int, recordingMs: Int?, fillersRemoved: Int, on date: Date = Date()) {
         let record = fetchOrCreate(for: date)
         record.words += words
@@ -114,7 +70,6 @@ final class UsageAggregateStore: ObservableObject {
         record.longestDictationMs = max(record.longestDictationMs, recordingMs ?? 0)
         record.fillerWordsRemoved += fillersRemoved
         record.speakingMs = (record.speakingMs ?? 0) + (recordingMs ?? 0)
-        // Only words we actually timed feed words-per-minute (see `spokenWords`).
         if let ms = recordingMs, ms > 0 {
             record.spokenWords = (record.spokenWords ?? 0) + words
         }
@@ -127,14 +82,6 @@ final class UsageAggregateStore: ObservableObject {
                          spokenWords: record.spokenWords ?? 0))
     }
 
-    // MARK: - Seeding
-
-    /// One-time backfill from existing transcripts, so the heatmap and records
-    /// aren't empty for long-time users on first launch after the upgrade.
-    /// Reads the persisted rows (not the published mirror) and follows the
-    /// `loadLifetimeWords` gating: only against a durable store, only once the
-    /// legacy blob has fully migrated, and the "done" flag lands only after a
-    /// successful save — otherwise a later healthy launch retries.
     private func seedFromHistoryIfNeeded() {
         guard isPersistent else { return }
         guard defaults.object(forKey: seededKey) == nil else { return }
@@ -155,12 +102,9 @@ final class UsageAggregateStore: ObservableObject {
             record.dictations += 1
             record.longestDictationMs = max(record.longestDictationMs, entry.recordingMs ?? 0)
             record.speakingMs = (record.speakingMs ?? 0) + (entry.recordingMs ?? 0)
-            // Almost always 0 for seeded rows — pre-timing history has no
-            // `recordingMs` — but a recent build's rows can carry it.
             if let ms = entry.recordingMs, ms > 0 {
                 record.spokenWords = (record.spokenWords ?? 0) + words
             }
-            // Retroactive filler credit where a before→after pair survives.
             if entry.polish == .polished, let original = entry.original {
                 record.fillerWordsRemoved += InsightsMath.fillersRemoved(original: original,
                                                                          polished: entry.text)
@@ -176,8 +120,6 @@ final class UsageAggregateStore: ObservableObject {
             DebugLog.info("UsageAggregateStore: seeded daily aggregates from \(entries.count) transcript(s)")
         }
     }
-
-    // MARK: - SwiftData plumbing
 
     private func fetchOrCreate(for date: Date) -> DailyUsageRecord {
         let key = Self.dayKey(for: date)
@@ -232,10 +174,6 @@ final class UsageAggregateStore: ObservableObject {
         }
     }
 
-    // MARK: - Day keys
-
-    /// Nonisolated (lives in `InsightsMath`) so the pure analytics functions
-    /// can key days without hopping onto the main actor.
     static func dayKey(for date: Date) -> String {
         InsightsMath.dayKey(for: date)
     }
