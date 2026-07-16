@@ -98,7 +98,7 @@ struct SidebarView: View {
                 .padding(.top, 10)
         }
         .padding(10)
-        .frame(width: 180)
+        .frame(width: 220)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(Color.sidebar.ignoresSafeArea())
     }

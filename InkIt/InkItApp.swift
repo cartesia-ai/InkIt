@@ -496,10 +496,10 @@ struct InkItApp: App {
         // window size; once a frame is saved it takes over on later launches.
         //
         // Width lands the Home content column (capped at 860, with a 44pt gutter
-        // each side) flush against the sheet's right edge: 180 sidebar + 860 +
-        // 2×44 + 10 sheet inset ≈ 1138. Anything wider just opens dead canvas on
+        // each side) flush against the sheet's right edge: 220 sidebar + 860 +
+        // 2×44 + 10 sheet inset ≈ 1178. Anything wider just opens dead canvas on
         // the right, since the column stays left-aligned at its cap.
-        .defaultSize(width: 1140, height: 860)
+        .defaultSize(width: 1180, height: 860)
         .commands {
             // Strip the system menu bar down to the bare minimum. macOS won't
             // let us remove the leading "InkIt" menu (About/Quit live there)
