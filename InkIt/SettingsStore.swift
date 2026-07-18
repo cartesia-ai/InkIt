@@ -20,16 +20,16 @@ enum HotkeyBinding: Equatable {
         let onlyCommand = usesCommand && !usesControl && !usesOption && !usesShift
 
         if onlyCommand && Self.commonCommandKeys.contains(keyCode) { return false }
-        if onlyCommand && keyCode == UInt32(kVK_Space) { return false }            // Spotlight
+        if onlyCommand && keyCode == UInt32(kVK_Space) { return false }
         if usesControl && !usesCommand && !usesOption && !usesShift
-            && keyCode == UInt32(kVK_Space) { return false }                        // input methods
+            && keyCode == UInt32(kVK_Space) { return false }
         if usesCommand && usesOption && !usesControl && !usesShift
-            && keyCode == UInt32(kVK_Escape) { return false }                       // Force Quit
+            && keyCode == UInt32(kVK_Escape) { return false }
         if usesCommand && usesControl && !usesOption && !usesShift
-            && keyCode == UInt32(kVK_ANSI_Q) { return false }                       // Lock Screen
+            && keyCode == UInt32(kVK_ANSI_Q) { return false }
         if usesCommand && usesShift && !usesControl && !usesOption
-            && Self.screenshotKeys.contains(keyCode) { return false }               // screenshots
-        if usesCommand && nonCommandModifiers == 0 && keyCode == UInt32(kVK_Tab) { return false } // app switch
+            && Self.screenshotKeys.contains(keyCode) { return false }
+        if usesCommand && nonCommandModifiers == 0 && keyCode == UInt32(kVK_Tab) { return false }
         return true
     }
 
@@ -100,6 +100,12 @@ enum DictationMode: String, CaseIterable, Identifiable {
     }
 }
 
+enum DictionaryLimits {
+    static let maxTerms = 100
+    static let maxCharacters = 1200
+    static let approachingTerms = 85
+}
+
 final class SettingsStore: ObservableObject {
     static let shared = SettingsStore()
 
@@ -108,10 +114,10 @@ final class SettingsStore: ObservableObject {
     private enum Keys {
         static let apiKey = "cartesiaAPIKey"
         static let appearance = "appearancePreference"
-        static let hotkeyKind = "hotkeyKind"           // "carbon" | "fn"
+        static let hotkeyKind = "hotkeyKind"
         static let hotkeyKeyCode = "hotkeyKeyCode"
         static let hotkeyModifiers = "hotkeyModifiers"
-        static let dictationMode = "dictationMode"     // "hold" | "toggle"
+        static let dictationMode = "dictationMode"
         static let hasCompletedOnboarding = "hasCompletedOnboarding"
         static let notchHorizontalPosition = "notchHorizontalPosition"
         static let playFeedbackSounds = "playFeedbackSounds"
@@ -122,15 +128,14 @@ final class SettingsStore: ObservableObject {
         static let polishOutOfCredits = "polishOutOfCredits"
         static let cartesiaKeyInvalid = "cartesiaKeyInvalid"
         static let cartesiaOutOfCredits = "cartesiaOutOfCredits"
-        static let anthropicAPIKey = "anthropicAPIKey"   // legacy; migrated into llmKeys
+        static let anthropicAPIKey = "anthropicAPIKey"
         static let rewriteProvider = "rewriteProvider"
         static let rewriteModel = "rewriteModel"
         static let llmKeys = "llmAPIKeys"
+        static let dictionaryTerms = "dictionaryTerms"
         static let debugLogging = DebugLog.isEnabledKey
     }
 
-    /// API keys live in the macOS Keychain, never in UserDefaults (which is a
-    /// plaintext plist on disk). Accounts under one service, keyed by name.
     private enum KeychainAccount {
         static let cartesia = "cartesiaAPIKey"
         static func llm(_ provider: LLMProvider) -> String { "llm." + provider.rawValue }
@@ -241,33 +246,53 @@ final class SettingsStore: ObservableObject {
         correctionEnabled = true
     }
 
-    /// Pause polish without forgetting the key (the master toggle's off state).
     func pausePolish() { correctionEnabled = false }
+
+    @Published var dictionaryTerms: [String] {
+        didSet { defaults.set(dictionaryTerms, forKey: Keys.dictionaryTerms) }
+    }
+
+    var validatedDictionaryTerms: [String] {
+        Self.validatedDictionaryTerms(dictionaryTerms)
+    }
+
+    static func normalizedDictionaryTerm(_ raw: String) -> String? {
+        let separators = CharacterSet.whitespacesAndNewlines.union(CharacterSet.controlCharacters)
+        let collapsed = raw.components(separatedBy: separators)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        return collapsed.isEmpty ? nil : collapsed
+    }
+
+    static func validatedDictionaryTerms(_ raw: [String]) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        var characters = 0
+        for term in raw {
+            guard let clean = normalizedDictionaryTerm(term) else { continue }
+            if result.count >= DictionaryLimits.maxTerms { break }
+            if !seen.insert(clean).inserted { continue }
+            if characters + clean.count > DictionaryLimits.maxCharacters { continue }
+            result.append(clean)
+            characters += clean.count
+        }
+        return result
+    }
 
     @Published var hotkey: HotkeyBinding {
         didSet { saveHotkey() }
     }
 
-    /// Hold-to-talk vs tap-to-toggle. Persisted; read by AppCoordinator's
-    /// hotkey handlers to decide whether release stops dictation (`.hold`) or
-    /// a second press does (`.toggle`).
     @Published var dictationMode: DictationMode {
         didSet { defaults.set(dictationMode.rawValue, forKey: Keys.dictationMode) }
     }
 
-    /// Whether InkIt opens automatically at login. The system (`SMAppService`)
-    /// is the source of truth, so this mirrors the real registration status
-    /// rather than a separately-persisted flag — flipping it registers or
-    /// unregisters the login item, and `syncLaunchAtLoginFromSystem()`
-    /// reconciles it (the user can change Login Items in System Settings).
     @Published var launchAtLogin: Bool {
         didSet {
             guard !isSyncingLaunchAtLogin, launchAtLogin != oldValue else { return }
             applyLaunchAtLogin()
         }
     }
-    /// Set while mirroring the system status into `launchAtLogin` so the didSet
-    /// doesn't bounce back into another register/unregister.
     private var isSyncingLaunchAtLogin = false
 
     private func applyLaunchAtLogin() {
@@ -281,12 +306,10 @@ final class SettingsStore: ObservableObject {
         } catch {
             NSLog("InkIt: launch-at-login %@ failed: %@",
                   launchAtLogin ? "register" : "unregister", error.localizedDescription)
-            syncLaunchAtLoginFromSystem()   // fall back to the real state
+            syncLaunchAtLoginFromSystem()
         }
     }
 
-    /// Re-reads the actual login-item registration and mirrors it into the
-    /// toggle without re-triggering registration. Call when Settings appears.
     func syncLaunchAtLoginFromSystem() {
         let enabled = SMAppService.mainApp.status == .enabled
         guard launchAtLogin != enabled else { return }
@@ -373,10 +396,9 @@ final class SettingsStore: ObservableObject {
         self.llmAPIKeys = loadedLLMKeys
         defaults.removeObject(forKey: Keys.llmKeys)
         defaults.removeObject(forKey: Keys.anthropicAPIKey)
+        self.dictionaryTerms = defaults.array(forKey: Keys.dictionaryTerms) as? [String] ?? []
         self.dictationMode = defaults.string(forKey: Keys.dictationMode)
             .flatMap(DictationMode.init(rawValue:)) ?? .hold
-        // Mirror the real login-item status. didSet does not fire for this
-        // initial assignment, so reading the system here never re-registers.
         self.launchAtLogin = SMAppService.mainApp.status == .enabled
         self.hasCompletedOnboarding = defaults.bool(forKey: Keys.hasCompletedOnboarding)
         self.debugLoggingEnabled = defaults.bool(forKey: Keys.debugLogging)
@@ -504,10 +526,10 @@ enum Keychain {
         guard SecCodeCopySigningInformation(staticCode, flags, &infoCF) == errSecSuccess,
               let info = infoCF as? [String: Any],
               info[kSecCodeInfoIdentifier as String] != nil else {
-            return false  // unsigned
+            return false
         }
         let signatureFlags = (info[kSecCodeInfoFlags as String] as? NSNumber)?.uint32Value ?? 0
-        let adhoc: UInt32 = 0x2  // kSecCodeSignatureAdhoc
+        let adhoc: UInt32 = 0x2
         return (signatureFlags & adhoc) == 0
     }
 }

@@ -1,45 +1,37 @@
 import SwiftUI
 
-// MARK: - Main-window sections
-
-/// The main window's top-level sections, navigated by the left sidebar
-/// (round-10 shell — see prototypes/design-direction-round10.md). Dictionary
-/// and Styles join under a "Personalize" group in a later round.
 enum MainSection: String, CaseIterable, Identifiable {
     case home
+    case dictionary
     case insights
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .home:     return "Home"
-        case .insights: return "Insights"
+        case .home:       return "Home"
+        case .dictionary: return "Dictionary"
+        case .insights:   return "Insights"
         }
     }
 
     var icon: String {
         switch self {
-        case .home:     return "house"
-        case .insights: return "chart.bar.xaxis"
+        case .home:       return "house"
+        case .dictionary: return "character.book.closed"
+        case .insights:   return "chart.bar.xaxis"
         }
     }
 
-    /// ⌘1, ⌘2, … in sidebar order.
     var shortcut: KeyEquivalent {
         switch self {
-        case .home:     return "1"
-        case .insights: return "2"
+        case .home:       return "1"
+        case .dictionary: return "2"
+        case .insights:   return "3"
         }
     }
 }
 
-// MARK: - Sidebar
-
-/// The main window's left rail: wordmark, section navigation, and a footer with
-/// Settings, the live "armed" status pill, and the version caption. A fixed
-/// 180pt column on its own deeper paper (`Color.sidebar`), extending under the
-/// transparent titlebar so the column reads floor-to-ceiling.
 struct SidebarView: View {
     @Binding var section: MainSection
     let onOpenSettings: () -> Void

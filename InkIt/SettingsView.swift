@@ -122,7 +122,7 @@ private struct ClickOutsideDismiss: ViewModifier {
             if !frameInWindow.contains(event.locationInWindow) {
                 DispatchQueue.main.async { onDismiss() }
             }
-            return event  // never consume — the click still does its normal job
+            return event
         }
     }
 
@@ -179,15 +179,12 @@ private struct APIKeyField: View {
         case .verified:
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(.green)
-                .help("Key verified")
         case .invalidKey:
             Image(systemName: "xmark.circle.fill")
                 .foregroundStyle(.red)
-                .help("Invalid key")
         case .couldNotVerify:
             Image(systemName: "exclamationmark.circle.fill")
                 .foregroundStyle(.orange)
-                .help("Couldn’t verify")
         default:
             EmptyView()
         }
@@ -223,7 +220,7 @@ private struct RevealableSecureField: NSViewRepresentable {
         field.drawsBackground = false
         field.focusRingType = .none
         field.placeholderString = placeholder
-        field.applySecure(true)          // masked at rest
+        field.applySecure(true)
         field.stringValue = text
         field.onFocusChange = onFocusChange
         field.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -262,7 +259,7 @@ private final class RevealingTextField: NSTextField {
         cell.isSelectable = true
         cell.isBordered = false
         cell.isBezeled = false
-        cell.focusRingType = .none      // the outer FieldSurface accent border is our only focus cue
+        cell.focusRingType = .none
         cell.drawsBackground = false
         cell.usesSingleLineMode = true
         cell.lineBreakMode = .byTruncatingTail
@@ -291,23 +288,19 @@ private final class RevealingTextField: NSTextField {
         super.textDidEndEditing(notification)
         isEditing = false
         removeClickMonitor()
-        applySecure(true)                // re-mask once editing ends
+        applySecure(true)
         onFocusChange?(false)
     }
 
-    /// A click in a SwiftUI `Form`'s dead space doesn't resign first responder,
-    /// so we watch for a mouse-down outside our bounds while editing and end
-    /// editing ourselves — that fires `textDidEndEditing`, re-masking the key
-    /// and clearing the focus border.
     private func installClickMonitor() {
         removeClickMonitor()
         clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
             guard let self, let window = self.window, event.window === window else { return event }
             let point = self.convert(event.locationInWindow, from: nil)
             if !self.bounds.contains(point) {
-                window.makeFirstResponder(nil)   // → textDidEndEditing
+                window.makeFirstResponder(nil)
             }
-            return event                          // never consume; the click still lands
+            return event
         }
     }
 
@@ -1206,20 +1199,12 @@ private struct AppearanceCard: View {
     }
 }
 
-/// A tiny window mock used inside an `AppearanceCard`: traffic-light dots and a
-/// few text lines, one of them the amber accent. The `.system` style splits the
-/// canvas diagonally between the light and dark surfaces.
-///
-/// These are the one place raw literals are correct, not a smell: each card must
-/// show *both* appearances at once regardless of the active mode, so they can't
-/// resolve a single appearance-aware token. The values mirror the warm-paper
-/// `HomeCanvas` token (light + dark) so the preview reads as the real app.
 private struct AppearanceThumbnail: View {
     enum Style { case light, dark, system }
     let style: Style
 
-    private let lightSurface = Color(red: 0.910, green: 0.902, blue: 0.886)  // HomeCanvas light — ds-allow: dual-appearance preview
-    private let darkSurface  = Color(red: 0.118, green: 0.110, blue: 0.102)  // HomeCanvas dark — ds-allow: dual-appearance preview
+    private let lightSurface = Color(red: 0.910, green: 0.902, blue: 0.886)  // ds-allow: dual-appearance preview
+    private let darkSurface  = Color(red: 0.118, green: 0.110, blue: 0.102)  // ds-allow: dual-appearance preview
     private let lightLine    = Color(red: 0.80, green: 0.79, blue: 0.76)  // ds-allow: dual-appearance preview
     private let darkLine     = Color(red: 0.29, green: 0.28, blue: 0.26)  // ds-allow: dual-appearance preview
 
@@ -1339,7 +1324,6 @@ struct HotkeyRecorder: View {
             }
             .buttonStyle(.plain)
             .contentShape(Rectangle())
-            .help(isEditing ? "Press a new shortcut" : "Change dictation shortcut")
             .modifier(PointingHandCursor())
             .dismissOnClickOutside(isActive: isEditing) { cancelEditing() }
         } label: {

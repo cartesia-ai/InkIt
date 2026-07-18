@@ -277,7 +277,8 @@ final class AppCoordinator: ObservableObject {
             warmRewriter = rewriter
         }
 
-        let client = CartesiaStreamingClient(apiKey: settings.cartesiaAPIKey)
+        let client = CartesiaStreamingClient(apiKey: settings.cartesiaAPIKey,
+                                             keyterms: settings.validatedDictionaryTerms)
         self.client = client
 
         client.onTranscriptUpdate = { [weak self, suppressLivePreview] text in
@@ -515,21 +516,12 @@ final class AppCoordinator: ObservableObject {
         armErrorDismiss()
     }
 
-    /// Self-clear the `.error` notice after a brief dwell — but keep it up while
-    /// the hotkey is still held, so an error that fires mid-hold stays visible
-    /// for the whole press (the user keeps seeing it instead of it flashing by)
-    /// and only clears after they release. Re-armed on release for a clean
-    /// post-release dwell. A cancelable work item so re-arming supersedes.
-    ///
-    /// 1.5s: the message is 2–3 words and usually already seen during the hold,
-    /// so the post-release window is a confirmation tail — long enough to read
-    /// cold, short enough not to feel stuck.
     private func armErrorDismiss() {
         errorDismissWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self, case .error = self.state else { return }
             if self.isHotkeyHeld {
-                self.armErrorDismiss()   // still holding — keep showing, re-check
+                self.armErrorDismiss()
             } else {
                 self.state = .idle
             }

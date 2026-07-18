@@ -1,34 +1,13 @@
 import Foundation
 
-/// Minimal client for Cartesia STT streaming over WebSocket (Ink 2).
-///
-/// Protocol (per docs.cartesia.ai/api-reference/stt/turns/websocket):
-///   - URL:    wss://api.cartesia.ai/stt/turns/websocket
-///   - Auth:   X-API-Key header
-///   - Params: model=ink-2, encoding=pcm_s16le, sample_rate=16000, cartesia_version=2026-03-01
-///   - Audio:  binary frames, raw PCM matching encoding/sample_rate
-///   - Close:  client sends {"type":"close"}
-///
-/// Server events:
-///   connected, turn.start, turn.update (cumulative transcript),
-///   turn.eager_end, turn.resume, turn.end (turn final), error
-///
-/// All emitted transcripts are already "final" words; partials are not exposed.
-/// We accumulate completed turns and append the latest in-flight `turn.update`
-/// to produce the full press-to-talk transcript.
-/// Why an STT session failed, classified from Cartesia's error event
-/// (`status_code` + `error_code`, per docs.cartesia.ai/use-the-api/api-conventions)
-/// or a transport-level URLError. Drives the short notch message and the
-/// persistent Home "Transcription is paused" card.
 enum STTFailure: Equatable {
-    case offline        // no network / can't reach host
-    case serverError    // 5xx, timeout, or unreachable server
-    case rateLimited    // 429 / concurrency_limited
-    case outOfCredits   // 402 / quota_exceeded / plan_upgrade_required
-    case invalidKey     // 401 / 403
-    case unknown        // 400 (bad input) or anything unclassified
+    case offline
+    case serverError
+    case rateLimited
+    case outOfCredits
+    case invalidKey
+    case unknown
 
-    /// Short, glanceable copy for the notch island. Plain language, no codes.
     var notchMessage: String {
         switch self {
         case .offline:      return "No internet"
@@ -78,6 +57,7 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
     var onClosed: ((String) -> Void)?
 
     private let apiKey: String
+    private let keyterms: [String]
     private let model = "ink-2"
     private let cartesiaVersion = "2026-03-01"
     private let sampleRate = 16_000
@@ -94,37 +74,34 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
     private var currentTurn: String = ""
     private var closeRequestedAt: Date?
 
-    // Audio captured before the server's `connected` event is held here and
-    // flushed in order once the socket is ready. URLSession will technically
-    // queue early `send()` calls, but Cartesia may discard binary frames
-    // received before it has fully initialized the session. Buffering on our
-    // side guarantees no leading audio is dropped.
     private var isConnected = false
     private var pendingAudio: [Data] = []
     private var pendingClose = false
-    // Set once we've requested close. The server then flushes buffered audio
-    // into a final `turn.end` (carrying the last word) before disconnecting, so
-    // we complete on that event rather than racing the socket close.
-    // `internal` (not `private`) so tests can simulate the post-release state
-    // without standing up a live WebSocket.
     var awaitingClose = false
     private let stateLock = NSLock()
 
-    init(apiKey: String) {
+    init(apiKey: String, keyterms: [String] = []) {
         self.apiKey = apiKey
+        self.keyterms = keyterms
         super.init()
         self.session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
     }
 
-    func connect() {
+    func makeConnectionURL() -> URL? {
         var comps = URLComponents(string: "wss://api.cartesia.ai/stt/turns/websocket")!
-        comps.queryItems = [
+        var queryItems = [
             URLQueryItem(name: "model", value: model),
             URLQueryItem(name: "encoding", value: "pcm_s16le"),
             URLQueryItem(name: "sample_rate", value: String(sampleRate)),
             URLQueryItem(name: "cartesia_version", value: cartesiaVersion)
         ]
-        guard let url = comps.url else {
+        queryItems += keyterms.map { URLQueryItem(name: "keyterm", value: $0) }
+        comps.queryItems = queryItems
+        return comps.url
+    }
+
+    func connect() {
+        guard let url = makeConnectionURL() else {
             onError?(.unknown)
             return
         }
@@ -345,23 +322,19 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
     }
 }
 
-// MARK: - Close-path metrics
-
 enum CloseReason: String, Codable {
-    case finalTurnReceived    // final turn.end after close (happy path: full transcript captured)
-    case serverClosed         // server closed the socket before a post-close turn.end (e.g. nothing to flush)
-    case graceTimerExpired    // safety timer fired before the server finished
-    case serverError          // server sent {"type":"error"}
-    case silentNoAudio        // 400 (or post-close 500) on a press with no transcript content — treated as "said nothing"
-    case receiveFailed        // receive loop errored
-    case externalCancel       // cancel() called from outside (e.g. audio start failure, app error)
+    case finalTurnReceived
+    case serverClosed
+    case graceTimerExpired
+    case serverError
+    case silentNoAudio
+    case receiveFailed
+    case externalCancel
 }
 
 struct CloseMetric: Codable {
     let timestamp: Date
     let reason: CloseReason
-    /// Seconds between sending {"type":"close"} and the socket finishing.
-    /// nil if close was never requested (e.g. externalCancel before finalize).
     let elapsedAfterCloseSent: TimeInterval?
 }
 

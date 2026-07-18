@@ -94,11 +94,7 @@ struct HomeView: View {
                     historyGroups
                 }
             }
-            .frame(maxWidth: 860, alignment: .leading)
-            .padding(.horizontal, 44)
-            .padding(.top, 36)
-            .padding(.bottom, 32)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .pageFrame()
         }
         .scrollIndicators(.hidden)
         .onChange(of: history.entries.isEmpty) { _, isEmpty in

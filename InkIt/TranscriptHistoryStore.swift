@@ -11,36 +11,25 @@ final class TranscriptHistoryStore: ObservableObject {
         var totalMs: Int { transcribeMs + polishMs }
     }
 
-    /// Whether AI correction ran for a transcript, and how it turned out.
-    /// Persisted so the history row can show the right indicator. `nil` on
-    /// entries written before this was tracked; the UI then falls back to
-    /// `original != nil` to decide whether to show the polished mark.
     enum PolishOutcome: String, Codable {
-        case off       // correction disabled, no key, or skipped — no indicator
-        case polished  // ran and succeeded (text may or may not have changed)
-        case failed    // ran but errored (e.g. rate limit) — raw text pasted
+        case off
+        case polished
+        case failed
     }
 
-    /// Why a `.failed` polish failed, so the history row can show a concise,
-    /// actionable reason instead of a generic warning.
     enum PolishFailureReason: String, Codable {
-        case rateLimited   // provider 429
-        case offline       // no network / can't reach host
-        case timedOut      // request exceeded the rewrite timeout
-        case invalidKey    // 401/403 or missing key
-        case outOfCredits  // provider 402 / billing limit reached
-        case serverError   // provider 5xx
-        case unknown       // parse error, sanity reject, anything else
+        case rateLimited
+        case offline
+        case timedOut
+        case invalidKey
+        case outOfCredits
+        case serverError
+        case unknown
     }
 
-    /// Details attached to a `.failed` outcome, used to build the warning
-    /// tooltip. Optional on the entry so older entries still decode.
     struct PolishFailure: Equatable, Codable {
         let reason: PolishFailureReason
-        /// Display name of the provider that failed (e.g. "Groq").
         let provider: String
-        /// For rate limits: the absolute time after which a retry is sensible
-        /// (from the Retry-After header). nil when not applicable/known.
         var retryAt: Date?
     }
 

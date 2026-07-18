@@ -52,16 +52,9 @@ final class STTFailureRoutingTests: XCTestCase {
         }
     }
 
-    // MARK: - Post-close 500 on a silent tap → silent, no error
-
-    /// A rapid tap-and-release closes the session with ~zero audio; the server
-    /// answers the close with a 500 instead of an empty turn. The user has
-    /// already released and nothing was transcribed, so "Server error" is
-    /// alarming and non-actionable — it must collapse to the clean empty path,
-    /// exactly like the 400 flavor of the same press.
     func testServerErrorAfterCloseWithNoContentCollapsesSilently() {
         let client = CartesiaStreamingClient(apiKey: "test-key")
-        client.awaitingClose = true  // hotkey released, close requested
+        client.awaitingClose = true
         var delivered: String?
         var erroredWith: STTFailure?
         client.onClosed = { delivered = $0 }
@@ -94,23 +87,14 @@ final class STTFailureRoutingTests: XCTestCase {
         XCTAssertEqual(erroredWith, .serverError, "content in hand means a real failure, not a silent tap")
     }
 
-    // MARK: - The classification assumption the invariant rests on
-
-    /// Benign POSIX socket disconnects (ENOTCONN/EPIPE/ECONNRESET) are NOT
-    /// `URLError`s, so they fall through to `.unknown` — which is exactly what
-    /// lets `reportFailureOrCollapse` forgive them. If a future change ever maps
-    /// these to a named failure, the graceful-goodbye guarantee silently breaks;
-    /// this test fails first.
     func testBenignSocketDisconnectsClassifyAsUnknown() {
-        for errno in [57 /* ENOTCONN */, 32 /* EPIPE */, 54 /* ECONNRESET */] {
+        for errno in [57, 32, 54] {
             let err = NSError(domain: NSPOSIXErrorDomain, code: errno)
             XCTAssertEqual(STTFailure.classify(transportError: err, response: nil), .unknown,
                            "POSIX errno \(errno) must classify as .unknown so it is forgiven, not surfaced")
         }
     }
 
-    /// Genuine transport failures must still classify as named errors so they
-    /// survive the forgiveness path above.
     func testRealTransportErrorsStayNamed() {
         XCTAssertEqual(STTFailure.classify(transportError: URLError(.notConnectedToInternet), response: nil), .offline)
         XCTAssertEqual(STTFailure.classify(transportError: URLError(.timedOut), response: nil), .serverError)

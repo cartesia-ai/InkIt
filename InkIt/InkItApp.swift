@@ -2,111 +2,60 @@ import SwiftUI
 import AppKit
 import SwiftData
 
-// MARK: - Design tokens
-//
-// Single source of truth for color and type, per DESIGN_SYSTEM.md. Views must
-// reference these — never re-enter a raw hex/RGB or a bare `.system(size:)` for
-// text. (Icon/glyph point sizes and the fixed-geometry notch HUD are exempt:
-// glyphs scale by point size, the HUD is intentionally un-themed.)
 
 extension Color {
-    // Brand — the Ink skin (design round 10, prototypes/design-direction-round10.md):
-    // warm amber (#D97A0D light / #FFB454 dark via `AccentColor`) on paper neutrals.
-    /// Soft accent fill behind glyphs/badges — an opaque warm cream in light,
-    /// the accent at 12% in dark (via catalog).
     static let accentSoft = Color("accentSoft")
-    /// Live recording signal — dot + waveform glow. One flat amber in all
-    /// appearances so it reads on the always-dark HUD and on light surfaces.
     static let recordingAmber = Color("recordingAmber")
-    /// "Added / fixed" text in the Polish before→after diff.
     static let diffAdd = Color.green
-    /// Destructive fill — a warm brick red tuned to the paper palette (not the
-    /// neon system red), backing the `InkButtonStyle(.destructive)` confirm CTA.
     static let inkDanger = Color("InkDanger")
 
-    // Warm-paper neutrals (asset catalog, light + dark). The app's chrome reads
-    // warmer than raw system gray; these back every surface, Settings included.
-    // In the Ink skin `surface`/`lift`/`card` all resolve to the same "panel"
-    // value and `paper` matches `canvas` — the names stay distinct because call
-    // sites encode *role*, and the values may diverge again in a future skin.
-    static let canvas  = Color("HomeCanvas")  // window background ("ground")
-    static let surface = Color("HomeSurface") // raised panel (stats rail)
-    static let lift    = Color("HomeLift")    // top panel (history log)
-    static let card    = Color("CardBG")      // cards, fields, controls
-    static let paper   = Color("PaperBG")     // inset wells (ground inside a panel)
-    // A floating modal is its own lifted "sheet": in Dark mode a black drop shadow
-    // is invisible, so (per Material's dark-theme elevation guidance) the sheet
-    // reads as raised by being *lighter* than the window behind it. The whole sheet
-    // lifts as a unit — ground and cards both step up — so the card-above-ground
-    // hierarchy is preserved (a lifted ground alone would sink the cards into it).
-    // Both match the app's `canvas` / `card` in Light, so Light is unchanged.
-    /// Modal sheet ground (the paper the sections sit on). Above `canvas` in Dark.
+    static let canvas  = Color("HomeCanvas")
+    static let surface = Color("HomeSurface")
+    static let card    = Color("CardBG")
+    static let paper   = Color("PaperBG")
     static let modalBG   = Color("ModalBG")
-    /// Modal section/field surface. A clear step above `modalBG` in Dark.
     static let modalCard = Color("ModalCard")
 
-    // Shell & structure tokens (new with the sidebar shell, round 10).
-    /// Sidebar column background — a step warmer/deeper than the canvas.
     static let sidebar = Color("SidebarBG")
-    /// The one hairline border for panels, cards, chips, and dividers.
     static let line = Color("InkLine")
-    /// Chip / track fill — segmented controls, bar-chart tracks, keycaps.
     static let chip = Color("InkChip")
-    /// Selected navigation item backdrop (sidebar nav) — neutral, not accent.
     static let navSelected = Color("NavSelected")
-    /// Full-width row hover tint (history rows) — warmer than a gray overlay.
-    static let rowHover = Color("RowHover")
 
-    // Foreground ramp. New shell/Insights code reads these; older views still
-    // use `.primary`/`.secondary` until they're swept (DESIGN_SYSTEM.md › Color).
-    /// Primary text on the warm papers.
     static let inkText = Color("InkText")
-    /// Secondary text — captions, sublabels.
     static let inkSub = Color("InkSub")
-    /// Tertiary text — faint metadata, axis labels, placeholders.
     static let inkFaint = Color("InkFaint")
 
-    /// Always-dark tooltip / HUD-adjacent pill. Matches the notch HUD; ignores
-    /// appearance by design.
     static let hudPill = Color.black
 
-    /// Dimming scrim behind a modal sheet (the delete-all confirm).
     static let scrim = Color.black.opacity(0.18)
     static let scrimStrong = Color.black.opacity(0.5)
 }
 
-/// Corner-radius scale. Every `RoundedRectangle(cornerRadius:)` / `.hoverBackdrop`
-/// reads from here so the app's curvature stays on one ladder (DESIGN_SYSTEM.md ›
-/// Shape). Named by the role each step plays, smallest to largest.
 enum Radius {
-    static let bar: CGFloat = 2        // thin accent bars
-    static let inset: CGFloat = 5      // small insets inside the appearance preview
-    static let chip: CGFloat = 6       // icon chips, copy glyph
-    static let keycap: CGFloat = 7     // keycap & field chips
-    static let control: CGFloat = 8    // header icons, history row, sidebar, close
-    static let button: CGFloat = 9     // buttons, gear, send, the appearance swatch
-    static let card: CGFloat = 10      // selectable option cards
-    static let well: CGFloat = 12      // the inset result well in the practice card
-    static let tile: CGFloat = 14      // glyph tiles, benefit & permission rows
-    static let key: CGFloat = 15       // the hero push-to-talk keycap
-    static let panel: CGFloat = 16     // modal / large rounded panels
-    static let practice: CGFloat = 18  // the Try-It practice-card container
-    static let ring: CGFloat = 19      // the invite ring around the keycap
+    static let bar: CGFloat = 2
+    static let inset: CGFloat = 5
+    static let chip: CGFloat = 6
+    static let keycap: CGFloat = 7
+    static let control: CGFloat = 8
+    static let button: CGFloat = 9
+    static let card: CGFloat = 10
+    static let well: CGFloat = 12
+    static let tile: CGFloat = 14
+    static let key: CGFloat = 15
+    static let panel: CGFloat = 16
+    static let practice: CGFloat = 18
+    static let ring: CGFloat = 19
 }
 
-/// Drop-shadow inks — the app's elevation palette as neutral black at fixed
-/// opacities, lightest (barely-there contact) to heaviest (modal). One source of
-/// truth so depth reads consistently; the blur/offset stays at the call site
-/// since it varies per surface (DESIGN_SYSTEM.md › Shape).
 enum Elevation {
-    static let ambient = Color.black.opacity(0.04)  // faint contact shadow
-    static let soft    = Color.black.opacity(0.06)  // resting cards (practice card, keycap)
-    static let hover   = Color.black.opacity(0.07)  // an option card lifting on hover
-    static let drop    = Color.black.opacity(0.08)  // onboarding card drop
-    static let card    = Color.black.opacity(0.12)  // appearance swatch at rest
-    static let lifted  = Color.black.opacity(0.18)  // swatch on hover / onboarding hero mark
-    static let chip    = Color.black.opacity(0.22)  // small floating chip
-    static let modal   = Color.black.opacity(0.28)  // modal sheet
+    static let ambient = Color.black.opacity(0.04)
+    static let soft    = Color.black.opacity(0.06)
+    static let hover   = Color.black.opacity(0.07)
+    static let drop    = Color.black.opacity(0.08)
+    static let card    = Color.black.opacity(0.12)
+    static let lifted  = Color.black.opacity(0.18)
+    static let chip    = Color.black.opacity(0.22)
+    static let modal   = Color.black.opacity(0.28)
 }
 
 enum PageLayout {
@@ -130,136 +79,55 @@ extension View {
 }
 
 extension Font {
-    // One comfortable scale shared by Home, Settings, and Onboarding. Sizes are
-    // fixed (not Dynamic Type) so the dense dashboard/settings layouts stay
-    // stable; the point is that every surface draws from the *same* ladder, so
-    // nothing reads jarringly larger than anything else.
-    // The display voice (round 12) is New York — Apple's system serif, via
-    // `design: .serif`, nothing bundled. It appears ONLY at display scale:
-    // the heroes and the stat numerals. Body, nav, and chrome stay SF.
-    /// Onboarding hero title. New York, medium — display confidence comes
-    /// from scale and air; bold is retired from the app (round 11).
     static let inkLargeTitle = Font.system(size: 34, weight: .medium, design: .serif)
-    /// Home hero statement — the page-opening "dictate anywhere" promise line.
     static let inkHero = Font.system(size: 33, weight: .regular, design: .serif)
-    /// The SF keycap chip sitting inside the serif hero line — key labels are
-    /// chrome, not prose, so they stay SF at a size tuned to the hero.
     static let inkHeroKeycap = Font.system(size: 21, weight: .medium)
-    /// Screen / pane / column title (History, Insights, Settings pane).
     static let inkTitle = Font.system(size: 20, weight: .regular)
-    /// Compact sheet / popover header title — smaller than a full-window pane
-    /// title (the Settings popover header).
     static let inkSheetTitle = Font.system(size: 16, weight: .medium)
     static let inkModalTitle = Font.system(size: 22, weight: .regular, design: .serif)
-    /// The sidebar wordmark — the app name beside its icon. Sits a touch above
-    /// the pane titles it navigates to (round 13): the brand leads the rail, so
-    /// it earns a hair more size than the content. Medium, never bold.
     static let inkWordmark = Font.system(size: 21, weight: .medium)
-    /// Card / sub-section heading (nudge title, field group). Medium — one
-    /// step above the 15pt body beside it, never two.
     static let inkHeadline = Font.system(size: 15, weight: .medium)
-    /// Featured stat number (the Home stat band) — New York, big and light:
-    /// the number earns its place with size, not weight. Monospaced digits
-    /// applied at use.
     static let inkStat = Font.system(size: 30, weight: .regular, design: .serif)
-    /// Card-level stat number (Insights streaks) — the same serif numeral
-    /// voice a step down; medium for legibility at this size.
     static let inkStatSmall = Font.system(size: 20, weight: .medium, design: .serif)
-    /// Uppercase eyebrow: group headers, day dividers, diff row labels.
-    /// Structure comes from tracking (~1.1pt at call sites), not weight.
     static let inkEyebrow = Font.system(size: 11.5, weight: .medium)
-    /// Primary body / row text (transcripts, row labels).
     static let inkBody = Font.system(size: 15)
-    /// Emphasized body — button labels, selectable item titles.
     static let inkBodyEmphasized = Font.system(size: 15, weight: .medium)
-    /// Reading text for the Try-It practice card — a touch larger than body so
-    /// the prompt and the user's words have room to breathe.
     static let inkReading = Font.system(size: 17)
-    /// Emphasized reading text — the practice prompt itself.
     static let inkReadingEmphasized = Font.system(size: 17, weight: .medium)
-    /// Monospaced credential entry (API-key fields), at body size.
     static let inkMono = Font.system(size: 15, design: .monospaced)
-    // (inkNav was removed in round 11 — sidebar rows deliberately sit on the
-    // body pair, per the SidebarNavItem comment.)
-    /// Secondary body / metadata that still needs to read easily.
     static let inkCallout = Font.system(size: 13.5)
-    /// Emphasized callout — selectable card / control titles that sit at the
-    /// body-row scale rather than the heavier 15pt (Settings option cards).
     static let inkCalloutEmphasized = Font.system(size: 13.5, weight: .medium)
-    /// Small medium-weight UI label at the same scale step — grouped-section
-    /// headers in Settings and keycap chips in the shortcut recorder.
     static let inkSectionHeader = Font.system(size: 13, weight: .medium)
-    /// Helper / captions / units.
     static let inkCaption = Font.system(size: 12.5)
-    /// Always-dark notch HUD micro-type — the fixed-size strip by the camera
-    /// notch (DESIGN_SYSTEM.md principle 4). Off the content scale by design;
-    /// not for general app UI. Brand wordmark and status label.
     static let inkNotchBrand = Font.system(size: 10, weight: .semibold)
     static let inkNotchLabel = Font.system(size: 10, weight: .medium)
 }
 
-// MARK: - Interaction tokens
-//
-// Hover/press affordances are part of the design language too, so the values that
-// drive them live here as named tokens — one source of truth — instead of being
-// re-derived as magic numbers at each call site. See DESIGN_SYSTEM.md ›
-// Interaction. Prefer the `.hoverBackdrop()` modifier below for the common case;
-// reach for these constants only for the bespoke surfaces (the ink button's
-// brightened fill, the progress dots, a full-width row tint).
 
-/// The app's motion timings — one named curve per kind of transition so no view
-/// re-types a raw `.easeOut(duration:)`. See DESIGN_SYSTEM.md › Interaction.
 enum Motion {
-    /// Quick UI transition — hover lifts, popover/panel show-hide, confirm dialogs.
     static let quick: Animation = .easeOut(duration: 0.12)
-    /// State-change feedback — a control switching look (copied ✓, field focus).
     static let state: Animation = .easeOut(duration: 0.15)
-    /// Inline expand/collapse — the toolbar search field opening and closing.
     static let expand: Animation = .easeOut(duration: 0.16)
-    /// Onboarding step change — slide + dots, critically damped (no bounce).
     static let step: Animation = .spring(response: 0.45, dampingFraction: 1)
-    /// Fade-and-drift between rotating content (the Home "dictate anywhere"
-    /// header) — eased and unhurried so the swap reads as a settle, not a cut.
     static let rotate: Animation = .easeInOut(duration: 0.5)
 }
 
 enum Hover {
-    /// Soft backdrop a *borderless* control lifts on hover (icon chips, nav rows,
-    /// header buttons). Opacity of `.primary` so it adapts to appearance.
     static let backdropOpacity: Double = 0.08
-    /// How far a solid fill shifts on hover (the ink button brightens by this;
-    /// the progress dots darken by it). Brighten-only, no movement — locked.
     static let fillShift: Double = 0.07
-    /// Firmed border on a selectable card while hovered, vs the hairline at rest.
     static let borderOpacity: Double = 0.22
-    /// Warm tint a full-width row lifts on hover (the transcript history rows).
     static let rowTintOpacity: Double = 0.055
-    /// The one timing for every hover transition.
     static let animation: Animation = Motion.quick
 
-    /// Stroke for a selectable card: amber when chosen, a firmed neutral on
-    /// hover, the warm `Color.line` hairline at rest. Shared by the
-    /// activation-mode and appearance cards so both pick the same way.
     static func cardBorder(isSelected: Bool, hovering: Bool) -> Color {
         if isSelected { return .accentColor }
         return hovering ? Color.primary.opacity(borderOpacity) : Color.line
     }
 }
 
-/// The standard hover affordance for a *borderless* control: a soft rounded
-/// backdrop that fades in under the content on hover, on the shared
-/// `Hover.animation` timing. One definition so every icon chip, nav row, gear,
-/// and header button lifts identically (DESIGN_SYSTEM.md › Interaction) — apply
-/// it with `.hoverBackdrop()` rather than re-writing the `@State`/`onHover`/
-/// `background` block. Pass `isActive` for a selected/current control that should
-/// hold the amber `accentSoft` fill and ignore hover, so selection and hover
-/// never stack.
 struct HoverBackdrop: ViewModifier {
     var cornerRadius: CGFloat = 8
     var isActive: Bool = false
-    /// Fill held while `isActive`. Defaults to the amber `accentSoft`; the
-    /// sidebar nav passes `.navSelected` — its selection reads as a neutral
-    /// deepening of the sidebar paper, per the round-10 shell.
     var activeFill: Color = .accentSoft
     @State private var hovering = false
 
@@ -412,7 +280,6 @@ struct InkCloseButton: View {
         }
         .buttonStyle(.plain)
         .modifier(PointingHandCursor())
-        .help(help)
         .accessibilityLabel(help)
     }
 }
@@ -547,6 +414,8 @@ struct MainWindowView: View {
                              })
                 case .insights:
                     InsightsView()
+                case .dictionary:
+                    DictionaryView()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -746,12 +615,10 @@ struct RotatingDictateHeader: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            // Hands-free (toggle) taps to start/stop, so the verb flips per mode
-            // (shared with the status line + Settings via `dictationModeVerb`).
             Text(settings.dictationModeVerb)
                 .foregroundStyle(.primary)
             HotkeyCaps(tokens: tokens)
-                .font(.inkHeroKeycap)  // key labels are chrome — SF inside the serif line
+                .font(.inkHeroKeycap)
             Text("to dictate in")
                 .foregroundStyle(.primary)
             bucketView
@@ -800,10 +667,10 @@ struct RotatingDictateHeader: View {
     }
 
     private func startRotating() {
-        guard !reduceMotion else { return }  // hold the first bucket still
+        guard !reduceMotion else { return }
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: Self.dwell, repeats: true) { _ in
-            guard !hovering else { return }   // let a reader linger
+            guard !hovering else { return }
             withAnimation(Motion.rotate) {
                 index = (index + 1) % Self.buckets.count
             }
@@ -1167,12 +1034,9 @@ private struct DiffPopover: View {
         return tokens
     }
 
-    /// Pairs each added word with a removed word sharing the same core (a
-    /// punctuation/case-only edit) and renders those as a tight character diff.
-    /// Genuine word swaps and pure insert/deletes stay as whole-word marks.
     private static func refine(removed: [String], added: [String]) -> [WordToken] {
         var usedRemoved = Array(repeating: false, count: removed.count)
-        var pairFor: [Int: Int] = [:]   // added index → removed index
+        var pairFor: [Int: Int] = [:]
         for (aIdx, a) in added.enumerated() {
             let ac = core(a)
             guard !ac.isEmpty else { continue }
@@ -1252,54 +1116,20 @@ private struct WindowChrome: NSViewRepresentable {
     }
     private func configure(_ window: NSWindow?) {
         guard let window else { return }
-        // Round 12 "one sheet" chrome: no window title, no titlebar separator —
-        // the traffic lights float directly on the sidebar paper, and the only
-        // structural device is the rounded content sheet (see MainWindowView).
-        // Lines never divide the window; they live inside the sheet as hairlines.
-        // Keep the titlebar transparent + full-size content so the warm canvas
-        // extends all the way to the top; our own content (the hint/gear strip
-        // and lists) lays out below the titlebar safe area, unobscured.
-        // Empty title (not just hidden) so no app name ever draws in the titlebar.
         window.title = ""
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.titlebarSeparatorStyle = .none
         window.styleMask.insert(.fullSizeContentView)
-        // Pin the window background to the sidebar paper — it is the window's
-        // ground now (the content sheet floats on it). With a transparent
-        // titlebar + full-size content, the titlebar shows the window background
-        // wherever the SwiftUI layer isn't fully opaque — and the default
-        // (white) bleeds through on a later redraw. Setting the asset keeps it
-        // constant.
         if let ground = NSColor(named: "SidebarBG") {
             window.backgroundColor = ground
         }
-        // InkIt is a fixed utility window — full screen is meaningless and only
-        // litters the menu bar with a "View ▸ Enter Full Screen" item. Opting the
-        // window out removes both the green-button behavior and that menu entry.
         window.collectionBehavior.remove(.fullScreenPrimary)
         window.collectionBehavior.insert(.fullScreenNone)
     }
 }
 
-// MARK: - Tooltips (design system)
-//
-// Two deliberately distinct "floating panel" styles. Keep them apart:
-//
-//   • Hover hint  — a small dark pill that *names* a control. Appears fast on
-//     hover (short grace delay so a quick pass-through doesn't flash),
-//     dismisses on exit, never reacts to clicks. For icon buttons whose
-//     purpose isn't obvious. `.inkHoverHint("Copy")`. Replaces `.help()`,
-//     which lagged ~1.5s behind the system tooltip delay.
-//   • Detail popover — the light system card opened by a *click*, holding the
-//     richer payload (a diff, a latency breakdown, an error reason).
-//     `.inkDetailPopover(isPresented:) { … }`.
-//
-// A control can carry both: the hint says what it is on hover; the popover
-// shows the detail on click. They never share a look, so the two gestures
-// always read as two different things.
 
-/// The dark pill itself — single line, white on near-black, soft shadow.
 private struct HoverHintLabel: View {
     let text: String
     var body: some View {
@@ -1337,14 +1167,13 @@ final class HoverHintWindow {
                         backing: .buffered, defer: true)
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = false               // the pill draws its own shadow
+        panel.hasShadow = false
         panel.level = .popUpMenu
         panel.ignoresMouseEvents = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         panel.contentView = hosting
     }
 
-    /// Show `text` centered above `anchor` (a rect in screen coordinates).
     func show(text: String, above anchor: CGRect) {
         hosting.rootView = HoverHintPanelContent(text: text)
         hosting.layoutSubtreeIfNeeded()

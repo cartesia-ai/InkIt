@@ -1,23 +1,15 @@
 import Foundation
 
-/// Why a rewrite attempt failed, so the caller can show a concise, actionable
-/// reason. Distinguishes the cases a user can act on (rate limit, offline, bad
-/// key) from the ones they can only retry.
 enum RewriteFailure: Error, Equatable {
-    case rateLimited(retryAt: Date?)  // provider 429; retryAt from Retry-After
-    case offline                      // no network / can't reach host
-    case timedOut                     // exceeded the request timeout
-    case invalidKey                   // 401/403 or missing key
-    case outOfCredits                 // provider 402 / billing limit reached
-    case serverError                  // provider 5xx
-    case unknown                      // parse error, sanity reject, anything else
+    case rateLimited(retryAt: Date?)
+    case offline
+    case timedOut
+    case invalidKey
+    case outOfCredits
+    case serverError
+    case unknown
 }
 
-/// Repairs an ASR transcript via the user's chosen LLM provider. Anthropic uses
-/// its native Messages API; all other providers use the OpenAI-compatible
-/// /chat/completions shape. Returns `.failure` on any error (network, timeout,
-/// rate limit, parse error, sanity-check rejection) — the caller falls back to
-/// the raw transcript and uses the reason to explain what happened.
 final class TranscriptRewriter {
     private let provider: LLMProvider
     private let model: String
