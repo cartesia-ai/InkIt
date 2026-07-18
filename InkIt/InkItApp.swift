@@ -109,6 +109,26 @@ enum Elevation {
     static let modal   = Color.black.opacity(0.28)  // modal sheet
 }
 
+enum PageLayout {
+    static let gutter: CGFloat = 40
+    static let top: CGFloat = 32
+    static let bottom: CGFloat = 40
+}
+
+struct PageFrame: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, PageLayout.gutter)
+            .padding(.top, PageLayout.top)
+            .padding(.bottom, PageLayout.bottom)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+extension View {
+    func pageFrame() -> some View { modifier(PageFrame()) }
+}
+
 extension Font {
     // One comfortable scale shared by Home, Settings, and Onboarding. Sizes are
     // fixed (not Dynamic Type) so the dense dashboard/settings layouts stay

@@ -69,7 +69,7 @@ enum InsightsMath {
             if ch.isLetter || ch.isNumber {
                 current.append(ch)
             } else if ch == "'" || ch == "’" {
-                if current.isEmpty { continue }  // leading apostrophe = quote
+                if current.isEmpty { continue }
                 current.append("'")
             } else {
                 flush()
@@ -227,31 +227,31 @@ enum InsightsMath {
     struct AppShare: Equatable {
         let name: String
         let bundleID: String?
-        let count: Int
+        let words: Int
         let percent: Int
     }
 
     static func appShare(entries: [TranscriptHistoryStore.Entry], limit: Int) -> [AppShare] {
-        var countsByKey: [String: (name: String, bundleID: String?, count: Int)] = [:]
+        var wordsByKey: [String: (name: String, bundleID: String?, words: Int)] = [:]
         for entry in entries {
             guard let name = entry.appName else { continue }
             let key = entry.appBundleID ?? name
-            var slot = countsByKey[key] ?? (name, entry.appBundleID, 0)
-            slot.count += 1
-            slot.name = name  // latest display name wins (apps rarely rename)
-            countsByKey[key] = slot
+            var slot = wordsByKey[key] ?? (name, entry.appBundleID, 0)
+            slot.words += entry.wordCount ?? TranscriptHistoryStore.wordCount(entry.text)
+            slot.name = name
+            wordsByKey[key] = slot
         }
-        let ranked = countsByKey.values.sorted { $0.count == $1.count ? $0.name < $1.name : $0.count > $1.count }
+        let ranked = wordsByKey.values.sorted { $0.words == $1.words ? $0.name < $1.name : $0.words > $1.words }
         guard !ranked.isEmpty else { return [] }
 
-        var shares = ranked.prefix(limit).map { (name: $0.name, bundleID: $0.bundleID, count: $0.count) }
-        let otherCount = ranked.dropFirst(limit).reduce(0) { $0 + $1.count }
-        if otherCount > 0 { shares.append((name: "Other", bundleID: nil, count: otherCount)) }
+        var shares = ranked.prefix(limit).map { (name: $0.name, bundleID: $0.bundleID, words: $0.words) }
+        let otherWords = ranked.dropFirst(limit).reduce(0) { $0 + $1.words }
+        if otherWords > 0 { shares.append((name: "Other", bundleID: nil, words: otherWords)) }
 
-        let total = shares.reduce(0) { $0 + $1.count }
-        let percents = wholePercents(of: shares.map(\.count), total: total)
+        let total = shares.reduce(0) { $0 + $1.words }
+        let percents = wholePercents(of: shares.map(\.words), total: total)
         return zip(shares, percents).map {
-            AppShare(name: $0.name, bundleID: $0.bundleID, count: $0.count, percent: $1)
+            AppShare(name: $0.name, bundleID: $0.bundleID, words: $0.words, percent: $1)
         }
     }
 
@@ -272,12 +272,12 @@ enum InsightsMath {
         return floors
     }
 
-    static func hourHistogram(entries: [TranscriptHistoryStore.Entry],
-                              calendar: Calendar = .current) -> [Int] {
-        var bins = [Int](repeating: 0, count: 12)
+    static func hourWords(entries: [TranscriptHistoryStore.Entry],
+                          calendar: Calendar = .current) -> [Int] {
+        var bins = [Int](repeating: 0, count: 24)
         for entry in entries {
             let hour = calendar.component(.hour, from: entry.timestamp)
-            bins[min(hour / 2, 11)] += 1
+            bins[min(max(hour, 0), 23)] += entry.wordCount ?? TranscriptHistoryStore.wordCount(entry.text)
         }
         return bins
     }

@@ -102,7 +102,7 @@ final class InsightsMathTests: XCTestCase {
     }
 
     func testHeatmapLevelsScaleToOwnHistory() {
-        let days = (1...100).map { day($0, words: $0 * 10) }  // 10…1000 words
+        let days = (1...100).map { day($0, words: $0 * 10) }
         let weeks = InsightsMath.heatmapWeeks(days: days, now: today, weekCount: 15)
         let cells = weeks.flatMap { $0 }
         XCTAssertEqual(cells.first(where: { $0.words == 10 })?.level, 1)
@@ -194,19 +194,19 @@ final class InsightsMathTests: XCTestCase {
                                                    polished: "Ship it Thursday."), 0)
     }
 
-    func testAppShareGroupsByBundleAndBucketsOther() {
+    func testAppShareRanksByWordsAndBucketsOther() {
         var entries: [TranscriptHistoryStore.Entry] = []
-        entries += (0..<6).map { _ in entry("hi", appName: "Slack", appBundleID: "com.slack") }
-        entries += (0..<3).map { _ in entry("hi", appName: "Mail", appBundleID: "com.mail") }
-        entries += [entry("hi", appName: "Notes", appBundleID: "com.notes"),
-                    entry("hi", appName: "Cursor", appBundleID: "com.cursor"),
-                    entry("hi", appName: "Xcode", appBundleID: "com.xcode"),
-                    entry("hi")]  // no app captured → excluded entirely
+        entries += (0..<6).map { _ in entry("hi", appName: "Slack", appBundleID: "com.slack", wordCount: 10) }
+        entries += (0..<3).map { _ in entry("hi", appName: "Mail", appBundleID: "com.mail", wordCount: 5) }
+        entries += [entry("hi", appName: "Notes", appBundleID: "com.notes", wordCount: 2),
+                    entry("hi", appName: "Cursor", appBundleID: "com.cursor", wordCount: 2),
+                    entry("hi", appName: "Xcode", appBundleID: "com.xcode", wordCount: 2),
+                    entry("hi", wordCount: 99)]
         let shares = InsightsMath.appShare(entries: entries, limit: 3)
         XCTAssertEqual(shares.map(\.name), ["Slack", "Mail", "Cursor", "Other"])
         XCTAssertEqual(shares.map(\.percent).reduce(0, +), 100)
-        XCTAssertEqual(shares.first?.count, 6)
-        XCTAssertEqual(shares.last?.count, 2, "the two apps past the limit roll up")
+        XCTAssertEqual(shares.first?.words, 60, "words sum across an app's dictations")
+        XCTAssertEqual(shares.last?.words, 4, "the two apps past the limit roll up by words")
     }
 
     func testAppShareEmptyWithoutAppData() {
@@ -219,24 +219,23 @@ final class InsightsMathTests: XCTestCase {
         XCTAssertEqual(InsightsMath.wholePercents(of: [12], total: 12), [100])
     }
 
-    func testHourHistogramBinsByTwoHours() {
+    func testHourWordsBinsByHour() {
         let e1 = TranscriptHistoryStore.Entry(
             text: "a", timestamp: calendar.date(from: DateComponents(year: 2026, month: 7, day: 11, hour: 0, minute: 5))!,
-            latency: nil, original: nil, polish: nil, failure: nil)
+            latency: nil, original: nil, polish: nil, failure: nil, wordCount: 5)
         let e2 = TranscriptHistoryStore.Entry(
             text: "b", timestamp: calendar.date(from: DateComponents(year: 2026, month: 7, day: 11, hour: 23, minute: 59))!,
-            latency: nil, original: nil, polish: nil, failure: nil)
+            latency: nil, original: nil, polish: nil, failure: nil, wordCount: 8)
         let e3 = TranscriptHistoryStore.Entry(
             text: "c", timestamp: calendar.date(from: DateComponents(year: 2026, month: 7, day: 11, hour: 14))!,
-            latency: nil, original: nil, polish: nil, failure: nil)
-        let bins = InsightsMath.hourHistogram(entries: [e1, e2, e3])
-        XCTAssertEqual(bins[0], 1)   // 00–02
-        XCTAssertEqual(bins[7], 1)   // 14–16
-        XCTAssertEqual(bins[11], 1)  // 22–24
-        XCTAssertEqual(bins.reduce(0, +), 3)
+            latency: nil, original: nil, polish: nil, failure: nil, wordCount: 3)
+        let bins = InsightsMath.hourWords(entries: [e1, e2, e3])
+        XCTAssertEqual(bins.count, 24)
+        XCTAssertEqual(bins[0], 5)
+        XCTAssertEqual(bins[23], 8)
+        XCTAssertEqual(bins[14], 3)
+        XCTAssertEqual(bins.reduce(0, +), 16)
     }
-
-    // MARK: Records
 
     func testRecordsFromAggregates() {
         let days = [day(0, words: 100, longestMs: 45_000),

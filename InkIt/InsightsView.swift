@@ -6,34 +6,28 @@ struct InsightsView: View {
     @StateObject private var model = InsightsModel()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            ScrollView {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Insights")
+                    .font(.inkTitle)
+                    .foregroundStyle(.primary)
                 VStack(alignment: .leading, spacing: 14) {
                     HeroRow(snapshot: model.snapshot)
                     ActivityCard(model: model)
                     HStack(alignment: .top, spacing: 14) {
                         WordsCard(snapshot: model.snapshot)
-                        WhereWhenCard(snapshot: model.snapshot)
+                        WhereCard(snapshot: model.snapshot)
                     }
+                    WhenCard(snapshot: model.snapshot)
                 }
-                .padding(.bottom, 24)
+                .padding(.top, 16)
             }
-            .scrollIndicators(.hidden)
+            .pageFrame()
         }
-        .padding(.horizontal, 18)
-        .padding(.top, 20)
+        .scrollIndicators(.hidden)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear { model.refresh() }
         .onChange(of: history.entries.count) { _, _ in model.refresh() }
-    }
-
-    private var header: some View {
-        Text("Insights")
-            .font(.inkTitle)
-            .foregroundStyle(.primary)
-            .padding(.horizontal, 4)
-            .padding(.bottom, 12)
     }
 
 }
@@ -76,17 +70,6 @@ private struct InsightsCard<Content: View, Accessory: View>: View {
 extension InsightsCard where Accessory == EmptyView {
     init(title: String, @ViewBuilder content: () -> Content) {
         self.init(title: title, accessory: { EmptyView() }, content: content)
-    }
-}
-
-private struct CardSubhead: View {
-    let title: String
-
-    var body: some View {
-        Text(title)
-            .font(.inkHeadline)
-            .foregroundStyle(Color.inkText)
-            .padding(.top, 18)
     }
 }
 
@@ -180,6 +163,7 @@ private struct ActivityCard: View {
                         monthAxis
                         heatmap
                     }
+                    .zIndex(1)
                     Spacer(minLength: 0)
                     Group {
                         if model.snapshot.hasAnyActivity {
@@ -320,17 +304,29 @@ private struct ActivityCard: View {
 
     private static let levelOpacity: [Double] = [0, 0.22, 0.45, 0.70, 1.0]
 
+    private static let minMonthLabelCols = 3
+
     private var monthMarkers: [MonthMark] {
         let calendar = Calendar.current
-        var marks: [MonthMark] = []
+        var raw: [(col: Int, text: String)] = []
         var lastMonth = -1
         for (i, week) in model.snapshot.heatmapWeeks.enumerated() {
             guard let first = week.first?.date else { continue }
             let month = calendar.component(.month, from: first)
             if month != lastMonth {
-                marks.append(MonthMark(col: i, text: first.formatted(.dateTime.month(.abbreviated))))
+                raw.append((i, first.formatted(.dateTime.month(.abbreviated))))
                 lastMonth = month
             }
+        }
+        var marks: [MonthMark] = []
+        for (idx, mark) in raw.enumerated() {
+            if idx == 0, raw.count > 1, raw[1].col - mark.col < Self.minMonthLabelCols {
+                continue
+            }
+            if let last = marks.last, mark.col - last.col < Self.minMonthLabelCols {
+                continue
+            }
+            marks.append(MonthMark(col: mark.col, text: mark.text))
         }
         return marks
     }
@@ -436,7 +432,7 @@ private struct HBar: View {
                     .resizable()
                     .scaledToFit()
                     .frame(width: iconIsSymbol ? 15 : 20, height: iconIsSymbol ? 15 : 20)
-                    .foregroundStyle(Color.inkFaint)  // tints symbol fallbacks only
+                    .foregroundStyle(Color.inkFaint)
                     .frame(width: 20, height: 20)
             }
             Text(label)
@@ -459,7 +455,7 @@ private struct HBar: View {
                 .font(.inkCallout)
                 .foregroundStyle(Color.inkSub)
                 .monospacedDigit()
-                .frame(width: 42, alignment: .trailing)
+                .frame(width: 60, alignment: .trailing)
         }
         .padding(.top, 10)
     }
@@ -480,58 +476,63 @@ private struct WordsCard: View {
                          value: word.count.formatted())
                 }
             } else {
-                ForEach(0..<5, id: \.self) { _ in
-                    HBar(label: " ", fraction: 0, value: "", ghost: true)
-                }
-                Text("Your five most-said words show up after a few dictations.")
-                    .font(.inkCallout)
-                    .foregroundStyle(Color.inkFaint)
-                    .padding(.top, 12)
+                EmptyPane(icon: "text.alignleft",
+                          headline: "No words yet",
+                          message: "Your most-said words show up here.")
             }
         }
     }
 }
 
-private struct WhereWhenCard: View {
+private struct EmptyPane: View {
+    let icon: String
+    let headline: String
+    let message: String
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 20, weight: .regular))  // ds-allow: icon
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 44, height: 44)
+                .background(Color.accentSoft)
+                .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+            Text(headline)
+                .font(.inkCalloutEmphasized)
+                .foregroundStyle(Color.inkText)
+            Text(message)
+                .font(.inkCallout)
+                .foregroundStyle(Color.inkSub)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(minHeight: 150)
+        .padding(.top, 8)
+    }
+}
+
+private struct WhereCard: View {
     let snapshot: InsightsModel.Snapshot
-
-    @State private var hourHover: Int?
-
-    private static let minDictationsForHours = 5
 
     var body: some View {
         InsightsCard(title: "Where you dictate") {
             if !snapshot.appShare.isEmpty {
-                let top = Double(snapshot.appShare.map(\.count).max() ?? 1)
+                let top = Double(snapshot.appShare.map(\.words).max() ?? 1)
                 ForEach(snapshot.appShare, id: \.name) { share in
                     let mark = Self.appIcon(bundleID: share.bundleID)
                     HBar(label: share.name,
-                         fraction: Double(share.count) / max(top, 1),
+                         fraction: Double(share.words) / max(top, 1),
                          value: "\(share.percent)%",
                          icon: mark.image,
                          iconIsSymbol: mark.isSymbol)
                 }
             } else {
-                ForEach(0..<4, id: \.self) { _ in
-                    HBar(label: " ", fraction: 0, value: "", ghost: true)
-                }
-                Text("The apps you speak into appear here as you dictate.")
-                    .font(.inkCallout)
-                    .foregroundStyle(Color.inkFaint)
-                    .padding(.top, 12)
+                EmptyPane(icon: "square.grid.2x2",
+                          headline: "No apps yet",
+                          message: "The apps you dictate into show up here.")
             }
-
-            CardSubhead(title: "When you speak")
-
-            hourChart
-                .padding(.top, 14)
-            hourLabels
-                .padding(.top, 6)
         }
-    }
-
-    private var hasHourData: Bool {
-        snapshot.windowDictations >= Self.minDictationsForHours
     }
 
     private static var iconCache: [String: (image: Image, isSymbol: Bool)] = [:]
@@ -547,64 +548,128 @@ private struct WhereWhenCard: View {
         iconCache[bundleID] = mark
         return mark
     }
+}
 
-    private var peakBin: Int? {
-        guard let maxCount = snapshot.hourBins.max(), maxCount > 0 else { return nil }
-        return snapshot.hourBins.firstIndex(of: maxCount)
+private struct WhenCard: View {
+    let snapshot: InsightsModel.Snapshot
+
+    @State private var hoverHour: Int?
+
+    private static let minDictationsForHours = 5
+    private static let chartHeight: CGFloat = 150
+    private static let tooltipReserve: CGFloat = 58
+
+    private var hasHourData: Bool {
+        snapshot.windowDictations >= Self.minDictationsForHours
     }
 
-    private var hourChart: some View {
-        let bins = snapshot.hourBins
-        let maxCount = max(bins.max() ?? 0, 1)
-        let peak = peakBin
-        return HStack(alignment: .bottom, spacing: 4) {
-            ForEach(0..<12, id: \.self) { i in
-                let fraction = hasHourData ? Double(bins[i]) / Double(maxCount) : Self.ghostHeights[i]
-                Color.clear
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 56)
-                    .overlay(alignment: .bottom) {
-                        UnevenRoundedRectangle(topLeadingRadius: 3, topTrailingRadius: 3)
-                            .fill(barColor(bin: i, isPeak: i == peak))
-                            .frame(height: max(3, 56 * fraction))
-                    }
-                    .contentShape(Rectangle())
-                    .onHover { inside in
-                        guard hasHourData else { return }
-                        if inside { hourHover = i }
-                        else if hourHover == i { hourHover = nil }
-                    }
-                    .overlay(alignment: Self.hourTooltipAlignment(i)) {
-                        if hourHover == i {
-                            hourTooltip(i)
-                                .allowsHitTesting(false)
-                                .offset(y: -62)
-                        }
-                    }
+    var body: some View {
+        InsightsCard(title: "When you speak") {
+            if hasHourData {
+                chart
+                    .padding(.top, 4)
+                hourLabels
+                    .padding(.top, 8)
+            } else {
+                EmptyPane(icon: "clock",
+                          headline: "No hours yet",
+                          message: "Your busiest dictation hours show up here.")
             }
         }
-        .frame(height: 56, alignment: .bottom)
     }
 
-    private static func hourTooltipAlignment(_ i: Int) -> Alignment {
-        switch i {
-        case 0, 1: return .bottomLeading
-        case 10, 11: return .bottomTrailing
-        default: return .bottom
+    private func points(in size: CGSize) -> [CGPoint] {
+        let bins = snapshot.hourWords
+        let maxVal = CGFloat(max(bins.max() ?? 1, 1))
+        let lastIndex = CGFloat(max(bins.count - 1, 1))
+        let top = min(Self.tooltipReserve, size.height)
+        let span = size.height - top
+        return bins.enumerated().map { i, value in
+            CGPoint(x: size.width * CGFloat(i) / lastIndex,
+                    y: top + span * (1 - CGFloat(value) / maxVal))
         }
     }
 
-    private func hourTooltip(_ i: Int) -> some View {
-        let count = snapshot.hourBins[i]
+    private func linePath(_ pts: [CGPoint]) -> Path {
+        var path = Path()
+        guard let first = pts.first else { return path }
+        path.move(to: first)
+        for i in 0..<(pts.count - 1) {
+            let p0 = i > 0 ? pts[i - 1] : pts[i]
+            let p1 = pts[i]
+            let p2 = pts[i + 1]
+            let p3 = i + 2 < pts.count ? pts[i + 2] : p2
+            let c1 = CGPoint(x: p1.x + (p2.x - p0.x) / 6, y: p1.y + (p2.y - p0.y) / 6)
+            let c2 = CGPoint(x: p2.x - (p3.x - p1.x) / 6, y: p2.y - (p3.y - p1.y) / 6)
+            path.addCurve(to: p2, control1: c1, control2: c2)
+        }
+        return path
+    }
+
+    private func areaPath(_ pts: [CGPoint], height: CGFloat) -> Path {
+        var path = linePath(pts)
+        guard let first = pts.first, let last = pts.last else { return path }
+        path.addLine(to: CGPoint(x: last.x, y: height))
+        path.addLine(to: CGPoint(x: first.x, y: height))
+        path.closeSubpath()
+        return path
+    }
+
+    private var chart: some View {
+        GeometryReader { geo in
+            let pts = points(in: geo.size)
+            ZStack(alignment: .topLeading) {
+                areaPath(pts, height: geo.size.height)
+                    .fill(LinearGradient(
+                        colors: [Color.accentColor.opacity(0.28), Color.accentColor.opacity(0)],
+                        startPoint: .top, endPoint: .bottom))
+                linePath(pts)
+                    .stroke(Color.accentColor,
+                            style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+
+                if let h = hoverHour, pts.indices.contains(h) {
+                    let p = pts[h]
+                    Path {
+                        $0.move(to: CGPoint(x: p.x, y: 0))
+                        $0.addLine(to: CGPoint(x: p.x, y: geo.size.height))
+                    }
+                    .stroke(Color.line, lineWidth: 1)
+                    Circle()
+                        .fill(Color.accentColor)
+                        .frame(width: 7, height: 7)
+                        .position(p)
+                    tooltip(hour: h)
+                        .allowsHitTesting(false)
+                        .fixedSize()
+                        .position(x: min(max(p.x, 56), geo.size.width - 56),
+                                  y: max(p.y - 34, 4))
+                }
+            }
+            .contentShape(Rectangle())
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let location):
+                    let lastIndex = max(snapshot.hourWords.count - 1, 1)
+                    let ratio = location.x / max(geo.size.width, 1)
+                    hoverHour = min(max(Int((ratio * CGFloat(lastIndex)).rounded()), 0), lastIndex)
+                case .ended:
+                    hoverHour = nil
+                }
+            }
+        }
+        .frame(height: Self.chartHeight)
+    }
+
+    private func tooltip(hour: Int) -> some View {
+        let words = snapshot.hourWords[hour]
         return VStack(alignment: .leading, spacing: 2) {
-            Text(Self.binTimeRange(i))
+            Text(Self.hourLabel(hour))
                 .font(.inkCaption)
                 .foregroundStyle(Color.inkSub)
-            Text("\(count.formatted()) \(count == 1 ? "dictation" : "dictations")")
+            Text("\(words.formatted()) \(words == 1 ? "word" : "words")")
                 .font(.inkCalloutEmphasized)
-                .foregroundStyle(count > 0 ? Color.inkText : Color.inkFaint)
+                .foregroundStyle(words > 0 ? Color.inkText : Color.inkFaint)
         }
-        .fixedSize()
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(Color.card)
@@ -616,12 +681,12 @@ private struct WhereWhenCard: View {
         .shadow(color: Elevation.card, radius: 8, y: 2)
     }
 
-    private static func binTimeRange(_ i: Int) -> String {
-        let start = clockLabel(i * 2)
-        let end = clockLabel((i * 2 + 2) % 24)
+    private static func hourLabel(_ hour24: Int) -> String {
+        let start = clockLabel(hour24)
+        let end = clockLabel((hour24 + 1) % 24)
         return start.meridiem == end.meridiem
-            ? "\(start.hour)–\(end.hour) \(end.meridiem)"
-            : "\(start.hour) \(start.meridiem) – \(end.hour) \(end.meridiem)"
+            ? "\(start.hour)\u{2013}\(end.hour) \(end.meridiem)"
+            : "\(start.hour) \(start.meridiem) \u{2013} \(end.hour) \(end.meridiem)"
     }
 
     private static func clockLabel(_ hour24: Int) -> (hour: Int, meridiem: String) {
@@ -630,18 +695,15 @@ private struct WhereWhenCard: View {
         return (h == 0 ? 12 : h, meridiem)
     }
 
-    private static let ghostHeights: [Double] = [0.12, 0.2, 0.3, 0.42, 0.55, 0.65, 0.72, 0.65, 0.55, 0.42, 0.3, 0.2]
-
-    private func barColor(bin: Int, isPeak: Bool) -> Color {
-        guard hasHourData else { return .chip }
-        return isPeak ? .accentColor : .accentColor.opacity(0.35)
-    }
-
     private var hourLabels: some View {
         HStack {
             Text("12 AM")
             Spacer()
+            Text("6 AM")
+            Spacer()
             Text("noon")
+            Spacer()
+            Text("6 PM")
             Spacer()
             Text("11 PM")
         }

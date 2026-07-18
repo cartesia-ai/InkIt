@@ -18,7 +18,7 @@ final class InsightsModel: ObservableObject {
         var topWords: [InsightsMath.WordCount] = []
         var monthTokens = 0
         var appShare: [InsightsMath.AppShare] = []
-        var hourBins: [Int] = Array(repeating: 0, count: 12)
+        var hourWords: [Int] = Array(repeating: 0, count: 24)
         var windowDictations = 0
         var hasAnyActivity = false
         var canPageBack = false
@@ -111,7 +111,7 @@ final class InsightsModel: ObservableObject {
 
         s.windowDictations = entries.count
         s.appShare = InsightsMath.appShare(entries: entries, limit: 4)
-        s.hourBins = InsightsMath.hourHistogram(entries: entries, calendar: calendar)
+        s.hourWords = InsightsMath.hourWords(entries: entries, calendar: calendar)
 
         snapshot = s
     }
