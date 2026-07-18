@@ -1,17 +1,4 @@
 #!/usr/bin/env bash
-# Build a notarized, stapled InkIt.dmg ready to share.
-#
-# Maintainers only: needs an Apple Developer ID certificate in your Keychain
-# and a Config/Signing.local.xcconfig (see Config/Signing.local.xcconfig.example).
-#
-# One-time setup (run once, stores password in your login Keychain):
-#   xcrun notarytool store-credentials inkit-notary \
-#     --apple-id <your-apple-id-email> \
-#     --team-id <your-team-id> \
-#     --password <app-specific-password-from-appleid.apple.com>
-#
-# Then any time you want a fresh release DMG:
-#   ./tools/make-dmg.sh
 
 set -euo pipefail
 
@@ -60,11 +47,6 @@ step "Verifying signature on .app"
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 codesign -dvv "$APP_PATH" 2>&1 | grep -E "Authority|TeamIdentifier|Runtime" || true
 
-# Fast-fail on ad-hoc nested binaries before paying for a notary round-trip.
-# Sparkle's helpers (Updater.app, Autoupdate, *.xpc) must be Developer ID
-# signed — project.yml's "Deep-sign Sparkle helpers" phase handles this, but
-# catch a regression here in seconds rather than ~5 min later via notarytool.
-# (`codesign --verify --deep` above accepts ad-hoc inner code, so it won't.)
 ADHOC=$(find "$APP_PATH/Contents/Frameworks/Sparkle.framework" \
     \( -name '*.xpc' -o -name '*.app' -o -name 'Autoupdate' \) -print 2>/dev/null \
   | while read -r b; do codesign -dvv "$b" 2>&1 | grep -q 'Signature=adhoc' && echo "$b"; done) || true
@@ -84,8 +66,6 @@ step "Regenerating background art"
 swift tools/generate_dmg_background.swift
 
 step "Clearing Finder icon cache for old DMG view"
-# Finder caches DMG window layouts. If a prior InkIt.dmg was opened, the new
-# DMG can inherit the stale layout. Bouncing Finder forces it to read fresh.
 osascript -e 'tell application "Finder" to close (every window whose name is "InkIt")' >/dev/null 2>&1 || true
 killall Finder >/dev/null 2>&1 || true
 
@@ -106,9 +86,6 @@ create-dmg \
 rm -rf "$STAGING_DIR"
 
 step "Signing DMG"
-# Matches the single "Developer ID Application" identity in your Keychain.
-# (If you have certs for multiple teams, narrow this to the full identity name
-# or its SHA-1 hash from: security find-identity -v -p codesigning)
 codesign --sign "Developer ID Application" \
   --timestamp \
   "$DMG_PATH"
@@ -116,7 +93,7 @@ codesign --sign "Developer ID Application" \
 step "Submitting DMG to notarization (this takes 1-5 min)"
 NOTARY_OUTPUT=$(xcrun notarytool submit "$DMG_PATH" \
   --keychain-profile "$KEYCHAIN_PROFILE" \
-  --wait 2>&1 | tee /dev/stderr)  # stderr, not /dev/tty: works in non-interactive shells too
+  --wait 2>&1 | tee /dev/stderr)
 NOTARY_ID=$(echo "$NOTARY_OUTPUT" | awk '/id:/{print $2; exit}')
 if ! echo "$NOTARY_OUTPUT" | grep -q "status: Accepted"; then
   printf "\n\033[1;31mNotarization failed.\033[0m Fetching log for id %s:\n\n" "$NOTARY_ID"

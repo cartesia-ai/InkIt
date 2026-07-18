@@ -2,49 +2,23 @@ import Foundation
 import AppKit
 import Carbon.HIToolbox
 
-/// Global hotkey with two backends:
-///
-/// - `.carbon`: Carbon `RegisterEventHotKey` for normal keyCode + modifier
-///   combinations. Press and release events arrive without key repeat, even
-///   when another app is frontmost.
-///
-/// - `.fn`: The Fn / 🌐 key isn't a real modifier in Carbon. We install a
-///   `CGEventTap` at `cghidEventTap` with active suppression: when Fn
-///   transitions, the callback returns `nil` and the event never reaches the
-///   OS Globe handler (so Emoji / Dictation don't fire). This requires
-///   Accessibility permission. If the tap can't be created we fall back to a
-///   passive `NSEvent` monitor that observes Fn but can't suppress it.
 final class HotkeyManager {
     var onPress: (() -> Void)?
     var onRelease: (() -> Void)?
 
-    // Carbon path
     private var hotKeyRef: EventHotKeyRef?
     private var eventHandler: EventHandlerRef?
-    private let hotKeyID = EventHotKeyID(signature: OSType(0x494E4B53 /* "INKS" */), id: 1)
+    private let hotKeyID = EventHotKeyID(signature: OSType(0x494E4B53), id: 1)
 
-    // Fn path — event tap
     private var fnEventTap: CFMachPort?
     private var fnRunLoopSource: CFRunLoopSource?
     private var fnIsDown = false
-    // The tap callback runs on its own thread/run loop, not the main one. An
-    // *active* `flagsChanged` tap blocks every modifier-key press until its
-    // callback returns; servicing it on the main run loop means any main-thread
-    // stall (a slow AX walk, heavy SwiftUI work) freezes Cmd/Shift/… system-wide
-    // until the tap times out. A dedicated thread decouples modifier delivery
-    // from the main thread entirely.
     private var fnTapThread: Thread?
     private var fnTapRunLoop: CFRunLoop?
 
-    // Fn path — passive fallback
     private var fnGlobalMonitor: Any?
     private var fnLocalMonitor: Any?
 
-    // Modifier path — a bare ⌘/⌥/⌃/⇧ (left or right) used on its own. Same
-    // dedicated-thread tap as Fn, but listen-only: the modifier must keep
-    // working for normal combos, so we observe its press/release and never
-    // suppress it. `modKeyCode` is the physical key we react to; `modMask` is
-    // the device-independent flag that tells press from release.
     private var modEventTap: CFMachPort?
     private var modRunLoopSource: CFRunLoopSource?
     private var modTapThread: Thread?

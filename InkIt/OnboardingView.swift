@@ -96,16 +96,13 @@ struct OnboardingRootView: View {
     }
 }
 
-// MARK: - Step indicator
-
 private struct StepIndicator: View {
     let step: OnboardingStep
     let isReachable: (OnboardingStep) -> Bool
     let go: (OnboardingStep) -> Void
 
-    // Page dots: reached steps filled, upcoming hollow. Only the fill changes.
-    private let dot: CGFloat = 9      // dot diameter
-    private let slot: CGFloat = 26    // pitch + hit target
+    private let dot: CGFloat = 9
+    private let slot: CGFloat = 26
 
     var body: some View {
         HStack(spacing: 0) {

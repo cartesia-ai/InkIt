@@ -103,7 +103,7 @@ final class AudioCaptureService {
             }
         }
         if peak <= 0 { return 0 }
-        let db = 20 * log10f(peak)        // typically -∞ … 0
+        let db = 20 * log10f(peak)
         let floor: Float = -50
         let norm = max(0, min(1, (db - floor) / -floor))
         return norm

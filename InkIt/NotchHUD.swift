@@ -218,7 +218,7 @@ private struct NotchHUDView: View {
             liveContent
         case .status(let label):
             statusContent(label)
-                .id(label) // cross-fade only when the label actually changes
+                .id(label)
         case .notice(let label):
             noticeContent(label: label)
                 .id(label)
@@ -247,22 +247,17 @@ private struct NotchHUDView: View {
         )
     }
 
-    /// Centered island that merges with the notch and hangs straight down.
-    /// Width/height track `displayed*`, so the whole shape contracts up into the
-    /// notch on release; the content strip is clipped as the pill collapses.
     private func pill<C: View>(content: C) -> some View {
         shape(radius: 9)
             .overlay {
                 VStack(spacing: 0) {
-                    // Clear the notch, then a small gap so content isn't jammed
-                    // against the notch's bottom edge.
                     Spacer(minLength: 0)
                         .frame(height: menuBar + HUDMetrics.contentTopGap)
                     content
                         .frame(height: HUDMetrics.contentRowHeight)
                         .opacity(isVisible ? 1 : 0)
                         .animation(.easeInOut(duration: 0.16), value: mode)
-                    Spacer(minLength: 0) // padding below the content row
+                    Spacer(minLength: 0)
                 }
                 .frame(height: displayedHeight, alignment: .top)
                 .clipped()
