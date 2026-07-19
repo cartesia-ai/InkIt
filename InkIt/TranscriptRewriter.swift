@@ -52,7 +52,8 @@ final class TranscriptRewriter {
 
     private func call(system: [[String: Any]], transcript: String, model: String, timeout: TimeInterval, label: String, runID: String?) async -> Result<String, RewriteFailure> {
         let estimatedInputTokens = max(48, transcript.count / 3)
-        let maxTokens = min(1500, estimatedInputTokens * 3 + 80)
+        let reasoningTokenAllowance = 512
+        let maxTokens = min(1500, estimatedInputTokens * 3 + 80 + reasoningTokenAllowance)
         let userContent = "<transcript>\n\(transcript)\n</transcript>"
 
         var req = URLRequest(url: provider.endpoint)
@@ -129,6 +130,16 @@ final class TranscriptRewriter {
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let text = extract(json) else {
                 DebugLog.error("Rewriter[\(label)] response parse failed elapsed=\(elapsed)")
+                return .failure(.unknown)
+            }
+            let truncated: Bool
+            if provider.isOpenAICompatible {
+                truncated = ((json["choices"] as? [[String: Any]])?.first?["finish_reason"] as? String) == "length"
+            } else {
+                truncated = (json["stop_reason"] as? String) == "max_tokens"
+            }
+            if truncated {
+                DebugLog.error("Rewriter[\(label)] response truncated (hit max_tokens) — discarding, elapsed=\(elapsed)")
                 return .failure(.unknown)
             }
             let cleaned = text
