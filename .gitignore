@@ -24,3 +24,6 @@ local-media/
 
 # Local-only demo/debug seeding utility (launch-arg gated; not shipped).
 InkIt/DebugSeed.swift
+
+# Local-only social preview image (uploaded to GitHub repo settings manually)
+.github/media/og.png
