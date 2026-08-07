@@ -84,14 +84,28 @@ enum FocusedEditable {
     struct Result {
         let isEditable: Bool
         let app: NSRunningApplication?
+        let focusedPID: pid_t
+
+        /// True when AX did not find an editable field but the dictation target is
+        /// still frontmost, so Cmd+V is likely to land in the right place anyway.
+        /// GPU terminals and native agent UIs (Conductor, super.engineering, …)
+        /// often accept keyboard paste without exposing AXTextArea.
+        func allowsKeyboardPasteFallback(to target: NSRunningApplication?) -> Bool {
+            guard !isEditable else { return false }
+            guard let target, !target.isTerminated, target.isActive else { return false }
+            if focusedPID <= 0 { return true }
+            return focusedPID == target.processIdentifier
+        }
     }
 
     static func current() async -> Result {
-        guard AXIsProcessTrusted() else { return Result(isEditable: false, app: nil) }
+        guard AXIsProcessTrusted() else {
+            return Result(isEditable: false, app: nil, focusedPID: 0)
+        }
 
         let outcome = await AX.run(budget: 1.5) { deadline in resolve(deadline: deadline) }
         let app = outcome.pid > 0 ? NSRunningApplication(processIdentifier: outcome.pid) : nil
-        return Result(isEditable: outcome.isEditable, app: app)
+        return Result(isEditable: outcome.isEditable, app: app, focusedPID: outcome.pid)
     }
 
     private static func resolve(deadline: Date) -> (isEditable: Bool, pid: pid_t) {

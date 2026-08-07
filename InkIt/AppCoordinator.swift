@@ -338,7 +338,13 @@ final class AppCoordinator: ObservableObject {
                 let polishFinished = DispatchTime.now()
 
                 let focus = await FocusedEditable.current()
-                guard focus.isEditable else {
+                let pasteTargetApp: NSRunningApplication?
+                if focus.isEditable {
+                    pasteTargetApp = focus.app ?? capturedTargetApp
+                } else if focus.allowsKeyboardPasteFallback(to: capturedTargetApp) {
+                    pasteTargetApp = capturedTargetApp
+                    DebugLog.info("onClosed: no AX-editable focus but target app still frontmost — pasting via Cmd+V")
+                } else {
                     self.pasteTargetApp = nil
                     self.contextTargetSnapshot = nil
                     let latency = release.map { start in
@@ -364,7 +370,7 @@ final class AppCoordinator: ObservableObject {
                 }
 
                 self.state = .pasting
-                self.paste.paste(text: correction.text, targetApp: focus.app ?? capturedTargetApp) { ok in
+                self.paste.paste(text: correction.text, targetApp: pasteTargetApp) { ok in
                     Task { @MainActor in
                         self.pasteTargetApp = nil
                         self.contextTargetSnapshot = nil
