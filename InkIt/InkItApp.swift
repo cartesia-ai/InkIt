@@ -58,6 +58,56 @@ enum Elevation {
     static let modal   = Color.black.opacity(0.28)
 }
 
+struct DayGroup<Item>: Identifiable {
+    let id: Date
+    let title: String
+    let items: [Item]
+}
+
+enum DateGrouping {
+    private static let dayFmt: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "EEEE, MMM d"
+        return f
+    }()
+
+    static func byDay<Item>(_ items: [Item], newestFirst: Bool = true, date: (Item) -> Date) -> [DayGroup<Item>] {
+        let calendar = Calendar.current
+        let grouped = Dictionary(grouping: items) { calendar.startOfDay(for: date($0)) }
+        return grouped.keys
+            .sorted(by: newestFirst ? (>) : (<))
+            .map { day in
+                let dayItems = grouped[day, default: []].sorted {
+                    newestFirst ? date($0) > date($1) : date($0) < date($1)
+                }
+                return DayGroup(id: day, title: title(for: day, calendar: calendar), items: dayItems)
+            }
+    }
+
+    static func title(for day: Date, calendar: Calendar = .current) -> String {
+        if calendar.isDateInToday(day) { return "Today" }
+        if calendar.isDateInYesterday(day) { return "Yesterday" }
+        return dayFmt.string(from: day)
+    }
+}
+
+struct DayGroupHeader: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(.inkEyebrow)
+            .tracking(1.1)
+            .textCase(.uppercase)
+            .foregroundStyle(.tertiary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 8)
+            .padding(.top, 14)
+            .padding(.bottom, 8)
+            .background(Color.canvas)
+    }
+}
+
 enum PageLayout {
     static let gutter: CGFloat = 40
     static let top: CGFloat = 32
@@ -314,6 +364,7 @@ struct InkItApp: App {
     @StateObject private var settings = SettingsStore.shared
     @StateObject private var history = TranscriptHistoryStore.shared
     @StateObject private var aggregates = UsageAggregateStore.shared
+    @StateObject private var meetingNotes = MeetingNotesStore.shared
 
     var body: some Scene {
         WindowGroup("InkIt", id: "main") {
@@ -322,6 +373,7 @@ struct InkItApp: App {
                 .environmentObject(settings)
                 .environmentObject(history)
                 .environmentObject(aggregates)
+                .environmentObject(meetingNotes)
         }
         .modelContainer(history.modelContainer)
         .windowResizability(.contentMinSize)
@@ -416,6 +468,8 @@ struct MainWindowView: View {
                     InsightsView()
                 case .dictionary:
                     DictionaryView()
+                case .meetingNotes:
+                    MeetingNotesView()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

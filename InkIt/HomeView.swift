@@ -29,22 +29,10 @@ struct HomeView: View {
     @AppStorage("history.newestFirst") private var newestFirst = true
     @State private var showManageMenu = false
 
-    private struct TranscriptGroup: Identifiable {
-        let id: Date
-        let title: String
-        let entries: [TranscriptHistoryStore.Entry]
-    }
-
     private static let timeFmt: DateFormatter = {
         let f = DateFormatter()
         f.dateStyle = .none
         f.timeStyle = .short
-        return f
-    }()
-
-    private static let dayFmt: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "EEEE, MMM d"
         return f
     }()
 
@@ -54,20 +42,8 @@ struct HomeView: View {
         return history.entries.filter { $0.text.lowercased().contains(q) }
     }
 
-    private var groupedEntries: [TranscriptGroup] {
-        let calendar = Calendar.current
-        let grouped = Dictionary(grouping: filteredEntries) { entry in
-            calendar.startOfDay(for: entry.timestamp)
-        }
-
-        return grouped.keys
-            .sorted(by: newestFirst ? (>) : (<))
-            .map { day in
-                let entries = grouped[day, default: []].sorted {
-                    newestFirst ? $0.timestamp > $1.timestamp : $0.timestamp < $1.timestamp
-                }
-                return TranscriptGroup(id: day, title: title(for: day, calendar: calendar), entries: entries)
-            }
+    private var groupedEntries: [DayGroup<TranscriptHistoryStore.Entry>] {
+        DateGrouping.byDay(filteredEntries, newestFirst: newestFirst) { $0.timestamp }
     }
 
     var body: some View {
@@ -219,7 +195,7 @@ struct HomeView: View {
         }
         ForEach(groupedEntries) { group in
             Section {
-                ForEach(Array(group.entries.enumerated()), id: \.element.id) { index, entry in
+                ForEach(Array(group.items.enumerated()), id: \.element.id) { index, entry in
                     if index > 0 {
                         Rectangle()
                             .fill(Color.line)
@@ -229,22 +205,9 @@ struct HomeView: View {
                     transcriptRow(entry)
                 }
             } header: {
-                dayHeader(group.title)
+                DayGroupHeader(title: group.title)
             }
         }
-    }
-
-    private func dayHeader(_ title: String) -> some View {
-        Text(title)
-            .font(.inkEyebrow)
-            .tracking(1.1)
-            .textCase(.uppercase)
-            .foregroundStyle(.tertiary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 8)
-            .padding(.top, 14)
-            .padding(.bottom, 8)
-            .background(Color.canvas)
     }
 
     private var statBand: some View {
@@ -473,20 +436,4 @@ struct HomeView: View {
         }
     }
 
-    private func title(for day: Date, calendar: Calendar) -> String {
-        if calendar.isDateInToday(day) {
-            return "Today"
-        }
-        if calendar.isDateInYesterday(day) {
-            return "Yesterday"
-        }
-
-        let startOfToday = calendar.startOfDay(for: Date())
-        if let daysAgo = calendar.dateComponents([.day], from: day, to: startOfToday).day,
-           daysAgo < 7 {
-            return Self.dayFmt.string(from: day)
-        }
-
-        return Self.dayFmt.string(from: day)
-    }
 }
