@@ -165,6 +165,7 @@ enum Motion {
 enum Hover {
     static let backdropOpacity: Double = 0.08
     static let fillShift: Double = 0.07
+    static let grayTintOpacity: Double = 0.16
     static let borderOpacity: Double = 0.22
     static let rowTintOpacity: Double = 0.055
     static let animation: Animation = Motion.quick

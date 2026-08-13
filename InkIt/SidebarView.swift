@@ -4,30 +4,34 @@ enum MainSection: String, CaseIterable, Identifiable {
     case home
     case dictionary
     case insights
+    case meetingNotes
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .home:       return "Home"
-        case .dictionary: return "Dictionary"
-        case .insights:   return "Insights"
+        case .home:         return "Home"
+        case .dictionary:   return "Dictionary"
+        case .insights:     return "Insights"
+        case .meetingNotes: return "Meeting Notes"
         }
     }
 
     var icon: String {
         switch self {
-        case .home:       return "house"
-        case .dictionary: return "character.book.closed"
-        case .insights:   return "chart.bar.xaxis"
+        case .home:         return "house"
+        case .dictionary:   return "character.book.closed"
+        case .insights:     return "chart.bar.xaxis"
+        case .meetingNotes: return "note.text"
         }
     }
 
     var shortcut: KeyEquivalent {
         switch self {
-        case .home:       return "1"
-        case .dictionary: return "2"
-        case .insights:   return "3"
+        case .home:         return "1"
+        case .dictionary:   return "2"
+        case .insights:     return "3"
+        case .meetingNotes: return "4"
         }
     }
 }
