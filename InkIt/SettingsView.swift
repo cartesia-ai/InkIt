@@ -197,7 +197,7 @@ private struct APIKeyField: View {
                 .font(.caption).foregroundStyle(.red)
                 .fixedSize(horizontal: false, vertical: true)
         case .couldNotVerify:
-            Text("Couldn’t verify — check your connection")
+            Text("Couldn’t verify, check your connection")
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         default:
@@ -492,7 +492,7 @@ struct SettingsSearchItem: Identifiable {
         .init(title: "Launch InkIt at login", pane: .general, anchor: "general.login",
               keywords: ["startup", "login", "launch", "open", "boot", "start", "auto", "sign in"]),
         .init(title: "Activation", pane: .dictation, anchor: "general.activation",
-              keywords: ["activation", "hold", "toggle", "push to talk", "hands free", "tap", "mode"]),
+              keywords: ["activation", "hold", "toggle", "both", "push to talk", "hands free", "control", "ctrl", "tap", "mode"]),
         .init(title: "Dictation shortcut", pane: .dictation, anchor: "general.hotkey",
               keywords: ["hotkey", "shortcut", "key", "binding", "dictate", "fn", "trigger"]),
         .init(title: "Sound on press and release", pane: .dictation, anchor: "general.sound",
@@ -615,7 +615,7 @@ private struct SettingsSearchResults: View {
         case "general.login":
             SettingsToggle("Launch InkIt at login", isOn: $settings.launchAtLogin)
         case "general.activation":
-            ActivationModeCardPicker(mode: $settings.dictationMode)
+            ActivationModeCardPicker(mode: $settings.dictationMode, hotkeyDisplayString: settings.hotkeyDisplayString)
         case "general.hotkey":
             HotkeyRecorder().environmentObject(settings)
         case "general.sound":
@@ -771,7 +771,13 @@ private struct DictationSettingsPane: View {
     var body: some View {
         SettingsStack {
             SettingsPlainGroup {
-                ActivationModeCardPicker(mode: $settings.dictationMode)
+                ActivationModeCardPicker(mode: $settings.dictationMode, hotkeyDisplayString: settings.hotkeyDisplayString)
+                if settings.dictationMode == .both {
+                    Text("While hands-free is on, \(settings.hotkeyDisplayString) alone also stops it, no need to hold ⌃ Ctrl again.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 4)
+                }
             } header: {
                 Text("Activation mode").settingsSectionHeader()
             }
@@ -851,11 +857,12 @@ private struct GeneralSettingsPane: View {
 
 private struct ActivationModeCardPicker: View {
     @Binding var mode: DictationMode
+    let hotkeyDisplayString: String
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             ForEach(DictationMode.allCases) { m in
-                ActivationModeCard(mode: m, isSelected: mode == m) { mode = m }
+                ActivationModeCard(mode: m, hotkeyDisplayString: hotkeyDisplayString, isSelected: mode == m) { mode = m }
             }
         }
         .padding(.vertical, 4)
@@ -864,6 +871,7 @@ private struct ActivationModeCardPicker: View {
 
 private struct ActivationModeCard: View {
     let mode: DictationMode
+    let hotkeyDisplayString: String
     let isSelected: Bool
     let action: () -> Void
     @State private var hovering = false
@@ -880,7 +888,7 @@ private struct ActivationModeCard: View {
                         .foregroundStyle(.primary)
                     Spacer(minLength: 0)
                 }
-                Text(mode.detail)
+                Text(mode.detail(hotkey: hotkeyDisplayString))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1000,7 +1008,7 @@ private struct MicrophonePickerRow: View {
 
     private var caption: String? {
         if pinnedButMissing {
-            return "Pinned mic isn’t connected — using the system default until it’s back"
+            return "Pinned mic isn’t connected, using the system default until it’s back"
         }
         if selectedDevice?.isBluetooth ?? false {
             return "Bluetooth mics use a narrowband profile that can lower transcription accuracy. A wired or built-in mic usually works better"

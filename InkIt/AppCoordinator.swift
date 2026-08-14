@@ -23,7 +23,8 @@ final class AppCoordinator: ObservableObject {
     private let audio = AudioCaptureService()
     private let paste = PasteService()
     let permissions = PermissionsService.shared
-    private let hotkey = HotkeyManager()
+    private let fnKey = FnKeyManager()
+    private let hotkey: HotkeyManager
     private var client: CartesiaStreamingClient?
     let settings = SettingsStore.shared
     let history = TranscriptHistoryStore.shared
@@ -48,6 +49,7 @@ final class AppCoordinator: ObservableObject {
     #endif
 
     init() {
+        self.hotkey = HotkeyManager(fnKey: fnKey)
         #if DEBUG
         mainThreadWatchdog.start()
         #endif
@@ -60,6 +62,9 @@ final class AppCoordinator: ObservableObject {
         hotkey.onRelease = { [weak self] in
             Task { @MainActor in self?.handleHotkeyRelease() }
         }
+        hotkey.onComboPress = { [weak self] in
+            Task { @MainActor in self?.handleHandsFreeToggle() }
+        }
         audio.onLevel = { [weak self] level in
             Task { @MainActor in self?.inputLevel = level }
         }
@@ -71,6 +76,15 @@ final class AppCoordinator: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 Task { @MainActor in self?.refreshHUD() }
+            }
+            .store(in: &cancellables)
+        settings.$dictationMode
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                Task { @MainActor in
+                    guard let self, self.isHotkeyRegistered else { return }
+                    self.registerHotkey()
+                }
             }
             .store(in: &cancellables)
     }
@@ -150,13 +164,24 @@ final class AppCoordinator: ObservableObject {
 
     func registerHotkey() {
         isHotkeyRegistered = true
-        hotkey.register(binding: settings.hotkey)
+        hotkey.register(binding: settings.hotkey, comboEnabled: settings.dictationMode == .both)
+        syncFnKey()
     }
 
     func unregisterHotkey() {
         guard isHotkeyRegistered else { return }
         hotkey.unregister()
         isHotkeyRegistered = false
+        syncFnKey()
+    }
+
+    private func syncFnKey() {
+        let needed = isHotkeyRegistered && settings.hotkey == .fn
+        if needed {
+            fnKey.start()
+        } else {
+            fnKey.stop()
+        }
     }
 
     private func ensureHotkeyRegistration() {
@@ -185,8 +210,12 @@ final class AppCoordinator: ObservableObject {
     }
 
     private func handleHotkeyPress() {
+        if settings.dictationMode == .both, handsFreeSessionActive {
+            stopDictation()
+            return
+        }
         switch settings.dictationMode {
-        case .hold:
+        case .hold, .both:
             isHotkeyHeld = true
             startDictation()
         case .toggle:
@@ -199,7 +228,7 @@ final class AppCoordinator: ObservableObject {
     }
 
     private func handleHotkeyRelease() {
-        guard settings.dictationMode == .hold else { return }
+        guard settings.dictationMode != .toggle else { return }
         isHotkeyHeld = false
         if case .error = state {
             armErrorDismiss()
@@ -208,24 +237,46 @@ final class AppCoordinator: ObservableObject {
         stopDictation()
     }
 
+    private func handleHandsFreeToggle() {
+        DebugLog.info("handleHandsFreeToggle: mode=\(settings.dictationMode) state=\(state) handsFreeSessionActive=\(handsFreeSessionActive)")
+        guard settings.dictationMode == .both else { return }
+        if handsFreeSessionActive {
+            stopDictation()
+            return
+        }
+        if case .recording = state {
+            handsFreeSessionActive = true
+            return
+        }
+        startDictation()
+        if case .recording = state {
+            handsFreeSessionActive = true
+        }
+    }
+
     func startDictation() {
         switch state {
         case .idle, .heldInHistory, .error: break
-        default: return
+        default:
+            DebugLog.info("startDictation: rejected, state=\(state) is not idle/heldInHistory/error")
+            return
         }
         errorDismissWork?.cancel()
 
         guard !settings.cartesiaAPIKey.isEmpty else {
+            DebugLog.info("startDictation: rejected, no Cartesia API key")
             setError("Add your API key")
             return
         }
         permissions.refresh()
         guard permissions.hasMicrophone else {
+            DebugLog.info("startDictation: rejected, no microphone permission")
             setError("Mic access needed")
             permissions.requestMicrophone { _ in }
             return
         }
         guard permissions.hasAccessibility else {
+            DebugLog.info("startDictation: rejected, no accessibility permission")
             setError("Accessibility needed")
             let now = Date()
             let shouldPrompt = lastAccessibilityPrompt
@@ -236,6 +287,7 @@ final class AppCoordinator: ObservableObject {
             }
             return
         }
+        DebugLog.info("startDictation: proceeding, state -> .recording")
 
         state = .recording
         recordingStartTime = .now()
@@ -417,9 +469,14 @@ final class AppCoordinator: ObservableObject {
     }
 
     func stopDictation() {
-        guard case .recording = state else { return }
+        guard case .recording = state else {
+            DebugLog.info("stopDictation: rejected, state=\(state) is not .recording")
+            return
+        }
+        handsFreeSessionActive = false
         releaseTime = .now()
         state = .finalizing
+        DebugLog.info("stopDictation: proceeding, state -> .finalizing")
         if settings.playFeedbackSounds { FeedbackSoundPlayer.shared.playStop() }
         audio.stop()
         client?.finalizeAndClose()
@@ -498,6 +555,7 @@ final class AppCoordinator: ObservableObject {
     }
 
     private var isHotkeyHeld = false
+    private var handsFreeSessionActive = false
 
     private var errorDismissWork: DispatchWorkItem?
 

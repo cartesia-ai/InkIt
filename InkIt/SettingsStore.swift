@@ -81,7 +81,7 @@ enum AppearancePreference: String, CaseIterable, Identifiable {
 }
 
 enum DictationMode: String, CaseIterable, Identifiable {
-    case hold, toggle
+    case hold, toggle, both
 
     var id: String { rawValue }
 
@@ -89,13 +89,15 @@ enum DictationMode: String, CaseIterable, Identifiable {
         switch self {
         case .hold:   return "Hold to talk"
         case .toggle: return "Hands-free"
+        case .both:   return "Both"
         }
     }
 
-    var detail: String {
+    func detail(hotkey: String) -> String {
         switch self {
-        case .hold:   return "Hold your shortcut while you speak, release to paste."
-        case .toggle: return "Press your shortcut once to start, again to paste."
+        case .hold:   return "Hold \(hotkey) while you speak, release to paste."
+        case .toggle: return "Press \(hotkey) once to start, again to paste."
+        case .both:   return "Hold \(hotkey) to talk, or press ⌃ Ctrl + \(hotkey) to go hands-free."
         }
     }
 }
@@ -398,7 +400,7 @@ final class SettingsStore: ObservableObject {
         defaults.removeObject(forKey: Keys.anthropicAPIKey)
         self.dictionaryTerms = defaults.array(forKey: Keys.dictionaryTerms) as? [String] ?? []
         self.dictationMode = defaults.string(forKey: Keys.dictationMode)
-            .flatMap(DictationMode.init(rawValue:)) ?? .hold
+            .flatMap(DictationMode.init(rawValue:)) ?? .both
         self.launchAtLogin = SMAppService.mainApp.status == .enabled
         self.hasCompletedOnboarding = defaults.bool(forKey: Keys.hasCompletedOnboarding)
         self.debugLoggingEnabled = defaults.bool(forKey: Keys.debugLogging)
