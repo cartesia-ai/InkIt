@@ -238,7 +238,6 @@ final class AppCoordinator: ObservableObject {
     }
 
     private func handleHandsFreeToggle() {
-        DebugLog.info("handleHandsFreeToggle: mode=\(settings.dictationMode) state=\(state) handsFreeSessionActive=\(handsFreeSessionActive)")
         guard settings.dictationMode == .both else { return }
         if handsFreeSessionActive {
             stopDictation()
@@ -257,26 +256,21 @@ final class AppCoordinator: ObservableObject {
     func startDictation() {
         switch state {
         case .idle, .heldInHistory, .error: break
-        default:
-            DebugLog.info("startDictation: rejected, state=\(state) is not idle/heldInHistory/error")
-            return
+        default: return
         }
         errorDismissWork?.cancel()
 
         guard !settings.cartesiaAPIKey.isEmpty else {
-            DebugLog.info("startDictation: rejected, no Cartesia API key")
             setError("Add your API key")
             return
         }
         permissions.refresh()
         guard permissions.hasMicrophone else {
-            DebugLog.info("startDictation: rejected, no microphone permission")
             setError("Mic access needed")
             permissions.requestMicrophone { _ in }
             return
         }
         guard permissions.hasAccessibility else {
-            DebugLog.info("startDictation: rejected, no accessibility permission")
             setError("Accessibility needed")
             let now = Date()
             let shouldPrompt = lastAccessibilityPrompt
@@ -287,7 +281,6 @@ final class AppCoordinator: ObservableObject {
             }
             return
         }
-        DebugLog.info("startDictation: proceeding, state -> .recording")
 
         state = .recording
         recordingStartTime = .now()
@@ -469,14 +462,10 @@ final class AppCoordinator: ObservableObject {
     }
 
     func stopDictation() {
-        guard case .recording = state else {
-            DebugLog.info("stopDictation: rejected, state=\(state) is not .recording")
-            return
-        }
+        guard case .recording = state else { return }
         handsFreeSessionActive = false
         releaseTime = .now()
         state = .finalizing
-        DebugLog.info("stopDictation: proceeding, state -> .finalizing")
         if settings.playFeedbackSounds { FeedbackSoundPlayer.shared.playStop() }
         audio.stop()
         client?.finalizeAndClose()

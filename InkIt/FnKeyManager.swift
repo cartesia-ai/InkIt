@@ -22,11 +22,7 @@ final class FnKeyManager {
     func start() {
         guard !isRunning else { return }
         isRunning = true
-        if installEventTap() {
-            DebugLog.info("FnKeyManager: started via CGEventTap")
-            return
-        }
-        DebugLog.info("FnKeyManager: CGEventTap creation failed, falling back to passive NSEvent monitor")
+        if installEventTap() { return }
         installPassiveMonitor()
     }
 
@@ -55,14 +51,11 @@ final class FnKeyManager {
         if down {
             fnPressWasCombo = controlHeld
             if controlHeld {
-                DebugLog.info("FnKeyManager: control+fn DOWN")
                 DispatchQueue.main.async { [weak self] in self?.onControlFn?() }
             } else {
-                DebugLog.info("FnKeyManager: fn DOWN")
                 DispatchQueue.main.async { [weak self] in self?.onHoldPress?() }
             }
         } else {
-            DebugLog.info("FnKeyManager: fn UP (wasCombo=\(fnPressWasCombo))")
             guard !fnPressWasCombo else { return }
             DispatchQueue.main.async { [weak self] in self?.onHoldRelease?() }
         }
