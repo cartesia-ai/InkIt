@@ -772,12 +772,6 @@ private struct DictationSettingsPane: View {
         SettingsStack {
             SettingsPlainGroup {
                 ActivationModeCardPicker(mode: $settings.dictationMode, hotkeyDisplayString: settings.hotkeyDisplayString)
-                if settings.dictationMode == .both {
-                    Text("While hands-free is on, \(settings.hotkeyDisplayString) alone also stops it, no need to hold ⌃ Ctrl again.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.top, 4)
-                }
             } header: {
                 Text("Activation mode").settingsSectionHeader()
             }

@@ -97,7 +97,7 @@ enum DictationMode: String, CaseIterable, Identifiable {
         switch self {
         case .hold:   return "Hold \(hotkey) while you speak, release to paste."
         case .toggle: return "Press \(hotkey) once to start, again to paste."
-        case .both:   return "Hold \(hotkey) to talk, or press ⌃ Ctrl + \(hotkey) to go hands-free."
+        case .both:   return "Hold \(hotkey) to speak; press ⌃\u{00A0}Ctrl + \(hotkey) to go hands-free."
         }
     }
 }
