@@ -36,7 +36,6 @@ final class MeetingNotesStore: ObservableObject {
             )
             return (container, true)
         } catch {
-            DebugLog.error("MeetingNotesStore: on-disk SwiftData store unavailable (\(error)); using a non-persisting in-memory store for this session")
             let container = try! ModelContainer(
                 for: schema,
                 configurations: ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
@@ -52,9 +51,34 @@ final class MeetingNotesStore: ObservableObject {
         do {
             notes = try context.fetch(descriptor).map { $0.toNote() }
         } catch {
-            DebugLog.error("MeetingNotesStore: loading notes failed — \(error)")
             notes = []
         }
+    }
+
+    @discardableResult
+    func createNote(transcript: String, summary: String? = nil, title: String? = nil) -> Note {
+        let note = Note(title: title ?? Self.defaultTitle(),
+                        createdAt: Date(),
+                        summary: summary,
+                        transcript: transcript)
+        context.insert(MeetingNoteRecord(note: note))
+        saveContext()
+        notes.insert(note, at: 0)
+        return note
+    }
+
+    private func saveContext() {
+        try? context.save()
+    }
+
+    private static let defaultTitleFmt: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MMM d, h:mm a"
+        return f
+    }()
+
+    private static func defaultTitle() -> String {
+        "Meeting, \(defaultTitleFmt.string(from: Date()))"
     }
 }
 

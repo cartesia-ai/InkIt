@@ -55,6 +55,7 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
     var onTranscriptUpdate: ((String) -> Void)?
     var onError: ((STTFailure) -> Void)?
     var onClosed: ((String) -> Void)?
+    var onTurnFinal: ((String, Date) -> Void)?
 
     private let apiKey: String
     private let keyterms: [String]
@@ -241,6 +242,7 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
             let closing = awaitingClose
             stateLock.unlock()
             onTranscriptUpdate?(joinedTranscript())
+            if !finalText.isEmpty { onTurnFinal?(finalText, Date()) }
             if closing { finishClose(reason: .finalTurnReceived) }
 
         case "turn.resume":

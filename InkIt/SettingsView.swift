@@ -13,7 +13,7 @@ private enum SettingsMetrics {
     static let fieldFocusBorderWidth: CGFloat = 2
 }
 
-private struct FieldSurface: ViewModifier {
+struct FieldSurface: ViewModifier {
     var focused: Bool
     func body(content: Content) -> some View {
         content
@@ -32,7 +32,7 @@ private struct FieldSurface: ViewModifier {
     }
 }
 
-private extension View {
+extension View {
     func fieldSurface(focused: Bool = false) -> some View {
         modifier(FieldSurface(focused: focused))
     }
@@ -206,7 +206,7 @@ private struct APIKeyField: View {
     }
 }
 
-private struct RevealableSecureField: NSViewRepresentable {
+struct RevealableSecureField: NSViewRepresentable {
     @Binding var text: String
     let placeholder: String
     let onFocusChange: (Bool) -> Void
@@ -245,7 +245,7 @@ private struct RevealableSecureField: NSViewRepresentable {
     }
 }
 
-private final class RevealingTextField: NSTextField {
+final class RevealingTextField: NSTextField {
     var onFocusChange: ((Bool) -> Void)?
     private(set) var isEditing = false
     private var clickMonitor: Any?

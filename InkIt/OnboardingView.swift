@@ -273,6 +273,17 @@ private struct PermissionsStep: View {
                     enable: { permissions.requestAccessibility() },
                     openSettings: { permissions.openAccessibilitySettings() }
                 )
+
+                PermissionCard(
+                    icon: "record.circle.fill",
+                    title: "Capture meeting audio",
+                    subtitle: "So you automatically keep notes during meetings. Optional, only needed for Meeting Notes.",
+                    state: permissions.systemAudioCaptureState,
+                    manualWhy: "This lets InkIt capture system audio during a meeting note, so it can hear everyone, not just your mic.",
+                    settingsPath: "Privacy & Security ▸ Screen & System Audio Recording",
+                    enable: { permissions.requestSystemAudioCapture() },
+                    openSettings: { permissions.openSystemAudioCaptureSettings() }
+                )
             }
             .frame(maxWidth: 560)
 
@@ -363,7 +374,7 @@ private struct PermissionCard: View {
                 ManualStep(number: 2, prefix: "Turn on ", emphasis: title)
             }
 
-            Button("Open System Settings", action: openSettings)
+            Button("Open System Settings", action: enable)
                 .buttonStyle(InkButtonStyle(compact: true))
                 .modifier(PointingHandCursor())
         }

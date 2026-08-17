@@ -2,9 +2,12 @@ import SwiftUI
 
 struct MeetingNotesView: View {
     @EnvironmentObject var meetingNotes: MeetingNotesStore
+    @EnvironmentObject var meetingSession: MeetingSessionCoordinator
+    @EnvironmentObject var settings: SettingsStore
 
     @State private var searchQuery = ""
     @State private var hintIndex = 0
+    @State private var showAPIKeyGate = false
     @FocusState private var searchFocused: Bool
 
     private let hintTimer = Timer.publish(every: 6, on: .main, in: .common).autoconnect()
@@ -34,6 +37,7 @@ struct MeetingNotesView: View {
         .scrollIndicators(.hidden)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onReceive(hintTimer) { _ in rotateHint() }
+        .overlay { apiKeyGateModal }
     }
 
     private var titleBlock: some View {
@@ -53,12 +57,34 @@ struct MeetingNotesView: View {
 
     private var newNoteButton: some View {
         Button {
-            // Intentional no-op: wire up once note creation is ready.
+            handleNewNoteTapped()
         } label: {
             Label("New note", systemImage: "plus")
         }
         .buttonStyle(InkButtonStyle(variant: .accentSoft))
         .modifier(PointingHandCursor())
+    }
+
+    private func handleNewNoteTapped() {
+        switch meetingSession.checkGate() {
+        case .ready:
+            meetingSession.start()
+        case .needsAPIKey:
+            withAnimation(Motion.state) { showAPIKeyGate = true }
+        }
+    }
+
+    @ViewBuilder private var apiKeyGateModal: some View {
+        if showAPIKeyGate {
+            InkModal(onDismiss: { showAPIKeyGate = false }) {
+                MeetingAPIKeyGate(onContinue: {
+                    showAPIKeyGate = false
+                    meetingSession.start()
+                }, onCancel: {
+                    showAPIKeyGate = false
+                })
+            }
+        }
     }
 
     private var searchBar: some View {
@@ -86,7 +112,6 @@ struct MeetingNotesView: View {
             .clipped()
             if !searchQuery.isEmpty {
                 Button {
-                    // Intentional no-op: sends a query once LLM search over notes exists.
                 } label: {
                     Image(systemName: "paperplane.fill")
                         .font(.system(size: 13))  // ds-allow: icon
@@ -227,4 +252,128 @@ private struct MeetingNoteRow: View {
         f.timeStyle = .short
         return f
     }()
+}
+
+private struct MeetingAPIKeyGate: View {
+    @EnvironmentObject var settings: SettingsStore
+    @StateObject private var validator = LLMKeyValidator(provider: SettingsStore.shared.rewriteProvider)
+    let onContinue: () -> Void
+    let onCancel: () -> Void
+
+    private var keyBinding: Binding<String> {
+        Binding(
+            get: { settings.apiKey(for: settings.rewriteProvider) },
+            set: { settings.setAPIKey($0, for: settings.rewriteProvider) }
+        )
+    }
+
+    @State private var isKeyFieldFocused = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Add an API key for meeting notes")
+                    .font(.inkSheetTitle)
+                    .foregroundStyle(Color.inkText)
+                Text("Meeting notes require an LLM to prepare your notes.")
+                    .font(.inkCallout)
+                    .foregroundStyle(Color.inkSub)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            VStack(alignment: .leading, spacing: 16) {
+                providerField
+                apiKeyField
+            }
+
+            HStack(spacing: 8) {
+                Button("Cancel") { onCancel() }
+                    .buttonStyle(InkSecondaryButtonStyle(compact: true))
+                    .modifier(PointingHandCursor())
+                Button("Add Key") { onContinue() }
+                    .buttonStyle(InkButtonStyle(variant: .accent, compact: true))
+                    .modifier(PointingHandCursor())
+                    .disabled(validator.state != .verified)
+            }
+        }
+        .padding(24)
+        .frame(width: 400)
+        .onAppear {
+            validator.setProvider(settings.rewriteProvider)
+            validator.keyChanged(settings.apiKey(for: settings.rewriteProvider))
+        }
+        .onChange(of: settings.rewriteProvider) { _, p in
+            validator.setProvider(p)
+            validator.keyChanged(settings.apiKey(for: p))
+        }
+        .onChange(of: settings.llmAPIKeys) { _, _ in
+            validator.keyChanged(settings.apiKey(for: settings.rewriteProvider))
+        }
+    }
+
+    private var providerField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Provider")
+                .font(.inkCaption)
+                .foregroundStyle(Color.inkSub)
+            Picker("", selection: $settings.rewriteProvider) {
+                ForEach(LLMProvider.allCases) { p in
+                    Text(p.isRecommended ? "\(p.displayName) (Recommended)" : p.displayName).tag(p)
+                }
+            }
+            .labelsHidden()
+            .modifier(PointingHandCursor())
+        }
+    }
+
+    private var apiKeyField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("API key")
+                .font(.inkCaption)
+                .foregroundStyle(Color.inkSub)
+            HStack(spacing: 6) {
+                RevealableSecureField(
+                    text: keyBinding,
+                    placeholder: settings.rewriteProvider.keyPlaceholder
+                ) { isKeyFieldFocused = $0 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                keyStatusIcon
+            }
+            .padding(.horizontal, 10)
+            .fieldSurface(focused: isKeyFieldFocused)
+
+            keyStatusMessage
+
+            ExternalLink(
+                title: "Get your \(settings.rewriteProvider.displayName) API key",
+                url: settings.rewriteProvider.keyURL
+            )
+        }
+    }
+
+    @ViewBuilder private var keyStatusIcon: some View {
+        switch validator.state {
+        case .checking:
+            ProgressView().controlSize(.small)
+        case .verified:
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+        case .invalidKey:
+            Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
+        case .couldNotVerify:
+            Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
+        default:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder private var keyStatusMessage: some View {
+        switch validator.state {
+        case .invalidKey:
+            Text("Invalid key").font(.inkCaption).foregroundStyle(.red)
+        case .couldNotVerify:
+            Text("Couldn’t verify. Check your connection.").font(.inkCaption).foregroundStyle(Color.inkSub)
+        default:
+            EmptyView()
+        }
+    }
 }

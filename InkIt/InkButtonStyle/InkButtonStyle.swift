@@ -35,8 +35,6 @@ struct InkButtonStyle: ButtonStyle {
             }
         }
 
-        // accentSoft's fill is already light, so brightening it on hover barely
-        // reads — gray it down instead, like a dimmed/disabled tint.
         private var graysOnHover: Bool { variant == .accentSoft }
 
         var body: some View {

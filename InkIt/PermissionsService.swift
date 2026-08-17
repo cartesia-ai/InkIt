@@ -16,8 +16,10 @@ final class PermissionsService: ObservableObject {
 
     @Published private(set) var hasMicrophone: Bool = false
     @Published private(set) var hasAccessibility: Bool = false
+    @Published private(set) var hasSystemAudioCapture: Bool = false
     @Published private(set) var microphoneState: PermissionState = .notRequested
     @Published private(set) var accessibilityState: PermissionState = .notRequested
+    @Published private(set) var systemAudioCaptureState: PermissionState = .notRequested
 
     private var timer: Timer?
     private var axRequestedAt: Date?
@@ -129,6 +131,26 @@ final class PermissionsService: ObservableObject {
 
     func openAccessibilitySettings() {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else {
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
+    func requestSystemAudioCapture() {
+        Task.detached { [weak self] in
+            let granted = ProcessTapAudioService.probeAccess()
+            await MainActor.run { self?.recordSystemAudioCaptureResult(granted: granted) }
+        }
+        openSystemAudioCaptureSettings()
+    }
+
+    func recordSystemAudioCaptureResult(granted: Bool) {
+        hasSystemAudioCapture = granted
+        systemAudioCaptureState = granted ? .granted : .needsManual
+    }
+
+    func openSystemAudioCaptureSettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") else {
             return
         }
         NSWorkspace.shared.open(url)

@@ -366,6 +366,7 @@ struct InkItApp: App {
     @StateObject private var history = TranscriptHistoryStore.shared
     @StateObject private var aggregates = UsageAggregateStore.shared
     @StateObject private var meetingNotes = MeetingNotesStore.shared
+    @StateObject private var meetingSession = MeetingSessionCoordinator()
 
     var body: some Scene {
         WindowGroup("InkIt", id: "main") {
@@ -375,6 +376,7 @@ struct InkItApp: App {
                 .environmentObject(history)
                 .environmentObject(aggregates)
                 .environmentObject(meetingNotes)
+                .environmentObject(meetingSession)
         }
         .modelContainer(history.modelContainer)
         .windowResizability(.contentMinSize)
@@ -416,20 +418,25 @@ struct InkItApp: App {
 
 struct RootView: View {
     @EnvironmentObject var settings: SettingsStore
+    @EnvironmentObject var meetingSession: MeetingSessionCoordinator
     var body: some View {
         Group {
-            if settings.hasCompletedOnboarding {
+            if !settings.hasCompletedOnboarding {
+                OnboardingRootView()
+                    .frame(minWidth: 620, idealWidth: 1140, maxWidth: .infinity,
+                           minHeight: 560, idealHeight: 860, maxHeight: .infinity)
+            } else if meetingSession.isSessionActive {
+                MeetingSessionView()
+                    .frame(width: MeetingSessionView.windowWidth)
+                    .frame(maxHeight: .infinity)
+            } else {
                 MainWindowView()
                     .frame(minWidth: SettingsPopover.size.width + 2 * SettingsPopover.breathingRoom,
                            minHeight: SettingsPopover.size.height + 2 * SettingsPopover.breathingRoom
                                       - MainWindowView.titlebarHeight)
-            } else {
-                OnboardingRootView()
-                    .frame(minWidth: 620, idealWidth: 1140, maxWidth: .infinity,
-                           minHeight: 560, idealHeight: 860, maxHeight: .infinity)
             }
         }
-        .background(WindowChrome())
+        .background(WindowChrome(meetingSessionActive: meetingSession.isSessionActive))
         .onAppear { settings.applyAppearance() }
     }
 }
@@ -1161,6 +1168,8 @@ private struct DiffLegendLabelStyle: LabelStyle {
 }
 
 private struct WindowChrome: NSViewRepresentable {
+    var meetingSessionActive: Bool = false
+
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
         DispatchQueue.main.async { [weak view] in configure(view?.window) }
@@ -1181,6 +1190,7 @@ private struct WindowChrome: NSViewRepresentable {
         }
         window.collectionBehavior.remove(.fullScreenPrimary)
         window.collectionBehavior.insert(.fullScreenNone)
+        MeetingWindowResizer.shared.apply(sessionActive: meetingSessionActive, to: window)
     }
 }
 
