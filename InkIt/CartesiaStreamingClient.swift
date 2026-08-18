@@ -80,6 +80,13 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
     var awaitingClose = false
     private let stateLock = NSLock()
 
+    // Cartesia's turn-detector occasionally hallucinates short filler text (e.g. "Mm.")
+    // on a turn boundary that lands during near-total silence. Gate on average sample
+    // amplitude over the turn to drop those instead of trusting every turn.end as real content.
+    private var turnEnergySum: Int64 = 0
+    private var turnSampleCount: Int = 0
+    private static let silenceAmplitudeThreshold: Double = 50
+
     init(apiKey: String, keyterms: [String] = []) {
         self.apiKey = apiKey
         self.keyterms = keyterms
@@ -116,6 +123,7 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
 
     func sendAudio(_ data: Data) {
         guard let task, !hasClosed else { return }
+        accumulateEnergy(data)
         stateLock.lock()
         if !isConnected {
             pendingAudio.append(data)
@@ -131,6 +139,21 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
     private static let finalizeSilenceMs = 150
     private func finalizeSilence() -> Data {
         Data(count: sampleRate * 2 * Self.finalizeSilenceMs / 1000)
+    }
+
+    private func accumulateEnergy(_ data: Data) {
+        let sampleCount = data.count / 2
+        guard sampleCount > 0 else { return }
+        let sum: Int64 = data.withUnsafeBytes { rawBuffer in
+            let samples = rawBuffer.bindMemory(to: Int16.self)
+            var total: Int64 = 0
+            for sample in samples { total += Int64(abs(Int32(sample))) }
+            return total
+        }
+        stateLock.lock()
+        turnEnergySum += sum
+        turnSampleCount += sampleCount
+        stateLock.unlock()
     }
 
     func finalizeAndClose() {
@@ -236,10 +259,18 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
         case "turn.end":
             stateLock.lock()
             let finalText = (json["transcript"] as? String) ?? currentTurn
-            if !finalText.isEmpty { completedTurns.append(finalText) }
+            let avgAmplitude = turnSampleCount > 0 ? Double(turnEnergySum) / Double(turnSampleCount) : 0
+            turnEnergySum = 0
+            turnSampleCount = 0
+            let isSilentTurn = avgAmplitude < Self.silenceAmplitudeThreshold
+            let shouldEmit = !finalText.isEmpty && !isSilentTurn
+            if shouldEmit { completedTurns.append(finalText) }
             currentTurn = ""
             let closing = awaitingClose
             stateLock.unlock()
+            if isSilentTurn, !finalText.isEmpty {
+                DebugLog.info("turn.end dropped as silence hallucination: avgAmplitude=\(avgAmplitude) text=\(finalText)")
+            }
             onTranscriptUpdate?(joinedTranscript())
             if closing { finishClose(reason: .finalTurnReceived) }
 
