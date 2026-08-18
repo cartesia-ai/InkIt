@@ -56,6 +56,27 @@ enum HotkeyBinding: Equatable {
         UInt32(kVK_ANSI_4),
         UInt32(kVK_ANSI_5)
     ]
+
+    func conflicts(with other: HotkeyBinding) -> Bool {
+        if self == other { return true }
+        switch (self, other) {
+        case (.modifierKey(let code), .carbon(_, let modifiers)),
+             (.carbon(_, let modifiers), .modifierKey(let code)):
+            return Self.carbonModifierBit(forModifierKeyCode: code) & modifiers != 0
+        default:
+            return false
+        }
+    }
+
+    private static func carbonModifierBit(forModifierKeyCode keyCode: UInt32) -> UInt32 {
+        switch Int(keyCode) {
+        case kVK_Command, kVK_RightCommand: return UInt32(cmdKey)
+        case kVK_Option, kVK_RightOption:   return UInt32(optionKey)
+        case kVK_Control, kVK_RightControl: return UInt32(controlKey)
+        case kVK_Shift, kVK_RightShift:     return UInt32(shiftKey)
+        default: return 0
+        }
+    }
 }
 
 enum AppearancePreference: String, CaseIterable, Identifiable {
@@ -80,28 +101,6 @@ enum AppearancePreference: String, CaseIterable, Identifiable {
     }
 }
 
-enum DictationMode: String, CaseIterable, Identifiable {
-    case hold, toggle, both
-
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .hold:   return "Hold to talk"
-        case .toggle: return "Hands-free"
-        case .both:   return "Both"
-        }
-    }
-
-    func detail(hotkey: String) -> String {
-        switch self {
-        case .hold:   return "Hold \(hotkey) while you speak, release to paste."
-        case .toggle: return "Press \(hotkey) once to start, again to paste."
-        case .both:   return "Hold \(hotkey) to speak; press ⌃\u{00A0}Ctrl + \(hotkey) to go hands-free."
-        }
-    }
-}
-
 enum DictionaryLimits {
     static let maxTerms = 100
     static let maxCharacters = 1200
@@ -119,7 +118,9 @@ final class SettingsStore: ObservableObject {
         static let hotkeyKind = "hotkeyKind"
         static let hotkeyKeyCode = "hotkeyKeyCode"
         static let hotkeyModifiers = "hotkeyModifiers"
-        static let dictationMode = "dictationMode"
+        static let handsFreeHotkeyKind = "handsFreeHotkeyKind"
+        static let handsFreeHotkeyKeyCode = "handsFreeHotkeyKeyCode"
+        static let handsFreeHotkeyModifiers = "handsFreeHotkeyModifiers"
         static let hasCompletedOnboarding = "hasCompletedOnboarding"
         static let notchHorizontalPosition = "notchHorizontalPosition"
         static let playFeedbackSounds = "playFeedbackSounds"
@@ -282,11 +283,17 @@ final class SettingsStore: ObservableObject {
     }
 
     @Published var hotkey: HotkeyBinding {
-        didSet { saveHotkey() }
+        didSet {
+            Self.persist(hotkey, kind: Keys.hotkeyKind, keyCode: Keys.hotkeyKeyCode,
+                        modifiers: Keys.hotkeyModifiers, in: defaults)
+        }
     }
 
-    @Published var dictationMode: DictationMode {
-        didSet { defaults.set(dictationMode.rawValue, forKey: Keys.dictationMode) }
+    @Published var handsFreeHotkey: HotkeyBinding {
+        didSet {
+            Self.persist(handsFreeHotkey, kind: Keys.handsFreeHotkeyKind, keyCode: Keys.handsFreeHotkeyKeyCode,
+                        modifiers: Keys.handsFreeHotkeyModifiers, in: defaults)
+        }
     }
 
     @Published var launchAtLogin: Bool {
@@ -354,10 +361,6 @@ final class SettingsStore: ObservableObject {
         }
     }
 
-    var dictationModeVerb: String {
-        dictationMode == .toggle ? "Press" : "Hold"
-    }
-
     private init() {
         if let stored = Keychain.string(for: KeychainAccount.cartesia) {
             self.cartesiaAPIKey = stored
@@ -399,8 +402,6 @@ final class SettingsStore: ObservableObject {
         defaults.removeObject(forKey: Keys.llmKeys)
         defaults.removeObject(forKey: Keys.anthropicAPIKey)
         self.dictionaryTerms = defaults.array(forKey: Keys.dictionaryTerms) as? [String] ?? []
-        self.dictationMode = defaults.string(forKey: Keys.dictationMode)
-            .flatMap(DictationMode.init(rawValue:)) ?? .both
         self.launchAtLogin = SMAppService.mainApp.status == .enabled
         self.hasCompletedOnboarding = defaults.bool(forKey: Keys.hasCompletedOnboarding)
         self.debugLoggingEnabled = defaults.bool(forKey: Keys.debugLogging)
@@ -414,38 +415,50 @@ final class SettingsStore: ObservableObject {
         } else {
             self.notchHorizontalPosition = Self.clampedNotchPosition(defaults.double(forKey: Keys.notchHorizontalPosition))
         }
-        switch defaults.string(forKey: Keys.hotkeyKind) {
-        case "carbon":
-            let storedKey = defaults.object(forKey: Keys.hotkeyKeyCode) as? Int
-            let storedMods = defaults.object(forKey: Keys.hotkeyModifiers) as? Int
-            let storedHotkey = HotkeyBinding.carbon(
-                keyCode: UInt32(storedKey ?? kVK_Space),
-                modifiers: UInt32(storedMods ?? (controlKey | optionKey))
-            )
-            self.hotkey = storedHotkey.isValidShortcut ? storedHotkey : .fn
-        case "modifier":
-            let storedKey = defaults.object(forKey: Keys.hotkeyKeyCode) as? Int
-            self.hotkey = .modifierKey(keyCode: UInt32(storedKey ?? kVK_Control))
-        default:
-            self.hotkey = .fn
-        }
+        self.hotkey = Self.loadBinding(kind: Keys.hotkeyKind, keyCode: Keys.hotkeyKeyCode,
+                                      modifiers: Keys.hotkeyModifiers, fallback: .fn, in: defaults)
+        self.handsFreeHotkey = Self.loadBinding(kind: Keys.handsFreeHotkeyKind, keyCode: Keys.handsFreeHotkeyKeyCode,
+                                                modifiers: Keys.handsFreeHotkeyModifiers,
+                                                fallback: .modifierKey(keyCode: UInt32(kVK_RightCommand)), in: defaults)
 
         if !rewriteProvider.models.contains(rewriteModel) {
             rewriteModel = rewriteProvider.defaultModel
         }
     }
 
-    private func saveHotkey() {
-        switch hotkey {
+    private static func loadBinding(kind: String, keyCode: String, modifiers: String,
+                                    fallback: HotkeyBinding, in defaults: UserDefaults) -> HotkeyBinding {
+        switch defaults.string(forKey: kind) {
+        case "carbon":
+            let storedKey = defaults.object(forKey: keyCode) as? Int
+            let storedMods = defaults.object(forKey: modifiers) as? Int
+            let candidate = HotkeyBinding.carbon(
+                keyCode: UInt32(storedKey ?? kVK_Space),
+                modifiers: UInt32(storedMods ?? (controlKey | optionKey))
+            )
+            return candidate.isValidShortcut ? candidate : fallback
+        case "modifier":
+            let storedKey = defaults.object(forKey: keyCode) as? Int
+            return .modifierKey(keyCode: UInt32(storedKey ?? kVK_Control))
+        case "fn":
+            return .fn
+        default:
+            return fallback
+        }
+    }
+
+    private static func persist(_ binding: HotkeyBinding, kind: String, keyCode: String,
+                                modifiers: String, in defaults: UserDefaults) {
+        switch binding {
         case .fn:
-            defaults.set("fn", forKey: Keys.hotkeyKind)
+            defaults.set("fn", forKey: kind)
         case .carbon(let kc, let mods):
-            defaults.set("carbon", forKey: Keys.hotkeyKind)
-            defaults.set(Int(kc), forKey: Keys.hotkeyKeyCode)
-            defaults.set(Int(mods), forKey: Keys.hotkeyModifiers)
+            defaults.set("carbon", forKey: kind)
+            defaults.set(Int(kc), forKey: keyCode)
+            defaults.set(Int(mods), forKey: modifiers)
         case .modifierKey(let kc):
-            defaults.set("modifier", forKey: Keys.hotkeyKind)
-            defaults.set(Int(kc), forKey: Keys.hotkeyKeyCode)
+            defaults.set("modifier", forKey: kind)
+            defaults.set(Int(kc), forKey: keyCode)
         }
     }
 

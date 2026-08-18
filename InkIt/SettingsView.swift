@@ -491,10 +491,10 @@ struct SettingsSearchItem: Identifiable {
               keywords: ["theme", "light", "dark", "system", "mode", "color", "look"]),
         .init(title: "Launch InkIt at login", pane: .general, anchor: "general.login",
               keywords: ["startup", "login", "launch", "open", "boot", "start", "auto", "sign in"]),
-        .init(title: "Activation", pane: .dictation, anchor: "general.activation",
-              keywords: ["activation", "hold", "toggle", "both", "push to talk", "hands free", "control", "ctrl", "tap", "mode"]),
         .init(title: "Dictation shortcut", pane: .dictation, anchor: "general.hotkey",
               keywords: ["hotkey", "shortcut", "key", "binding", "dictate", "fn", "trigger"]),
+        .init(title: "Hands-free hotkey", pane: .dictation, anchor: "general.handsfree",
+              keywords: ["hands free", "hands-free", "toggle", "lock", "independent", "second key", "trigger"]),
         .init(title: "Sound on press and release", pane: .dictation, anchor: "general.sound",
               keywords: ["sound", "feedback", "audio", "cue", "beep", "haptic"]),
         .init(title: "Microphone", pane: .dictation, anchor: "general.microphone",
@@ -614,10 +614,10 @@ private struct SettingsSearchResults: View {
             AppearanceCardPicker(selection: $settings.appearance)
         case "general.login":
             SettingsToggle("Launch InkIt at login", isOn: $settings.launchAtLogin)
-        case "general.activation":
-            ActivationModeCardPicker(mode: $settings.dictationMode, hotkeyDisplayString: settings.hotkeyDisplayString)
         case "general.hotkey":
             HotkeyRecorder().environmentObject(settings)
+        case "general.handsfree":
+            HandsFreeHotkeyRecorder().environmentObject(settings)
         case "general.sound":
             SettingsToggle("Play sound on press and release", isOn: $settings.playFeedbackSounds)
         case "general.microphone":
@@ -770,14 +770,10 @@ private struct DictationSettingsPane: View {
 
     var body: some View {
         SettingsStack {
-            SettingsPlainGroup {
-                ActivationModeCardPicker(mode: $settings.dictationMode, hotkeyDisplayString: settings.hotkeyDisplayString)
-            } header: {
-                Text("Activation mode").settingsSectionHeader()
-            }
-
             SettingsGroup {
                 HotkeyRecorder()
+                    .environmentObject(settings)
+                HandsFreeHotkeyRecorder()
                     .environmentObject(settings)
                 SettingsToggle("Play sound on press and release", isOn: $settings.playFeedbackSounds)
             } header: {
@@ -846,68 +842,6 @@ private struct GeneralSettingsPane: View {
             permissions.startPolling()
         }
         .onDisappear { permissions.stopPolling() }
-    }
-}
-
-private struct ActivationModeCardPicker: View {
-    @Binding var mode: DictationMode
-    let hotkeyDisplayString: String
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            ForEach(DictationMode.allCases) { m in
-                ActivationModeCard(mode: m, hotkeyDisplayString: hotkeyDisplayString, isSelected: mode == m) { mode = m }
-            }
-        }
-        .padding(.vertical, 4)
-    }
-}
-
-private struct ActivationModeCard: View {
-    let mode: DictationMode
-    let hotkeyDisplayString: String
-    let isSelected: Bool
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 7) {
-                    Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
-                        .font(.system(size: 14))  // ds-allow: icon
-                        .foregroundStyle(isSelected ? Color.accentColor : .secondary)
-                    Text(mode.displayName)
-                        .font(.inkCalloutEmphasized)
-                        .foregroundStyle(.primary)
-                    Spacer(minLength: 0)
-                }
-                Text(mode.detail(hotkey: hotkeyDisplayString))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(
-                RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
-                    .fill(Color.modalCard)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
-                    .stroke(Hover.cardBorder(isSelected: isSelected, hovering: hovering),
-                            lineWidth: isSelected ? 2 : 1)
-            )
-            .shadow(color: hovering && !isSelected ? Elevation.hover : .clear,
-                    radius: 5, y: 2)
-        }
-        .buttonStyle(.plain)
-        .contentShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
-        .onHover { hovering = $0 }
-        .animation(Hover.animation, value: hovering)
-        .modifier(PointingHandCursor())
-        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 }
 
@@ -1300,7 +1234,38 @@ struct PermissionRow: View {
 
 struct HotkeyRecorder: View {
     @EnvironmentObject var settings: SettingsStore
+    var body: some View {
+        HotkeyRecorderRow(
+            binding: $settings.hotkey,
+            otherBinding: settings.handsFreeHotkey,
+            title: "Hotkey",
+            idleCaption: "Your dictation shortcut, active in any app",
+            conflictLabel: "your hands-free shortcut"
+        )
+    }
+}
+
+struct HandsFreeHotkeyRecorder: View {
+    @EnvironmentObject var settings: SettingsStore
+    var body: some View {
+        HotkeyRecorderRow(
+            binding: $settings.handsFreeHotkey,
+            otherBinding: settings.hotkey,
+            title: "Hands-free",
+            idleCaption: "Press to start hands-free dictation, press again to stop",
+            conflictLabel: "your dictation shortcut"
+        )
+    }
+}
+
+private struct HotkeyRecorderRow: View {
     @EnvironmentObject var coordinator: AppCoordinator
+    @Binding var binding: HotkeyBinding
+    let otherBinding: HotkeyBinding
+    let title: String
+    let idleCaption: String
+    let conflictLabel: String
+
     @State private var isEditing = false
     @State private var recording = false
     @State private var keyMonitor: Any?
@@ -1330,8 +1295,8 @@ struct HotkeyRecorder: View {
             .dismissOnClickOutside(isActive: isEditing) { cancelEditing() }
         } label: {
             VStack(alignment: .leading, spacing: SettingsMetrics.captionSpacing) {
-                Text("Hotkey")
-                Text(shortcutDescription)
+                Text(title)
+                Text(isEditing ? "Press a new shortcut" : idleCaption)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1345,14 +1310,9 @@ struct HotkeyRecorder: View {
         }
     }
 
-    private var shortcutDescription: String {
-        if isEditing { return "Press a new shortcut" }
-        return "Your dictation shortcut, active in any app"
-    }
-
     private var shortcutTokens: [String] {
         if recording { return [] }
-        return Self.keyTokens(for: settings.hotkey)
+        return HotkeyConversion.displayTokens(for: binding)
     }
 
     private var shortcutPlaceholder: String? {
@@ -1372,9 +1332,14 @@ struct HotkeyRecorder: View {
         coordinator.registerHotkey()
     }
 
-    private func saveHotkey(_ hotkey: HotkeyBinding) {
+    private func save(_ captured: HotkeyBinding) {
+        if otherBinding.conflicts(with: captured) {
+            let other = HotkeyConversion.displayTokens(for: otherBinding).joined(separator: " ")
+            ToastCenter.shared.show("Conflicts with \(conflictLabel) (\(other)). Choose a different key.", style: .error)
+            return
+        }
         stopRecording()
-        settings.hotkey = hotkey
+        binding = captured
         coordinator.registerHotkey()
         isEditing = false
         ToastCenter.shared.show("Shortcut saved", style: .success)
@@ -1388,7 +1353,7 @@ struct HotkeyRecorder: View {
         stopRecording()
         recording = true
         fnCapture.start {
-            saveHotkey(.fn)
+            save(.fn)
         }
 
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
@@ -1398,7 +1363,7 @@ struct HotkeyRecorder: View {
             }
 
             if event.keyCode == UInt16(kVK_Function) || event.modifierFlags.contains(.function) {
-                saveHotkey(.fn)
+                save(.fn)
                 return nil
             }
 
@@ -1412,7 +1377,7 @@ struct HotkeyRecorder: View {
 
             let captured = HotkeyBinding.carbon(keyCode: UInt32(event.keyCode), modifiers: carbonMods)
             if captured.isValidShortcut {
-                saveHotkey(captured)
+                save(captured)
             } else {
                 rejectShortcut(HotkeyConversion.displayString(keyCode: UInt32(event.keyCode), modifiers: carbonMods))
             }
@@ -1422,7 +1387,7 @@ struct HotkeyRecorder: View {
         flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             if flags.contains(.function) {
-                saveHotkey(.fn)
+                save(.fn)
                 return nil
             }
 
@@ -1439,7 +1404,7 @@ struct HotkeyRecorder: View {
                 modifierCandidate = activeCount == 1 ? keyCode : nil
             } else if modifierCandidate == keyCode {
                 modifierCandidate = nil
-                saveHotkey(.modifierKey(keyCode: keyCode))
+                save(.modifierKey(keyCode: keyCode))
             }
             return event
         }
@@ -1451,21 +1416,6 @@ struct HotkeyRecorder: View {
         if let m = flagsMonitor { NSEvent.removeMonitor(m); flagsMonitor = nil }
         modifierCandidate = nil
         recording = false
-    }
-
-    private static func displayString(for binding: HotkeyBinding) -> String {
-        switch binding {
-        case .carbon(let keyCode, let modifiers):
-            return HotkeyConversion.displayString(keyCode: keyCode, modifiers: modifiers)
-        case .fn:
-            return "fn"
-        case .modifierKey(let keyCode):
-            return HotkeyConversion.modifierLabel(for: keyCode)
-        }
-    }
-
-    private static func keyTokens(for binding: HotkeyBinding) -> [String] {
-        HotkeyConversion.displayTokens(for: binding)
     }
 }
 

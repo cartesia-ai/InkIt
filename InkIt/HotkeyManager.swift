@@ -5,13 +5,13 @@ import Carbon.HIToolbox
 final class HotkeyManager {
     var onPress: (() -> Void)?
     var onRelease: (() -> Void)?
-    var onComboPress: (() -> Void)?
+    var onHandsFreePress: (() -> Void)?
 
     private var hotKeyRef: EventHotKeyRef?
-    private var comboHotKeyRef: EventHotKeyRef?
+    private var handsFreeHotKeyRef: EventHotKeyRef?
     private var eventHandler: EventHandlerRef?
     private let hotKeyID = EventHotKeyID(signature: OSType(0x494E4B53), id: 1)
-    private let comboHotKeyID = EventHotKeyID(signature: OSType(0x494E4B53), id: 2)
+    private let handsFreeHotKeyID = EventHotKeyID(signature: OSType(0x494E4B53), id: 2)
 
     private let fnKey: FnKeyManager
 
@@ -21,11 +21,10 @@ final class HotkeyManager {
     private var modTapRunLoop: CFRunLoop?
     private var modGlobalMonitor: Any?
     private var modLocalMonitor: Any?
-    private var modIsDown = false
-    private var modKeyCode: Int64 = 0
-    private var modMask: CGEventFlags = []
-    private var modComboEnabled = false
-    private var modPressWasCombo = false
+    private var primaryModKeyCode: Int64?
+    private var primaryModIsDown = false
+    private var handsFreeModKeyCode: Int64?
+    private var handsFreeModIsDown = false
 
     init(fnKey: FnKeyManager) {
         self.fnKey = fnKey
@@ -37,19 +36,43 @@ final class HotkeyManager {
         if let h = eventHandler { RemoveEventHandler(h) }
     }
 
-    func register(binding: HotkeyBinding, comboEnabled: Bool) {
+    /// `hotkey` and `handsFree` register fully independently; conflicts(with:) keeps them from colliding.
+    func register(hotkey: HotkeyBinding, handsFree: HotkeyBinding) {
         unregister()
-        switch binding {
+
+        switch hotkey {
         case .carbon(let keyCode, let modifiers):
-            registerCarbon(keyCode: keyCode, modifiers: modifiers, comboEnabled: comboEnabled)
+            var ref: EventHotKeyRef?
+            let status = RegisterEventHotKey(keyCode, modifiers, hotKeyID, GetApplicationEventTarget(), 0, &ref)
+            if status == noErr {
+                hotKeyRef = ref
+            } else {
+                NSLog("InkIt: RegisterEventHotKey failed (%d)", status)
+            }
         case .fn:
             fnKey.onHoldPress = { [weak self] in self?.onPress?() }
             fnKey.onHoldRelease = { [weak self] in self?.onRelease?() }
-            if comboEnabled {
-                fnKey.onControlFn = { [weak self] in self?.onComboPress?() }
-            }
         case .modifierKey(let keyCode):
-            registerModifier(keyCode: keyCode, comboEnabled: comboEnabled)
+            primaryModKeyCode = Int64(keyCode)
+        }
+
+        switch handsFree {
+        case .carbon(let keyCode, let modifiers):
+            var ref: EventHotKeyRef?
+            let status = RegisterEventHotKey(keyCode, modifiers, handsFreeHotKeyID, GetApplicationEventTarget(), 0, &ref)
+            if status == noErr {
+                handsFreeHotKeyRef = ref
+            } else {
+                NSLog("InkIt: RegisterEventHotKey (hands-free) failed (%d)", status)
+            }
+        case .fn:
+            fnKey.onHoldPress = { [weak self] in self?.onHandsFreePress?() }
+        case .modifierKey(let keyCode):
+            handsFreeModKeyCode = Int64(keyCode)
+        }
+
+        if primaryModKeyCode != nil || handsFreeModKeyCode != nil {
+            if !installModifierEventTap() { installModifierPassiveMonitor() }
         }
     }
 
@@ -58,13 +81,12 @@ final class HotkeyManager {
             UnregisterEventHotKey(ref)
             hotKeyRef = nil
         }
-        if let ref = comboHotKeyRef {
+        if let ref = handsFreeHotKeyRef {
             UnregisterEventHotKey(ref)
-            comboHotKeyRef = nil
+            handsFreeHotKeyRef = nil
         }
         fnKey.onHoldPress = nil
         fnKey.onHoldRelease = nil
-        fnKey.onControlFn = nil
         if let tap = modEventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
             if let runLoop = modTapRunLoop {
@@ -78,30 +100,10 @@ final class HotkeyManager {
         }
         if let m = modGlobalMonitor { NSEvent.removeMonitor(m); modGlobalMonitor = nil }
         if let m = modLocalMonitor { NSEvent.removeMonitor(m); modLocalMonitor = nil }
-        modIsDown = false
-        modComboEnabled = false
-        modPressWasCombo = false
-    }
-
-    private func registerCarbon(keyCode: UInt32, modifiers: UInt32, comboEnabled: Bool) {
-        var ref: EventHotKeyRef?
-        let status = RegisterEventHotKey(keyCode, modifiers, hotKeyID,
-                                         GetApplicationEventTarget(), 0, &ref)
-        if status == noErr {
-            hotKeyRef = ref
-        } else {
-            NSLog("InkIt: RegisterEventHotKey failed (%d)", status)
-        }
-
-        guard comboEnabled else { return }
-        var comboRef: EventHotKeyRef?
-        let comboStatus = RegisterEventHotKey(keyCode, modifiers | UInt32(controlKey), comboHotKeyID,
-                                              GetApplicationEventTarget(), 0, &comboRef)
-        if comboStatus == noErr {
-            comboHotKeyRef = comboRef
-        } else {
-            NSLog("InkIt: RegisterEventHotKey (combo) failed (%d)", comboStatus)
-        }
+        primaryModKeyCode = nil
+        primaryModIsDown = false
+        handsFreeModKeyCode = nil
+        handsFreeModIsDown = false
     }
 
     private func installCarbonHandler() {
@@ -116,38 +118,33 @@ final class HotkeyManager {
             var hkID = EventHotKeyID()
             GetEventParameter(eventRef, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
                               nil, MemoryLayout<EventHotKeyID>.size, nil, &hkID)
-            let isCombo = hkID.id == 2
+            let isHandsFree = hkID.id == 2
             let kind = GetEventKind(eventRef)
             if kind == UInt32(kEventHotKeyPressed) {
-                DispatchQueue.main.async { isCombo ? manager.onComboPress?() : manager.onPress?() }
-            } else if kind == UInt32(kEventHotKeyReleased), !isCombo {
+                DispatchQueue.main.async { isHandsFree ? manager.onHandsFreePress?() : manager.onPress?() }
+            } else if kind == UInt32(kEventHotKeyReleased), !isHandsFree {
                 DispatchQueue.main.async { manager.onRelease?() }
             }
             return noErr
         }, 2, &spec, selfPtr, &eventHandler)
     }
 
-    private func registerModifier(keyCode: UInt32, comboEnabled: Bool) {
-        modKeyCode = Int64(keyCode)
-        modMask = Self.cgFlag(forModifierKeyCode: keyCode)
-        modComboEnabled = comboEnabled
-        modIsDown = false
-        modPressWasCombo = false
-        if installModifierEventTap() { return }
-        installModifierPassiveMonitor()
-    }
-
-    private func modifierTransition(isDown: Bool, controlHeld: Bool) {
-        modIsDown = isDown
-        if isDown {
-            modPressWasCombo = modComboEnabled && controlHeld
-            if modPressWasCombo {
-                DispatchQueue.main.async { [weak self] in self?.onComboPress?() }
-            } else {
+    private func modifierTransition(keyCode: Int64, isDown: Bool) {
+        if keyCode == primaryModKeyCode, isDown != primaryModIsDown {
+            primaryModIsDown = isDown
+            if isDown {
                 DispatchQueue.main.async { [weak self] in self?.onPress?() }
+            } else {
+                DispatchQueue.main.async { [weak self] in self?.onRelease?() }
             }
-        } else if !modPressWasCombo {
-            DispatchQueue.main.async { [weak self] in self?.onRelease?() }
+        }
+        if keyCode == handsFreeModKeyCode {
+            if isDown, !handsFreeModIsDown {
+                handsFreeModIsDown = true
+                DispatchQueue.main.async { [weak self] in self?.onHandsFreePress?() }
+            } else if !isDown {
+                handsFreeModIsDown = false
+            }
         }
     }
 
@@ -166,12 +163,12 @@ final class HotkeyManager {
 
             guard type == .flagsChanged else { return Unmanaged.passUnretained(event) }
 
-            if event.getIntegerValueField(.keyboardEventKeycode) == manager.modKeyCode {
-                let isDown = event.flags.contains(manager.modMask)
-                if isDown != manager.modIsDown {
-                    manager.modifierTransition(isDown: isDown, controlHeld: event.flags.contains(.maskControl))
-                }
+            let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+            guard keyCode == manager.primaryModKeyCode || keyCode == manager.handsFreeModKeyCode else {
+                return Unmanaged.passUnretained(event)
             }
+            let isDown = event.flags.contains(HotkeyManager.cgFlag(forModifierKeyCode: UInt32(keyCode)))
+            manager.modifierTransition(keyCode: keyCode, isDown: isDown)
             return Unmanaged.passUnretained(event)
         }
 
@@ -205,12 +202,13 @@ final class HotkeyManager {
     }
 
     private func installModifierPassiveMonitor() {
-        let nsMask = HotkeyConversion.nsModifierFlag(for: UInt32(modKeyCode))
         let handler: (NSEvent) -> Void = { [weak self] event in
-            guard let self, event.keyCode == UInt16(self.modKeyCode) else { return }
-            let isDown = event.modifierFlags.contains(nsMask)
-            guard isDown != self.modIsDown else { return }
-            self.modifierTransition(isDown: isDown, controlHeld: event.modifierFlags.contains(.control))
+            guard let self else { return }
+            let keyCode = Int64(event.keyCode)
+            guard keyCode == self.primaryModKeyCode || keyCode == self.handsFreeModKeyCode else { return }
+            let mask = HotkeyConversion.nsModifierFlag(for: UInt32(keyCode))
+            let isDown = event.modifierFlags.contains(mask)
+            self.modifierTransition(keyCode: keyCode, isDown: isDown)
         }
         modGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { handler($0) }
         modLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
