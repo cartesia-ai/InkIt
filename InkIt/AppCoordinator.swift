@@ -62,7 +62,7 @@ final class AppCoordinator: ObservableObject {
         hotkey.onRelease = { [weak self] in
             Task { @MainActor in self?.handleHotkeyRelease() }
         }
-        hotkey.onComboPress = { [weak self] in
+        hotkey.onHandsFreePress = { [weak self] in
             Task { @MainActor in self?.handleHandsFreeToggle() }
         }
         audio.onLevel = { [weak self] level in
@@ -76,15 +76,6 @@ final class AppCoordinator: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 Task { @MainActor in self?.refreshHUD() }
-            }
-            .store(in: &cancellables)
-        settings.$dictationMode
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                Task { @MainActor in
-                    guard let self, self.isHotkeyRegistered else { return }
-                    self.registerHotkey()
-                }
             }
             .store(in: &cancellables)
     }
@@ -164,7 +155,7 @@ final class AppCoordinator: ObservableObject {
 
     func registerHotkey() {
         isHotkeyRegistered = true
-        hotkey.register(binding: settings.hotkey, comboEnabled: settings.dictationMode == .both)
+        hotkey.register(hotkey: settings.hotkey, handsFree: settings.handsFreeHotkey)
         syncFnKey()
     }
 
@@ -176,7 +167,7 @@ final class AppCoordinator: ObservableObject {
     }
 
     private func syncFnKey() {
-        let needed = isHotkeyRegistered && settings.hotkey == .fn
+        let needed = isHotkeyRegistered && (settings.hotkey == .fn || settings.handsFreeHotkey == .fn)
         if needed {
             fnKey.start()
         } else {
@@ -210,25 +201,15 @@ final class AppCoordinator: ObservableObject {
     }
 
     private func handleHotkeyPress() {
-        if settings.dictationMode == .both, handsFreeSessionActive {
+        if handsFreeSessionActive {
             stopDictation()
             return
         }
-        switch settings.dictationMode {
-        case .hold, .both:
-            isHotkeyHeld = true
-            startDictation()
-        case .toggle:
-            if case .recording = state {
-                stopDictation()
-            } else {
-                startDictation()
-            }
-        }
+        isHotkeyHeld = true
+        startDictation()
     }
 
     private func handleHotkeyRelease() {
-        guard settings.dictationMode != .toggle else { return }
         isHotkeyHeld = false
         if case .error = state {
             armErrorDismiss()
@@ -238,7 +219,6 @@ final class AppCoordinator: ObservableObject {
     }
 
     private func handleHandsFreeToggle() {
-        guard settings.dictationMode == .both else { return }
         if handsFreeSessionActive {
             stopDictation()
             return

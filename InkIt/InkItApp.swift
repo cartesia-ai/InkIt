@@ -615,7 +615,7 @@ struct RotatingDictateHeader: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Text(settings.dictationModeVerb)
+            Text("Hold")
                 .foregroundStyle(.primary)
             HotkeyCaps(tokens: tokens)
                 .font(.inkHeroKeycap)
@@ -693,7 +693,7 @@ struct HomeTryItPanel: View {
 
             TryItPracticeCard()
 
-            Text("Or \(settings.dictationModeVerb.lowercased()) \(settings.hotkeyDisplayString) in any app and start talking.")
+            Text("Or hold \(settings.hotkeyDisplayString) in any app and start talking.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }

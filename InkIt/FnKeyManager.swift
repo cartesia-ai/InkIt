@@ -6,7 +6,6 @@ import Carbon.HIToolbox
 final class FnKeyManager {
     var onHoldPress: (() -> Void)?
     var onHoldRelease: (() -> Void)?
-    var onControlFn: (() -> Void)?
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -16,7 +15,6 @@ final class FnKeyManager {
     private var localMonitor: Any?
 
     private var fnIsDown = false
-    private var fnPressWasCombo = false
     private var isRunning = false
 
     func start() {
@@ -43,20 +41,13 @@ final class FnKeyManager {
         if let m = globalMonitor { NSEvent.removeMonitor(m); globalMonitor = nil }
         if let m = localMonitor { NSEvent.removeMonitor(m); localMonitor = nil }
         fnIsDown = false
-        fnPressWasCombo = false
     }
 
-    private func handleFn(down: Bool, controlHeld: Bool) {
+    private func handleFn(down: Bool) {
         fnIsDown = down
         if down {
-            fnPressWasCombo = controlHeld
-            if controlHeld {
-                DispatchQueue.main.async { [weak self] in self?.onControlFn?() }
-            } else {
-                DispatchQueue.main.async { [weak self] in self?.onHoldPress?() }
-            }
+            DispatchQueue.main.async { [weak self] in self?.onHoldPress?() }
         } else {
-            guard !fnPressWasCombo else { return }
             DispatchQueue.main.async { [weak self] in self?.onHoldRelease?() }
         }
     }
@@ -80,7 +71,7 @@ final class FnKeyManager {
 
             let fnDown = event.flags.contains(.maskSecondaryFn)
             guard fnDown != manager.fnIsDown else { return Unmanaged.passUnretained(event) }
-            manager.handleFn(down: fnDown, controlHeld: event.flags.contains(.maskControl))
+            manager.handleFn(down: fnDown)
             return nil
         }
 
@@ -118,7 +109,7 @@ final class FnKeyManager {
             guard let self, event.keyCode == UInt16(kVK_Function) else { return }
             let fnDown = event.modifierFlags.contains(.function)
             guard fnDown != self.fnIsDown else { return }
-            self.handleFn(down: fnDown, controlHeld: event.modifierFlags.contains(.control))
+            self.handleFn(down: fnDown)
         }
         globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { handler($0) }
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
