@@ -16,7 +16,6 @@ final class AudioCaptureService {
     private let readyFallbackDelay: TimeInterval = 0.6
 
     var preferredDeviceUID: String?
-    // Takes priority over preferredDeviceUID: UID lookup can silently miss tap-only aggregate devices.
     var preferredDeviceID: AudioDeviceID?
 
     func start(onChunk: @escaping (Data) -> Void) throws {

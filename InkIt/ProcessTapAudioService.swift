@@ -1,8 +1,6 @@
 import Foundation
 import CoreAudio
 
-// Uses a Core Audio Process Tap rather than ScreenCaptureKit: it's gated by the
-// narrower "System Audio Recording Only" permission bucket instead of full Screen Recording.
 final class ProcessTapAudioService {
     private var tapID: AudioObjectID = .unknown
     private var aggregateDeviceID: AudioObjectID = .unknown

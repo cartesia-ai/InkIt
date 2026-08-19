@@ -29,6 +29,14 @@ extension Color {
 
     static let scrim = Color.black.opacity(0.18)
     static let scrimStrong = Color.black.opacity(0.5)
+
+    static let speakerYou = Color("SpeakerYou")
+    static let speakerPalette: [Color] = [
+        Color("SpeakerSage"),
+        Color("SpeakerLavender"),
+        Color("SpeakerGold"),
+        Color("SpeakerSky"),
+    ]
 }
 
 enum Radius {
@@ -93,18 +101,27 @@ enum DateGrouping {
 
 struct DayGroupHeader: View {
     let title: String
+    var large: Bool = false
 
     var body: some View {
-        Text(title)
-            .font(.inkEyebrow)
-            .tracking(1.1)
-            .textCase(.uppercase)
-            .foregroundStyle(.tertiary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 8)
-            .padding(.top, 14)
-            .padding(.bottom, 8)
-            .background(Color.canvas)
+        Group {
+            if large {
+                Text(title)
+                    .font(.inkReadingEmphasized)
+                    .foregroundStyle(Color.inkText)
+            } else {
+                Text(title)
+                    .font(.inkEyebrow)
+                    .tracking(1.1)
+                    .textCase(.uppercase)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 8)
+        .padding(.top, 14)
+        .padding(.bottom, 8)
+        .background(Color.canvas)
     }
 }
 
@@ -447,6 +464,7 @@ struct MainWindowView: View {
     @EnvironmentObject var coordinator: AppCoordinator
     @EnvironmentObject var settings: SettingsStore
     @EnvironmentObject var history: TranscriptHistoryStore
+    @EnvironmentObject var meetingSession: MeetingSessionCoordinator
 
     @State private var section: MainSection =
         ProcessInfo.processInfo.arguments.contains("--open-insights") ? .insights : .home
@@ -500,6 +518,12 @@ struct MainWindowView: View {
             .overlay(alignment: .bottomTrailing) { ToastOverlay() }
             .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
                 openSettings(pane: .general)
+            }
+            .onAppear {
+                if meetingSession.pendingNavigateToMeetingNotes {
+                    section = .meetingNotes
+                    meetingSession.pendingNavigateToMeetingNotes = false
+                }
             }
     }
 

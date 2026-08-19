@@ -24,6 +24,7 @@ final class MeetingSessionCoordinator: ObservableObject {
     @Published private(set) var segments: [Segment] = []
     @Published private(set) var elapsedSeconds: Int = 0
     @Published var showStopConfirm = false
+    @Published var pendingNavigateToMeetingNotes = false
 
     var isSessionActive: Bool { state != .idle }
 
@@ -36,6 +37,10 @@ final class MeetingSessionCoordinator: ObservableObject {
     private var systemClient: CartesiaStreamingClient?
     private var micClosed = false
     private var systemClosed = false
+    private var rewriter: TranscriptRewriter?
+    private var systemChannelHistory: [(speaker: String, text: String)] = []
+    private var pendingPolishCount = 0
+    private static let maxSystemHistoryTurns = 6
 
     private var timer: Timer?
     private var startedAt: Date?
@@ -62,6 +67,11 @@ final class MeetingSessionCoordinator: ObservableObject {
         startedAt = Date()
         micClosed = false
         systemClosed = false
+        systemChannelHistory = []
+        pendingPolishCount = 0
+        rewriter = TranscriptRewriter(provider: settings.rewriteProvider,
+                                      model: settings.rewriteModel,
+                                      apiKey: settings.apiKey(for: settings.rewriteProvider))
         startTimer()
 
         startMicChannel()
@@ -97,7 +107,14 @@ final class MeetingSessionCoordinator: ObservableObject {
                                              keyterms: settings.validatedDictionaryTerms)
         micClient = client
         client.onTurnFinal = { [weak self] text, timestamp in
-            Task { @MainActor in self?.appendSegment(speaker: "Speaker 1 (You)", text: text, timestamp: timestamp) }
+            Task { @MainActor in
+                guard let self else { return }
+                self.pendingPolishCount += 1
+                let cleaned = await self.polishMicTurn(text)
+                self.appendSegment(speaker: "You", text: cleaned, timestamp: timestamp)
+                self.pendingPolishCount -= 1
+                self.finalizeIfReady()
+            }
         }
         client.onClosed = { [weak self] _ in
             Task { @MainActor in self?.channelClosed(mic: true) }
@@ -114,7 +131,14 @@ final class MeetingSessionCoordinator: ObservableObject {
         let client = CartesiaStreamingClient(apiKey: settings.cartesiaAPIKey)
         systemClient = client
         client.onTurnFinal = { [weak self] text, timestamp in
-            Task { @MainActor in self?.appendSegment(speaker: "Speaker 2", text: text, timestamp: timestamp) }
+            Task { @MainActor in
+                guard let self else { return }
+                self.pendingPolishCount += 1
+                let labeled = await self.labelSystemTurn(text)
+                self.appendSegment(speaker: labeled.speaker, text: labeled.text, timestamp: timestamp)
+                self.pendingPolishCount -= 1
+                self.finalizeIfReady()
+            }
         }
         client.onClosed = { [weak self] _ in
             Task { @MainActor in self?.channelClosed(mic: false) }
@@ -133,6 +157,29 @@ final class MeetingSessionCoordinator: ObservableObject {
         }
     }
 
+    private func polishMicTurn(_ raw: String) async -> String {
+        guard let rewriter else { return raw }
+        switch await rewriter.rewriteWithoutContext(transcript: raw) {
+        case .success(let cleaned): return cleaned
+        case .failure: return raw
+        }
+    }
+
+    private func labelSystemTurn(_ raw: String) async -> (speaker: String, text: String) {
+        guard let rewriter else { return (systemChannelHistory.last?.speaker ?? "Speaker 1", raw) }
+        let result = await rewriter.rewriteMeetingTurn(transcript: raw, priorTurns: systemChannelHistory)
+        let labeled: (speaker: String, text: String)
+        switch result {
+        case .success(let value): labeled = value
+        case .failure: labeled = (systemChannelHistory.last?.speaker ?? "Speaker 1", raw)
+        }
+        systemChannelHistory.append(labeled)
+        if systemChannelHistory.count > Self.maxSystemHistoryTurns {
+            systemChannelHistory.removeFirst(systemChannelHistory.count - Self.maxSystemHistoryTurns)
+        }
+        return labeled
+    }
+
     private func appendSegment(speaker: String, text: String, timestamp: Date) {
         let segment = Segment(speakerLabel: speaker, text: text, timestamp: timestamp)
         if let insertIndex = segments.firstIndex(where: { $0.timestamp > timestamp }) {
@@ -144,15 +191,57 @@ final class MeetingSessionCoordinator: ObservableObject {
 
     private func channelClosed(mic: Bool) {
         if mic { micClosed = true } else { systemClosed = true }
-        guard micClosed, systemClosed else { return }
+        finalizeIfReady()
+    }
+
+    private func summarize(transcript: String, noteID: UUID) {
+        guard let rewriter else { return }
+        Task { @MainActor in
+            if case .success(let result) = await rewriter.summarizeMeeting(transcript: transcript) {
+                if !result.title.isEmpty {
+                    self.meetingNotes.updateTitle(id: noteID, title: result.title)
+                }
+                let summaryLines = result.overview.map { MeetingNotesStore.SummaryLine(text: $0, isActionItem: false) }
+                    + result.actionItems.map { MeetingNotesStore.SummaryLine(text: $0, isActionItem: true) }
+                let flatSummary = Self.flattenSummary(overview: result.overview, actionItems: result.actionItems)
+                self.meetingNotes.updateSummary(id: noteID, summary: flatSummary, summaryLines: summaryLines)
+            }
+        }
+    }
+
+    private static func flattenSummary(overview: [String], actionItems: [String]) -> String {
+        var parts = overview
+        if !actionItems.isEmpty {
+            parts.append("")
+            parts.append("**Action Items**")
+            parts.append(contentsOf: actionItems.map { "- \($0)" })
+        }
+        return parts.joined(separator: "\n")
+    }
+
+    private func finalizeIfReady() {
+        guard micClosed, systemClosed, pendingPolishCount == 0 else { return }
 
         micClient = nil
         systemClient = nil
         let transcript = segments
             .map { "\($0.speakerLabel): \($0.text)" }
             .joined(separator: "\n")
+        var speakerIDByLabel: [String: UUID] = [:]
+        var speakers: [MeetingNotesStore.Speaker] = []
+        let lines = segments.map { segment -> MeetingNotesStore.TranscriptLine in
+            let speakerID = speakerIDByLabel[segment.speakerLabel] ?? {
+                let speaker = MeetingNotesStore.Speaker(label: segment.speakerLabel, displayName: nil)
+                speakerIDByLabel[segment.speakerLabel] = speaker.id
+                speakers.append(speaker)
+                return speaker.id
+            }()
+            return MeetingNotesStore.TranscriptLine(speakerID: speakerID, text: segment.text)
+        }
         if !transcript.isEmpty {
-            meetingNotes.createNote(transcript: transcript)
+            let note = meetingNotes.createNote(transcript: transcript, lines: lines, speakers: speakers)
+            pendingNavigateToMeetingNotes = true
+            summarize(transcript: transcript, noteID: note.id)
         }
         state = .idle
         segments = []
