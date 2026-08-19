@@ -223,10 +223,6 @@ final class AppCoordinator: ObservableObject {
             stopDictation()
             return
         }
-        if case .recording = state {
-            handsFreeSessionActive = true
-            return
-        }
         startDictation()
         if case .recording = state {
             handsFreeSessionActive = true
