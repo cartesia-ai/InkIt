@@ -1238,8 +1238,8 @@ struct HotkeyRecorder: View {
         HotkeyRecorderRow(
             binding: $settings.hotkey,
             otherBinding: settings.handsFreeHotkey,
-            title: "Hotkey",
-            idleCaption: "Your dictation shortcut, active in any app",
+            title: "Hold to talk",
+            idleCaption: "Hold the key while you dictate, release to stop",
             conflictLabel: "your hands-free shortcut"
         )
     }
