@@ -73,6 +73,9 @@ final class MeetingNotesStore: ObservableObject {
             return speakers.first(where: { $0.id == speakerID })?.displayLabel ?? "Unknown"
         }
 
+        var overviewLines: [SummaryLine] { summaryLines.filter { !$0.isActionItem } }
+        var actionItemLines: [SummaryLine] { summaryLines.filter { $0.isActionItem } }
+
         mutating func promotingLegacySpeakersIfNeeded() {
             guard speakers.isEmpty, lines.contains(where: { $0.legacyLabel != nil }) else { return }
             var idByLabel: [String: UUID] = [:]
@@ -98,29 +101,24 @@ final class MeetingNotesStore: ObservableObject {
 
     let modelContainer: ModelContainer
     private var context: ModelContext { modelContainer.mainContext }
-    let isPersistent: Bool
 
     private init() {
-        let store = Self.makeContainer()
-        modelContainer = store.container
-        isPersistent = store.isPersistent
+        modelContainer = Self.makeContainer()
         loadNotes()
     }
 
-    private static func makeContainer() -> (container: ModelContainer, isPersistent: Bool) {
+    private static func makeContainer() -> ModelContainer {
         let schema = Schema([MeetingNoteRecord.self])
         do {
-            let container = try ModelContainer(
+            return try ModelContainer(
                 for: schema,
                 configurations: ModelConfiguration(schema: schema, url: storeURL())
             )
-            return (container, true)
         } catch {
-            let container = try! ModelContainer(
+            return try! ModelContainer(
                 for: schema,
                 configurations: ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
             )
-            return (container, false)
         }
     }
 
@@ -185,41 +183,12 @@ final class MeetingNotesStore: ObservableObject {
         saveContext()
     }
 
-    func updateSummaryLine(noteID: UUID, lineID: UUID, text: String) {
-        guard let index = notes.firstIndex(where: { $0.id == noteID }),
-              let lineIndex = notes[index].summaryLines.firstIndex(where: { $0.id == lineID }) else { return }
-        notes[index].summaryLines[lineIndex].text = text
-        guard let record = record(id: noteID) else { return }
-        record.summaryLines = notes[index].summaryLines
-        saveContext()
-    }
-
     func updateLineText(noteID: UUID, lineID: UUID, text: String) {
         guard let index = notes.firstIndex(where: { $0.id == noteID }),
               let lineIndex = notes[index].lines.firstIndex(where: { $0.id == lineID }) else { return }
         notes[index].lines[lineIndex].text = text
         guard let record = record(id: noteID) else { return }
         record.lines = notes[index].lines
-        saveContext()
-    }
-
-    @discardableResult
-    func deleteSummaryLine(noteID: UUID, lineID: UUID) -> (line: SummaryLine, index: Int)? {
-        guard let index = notes.firstIndex(where: { $0.id == noteID }),
-              let lineIndex = notes[index].summaryLines.firstIndex(where: { $0.id == lineID }) else { return nil }
-        let line = notes[index].summaryLines.remove(at: lineIndex)
-        guard let record = record(id: noteID) else { return (line, lineIndex) }
-        record.summaryLines = notes[index].summaryLines
-        saveContext()
-        return (line, lineIndex)
-    }
-
-    func insertSummaryLine(noteID: UUID, line: SummaryLine, at index: Int) {
-        guard let noteIndex = notes.firstIndex(where: { $0.id == noteID }) else { return }
-        let clamped = min(index, notes[noteIndex].summaryLines.count)
-        notes[noteIndex].summaryLines.insert(line, at: clamped)
-        guard let record = record(id: noteID) else { return }
-        record.summaryLines = notes[noteIndex].summaryLines
         saveContext()
     }
 
@@ -309,14 +278,8 @@ final class MeetingNotesStore: ObservableObject {
         try? context.save()
     }
 
-    private static let defaultTitleFmt: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "MMM d, h:mm a"
-        return f
-    }()
-
     private static func defaultTitle() -> String {
-        "Meeting, \(defaultTitleFmt.string(from: Date()))"
+        "Meeting, \(DateGrouping.timestampFmt.string(from: Date()))"
     }
 }
 

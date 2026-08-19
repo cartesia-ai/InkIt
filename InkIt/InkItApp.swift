@@ -30,12 +30,12 @@ extension Color {
     static let scrim = Color.black.opacity(0.18)
     static let scrimStrong = Color.black.opacity(0.5)
 
-    static let speakerYou = Color("SpeakerYou")
+    static let speakerYou = Color("SpeakerSage")
     static let speakerPalette: [Color] = [
-        Color("SpeakerSage"),
         Color("SpeakerLavender"),
         Color("SpeakerGold"),
         Color("SpeakerSky"),
+        Color("SpeakerCoral"),
     ]
 }
 
@@ -79,6 +79,12 @@ enum DateGrouping {
         return f
     }()
 
+    static let timestampFmt: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MMM d, h:mm a"
+        return f
+    }()
+
     static func byDay<Item>(_ items: [Item], newestFirst: Bool = true, date: (Item) -> Date) -> [DayGroup<Item>] {
         let calendar = Calendar.current
         let grouped = Dictionary(grouping: items) { calendar.startOfDay(for: date($0)) }
@@ -118,7 +124,7 @@ struct DayGroupHeader: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 8)
+        .padding(.horizontal, large ? 0 : 8)
         .padding(.top, 14)
         .padding(.bottom, 8)
         .background(Color.canvas)

@@ -56,7 +56,7 @@ final class MeetingSessionCoordinator: ObservableObject {
             PermissionsService.shared.requestMicrophone { _ in }
             return
         }
-        if PermissionsService.shared.systemAudioCaptureState == .needsManual {
+        guard PermissionsService.shared.hasSystemAudioCapture else {
             PermissionsService.shared.requestSystemAudioCapture()
             return
         }

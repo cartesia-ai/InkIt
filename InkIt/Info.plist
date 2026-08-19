@@ -26,6 +26,8 @@
 	<false/>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>InkIt pastes the transcribed text into the focused app.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>InkIt needs system audio access to hear other people in your meeting.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>

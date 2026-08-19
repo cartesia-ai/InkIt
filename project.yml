@@ -53,6 +53,7 @@ targets:
         LSUIElement: false
         NSHighResolutionCapable: true
         NSMicrophoneUsageDescription: "InkIt needs microphone access to transcribe your speech to text while you hold the dictation hotkey."
+        NSAudioCaptureUsageDescription: "InkIt needs system audio access to hear everyone else in a meeting, not just you."
         NSAppleEventsUsageDescription: "InkIt pastes the transcribed text into the focused app."
         SUFeedURL: "https://github.com/cartesia-ai/InkIt/releases/latest/download/appcast.xml"
         SUPublicEDKey: "$(SPARKLE_PUBLIC_ED_KEY)"

@@ -19,26 +19,10 @@ private final class MeetingEditSession: ObservableObject {
         undoManager.endUndoGrouping()
     }
 
-    func setSummaryLineText(lineID: UUID, text: String, previous: String) {
-        guard text != previous else { return }
-        store.updateSummaryLine(noteID: noteID, lineID: lineID, text: text)
-        registerUndo(withTarget: self) { $0.setSummaryLineText(lineID: lineID, text: previous, previous: text) }
-    }
-
     func setLineText(lineID: UUID, text: String, previous: String) {
         guard text != previous else { return }
         store.updateLineText(noteID: noteID, lineID: lineID, text: text)
         registerUndo(withTarget: self) { $0.setLineText(lineID: lineID, text: previous, previous: text) }
-    }
-
-    func deleteSummaryLine(lineID: UUID) {
-        guard let result = store.deleteSummaryLine(noteID: noteID, lineID: lineID) else { return }
-        registerUndo(withTarget: self) { $0.undoDeleteSummaryLine(line: result.line, index: result.index) }
-    }
-
-    private func undoDeleteSummaryLine(line: MeetingNotesStore.SummaryLine, index: Int) {
-        store.insertSummaryLine(noteID: noteID, line: line, at: index)
-        registerUndo(withTarget: self) { $0.deleteSummaryLine(lineID: line.id) }
     }
 
     func deleteTranscriptLine(lineID: UUID) {
@@ -101,6 +85,11 @@ private final class MeetingEditSession: ObservableObject {
     }
 }
 
+private enum DetailTab {
+    case summary
+    case transcript
+}
+
 struct MeetingNoteDetailView: View {
     @EnvironmentObject var meetingNotes: MeetingNotesStore
     let noteID: UUID
@@ -109,6 +98,7 @@ struct MeetingNoteDetailView: View {
     @StateObject private var editCoordinator = EditCoordinator()
     @StateObject private var editSession: MeetingEditSession
 
+    @State private var selectedTab: DetailTab = .summary
     @State private var copied = false
     @State private var copiedSummary = false
     @State private var showDeleteConfirm = false
@@ -130,10 +120,15 @@ struct MeetingNoteDetailView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         header(note)
-                        summarySection(note)
+                        tabBar
                             .padding(.top, 20)
-                        transcriptSection(note)
-                            .padding(.top, 24)
+                        Group {
+                            switch selectedTab {
+                            case .summary: summarySection(note)
+                            case .transcript: transcriptSection(note)
+                            }
+                        }
+                        .padding(.top, 16)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .pageFrame()
@@ -174,7 +169,7 @@ struct MeetingNoteDetailView: View {
                 Text(note.title)
                     .font(.inkTitle)
                     .foregroundStyle(Color.inkText)
-                Text(Self.dateFmt.string(from: note.createdAt))
+                Text(DateGrouping.timestampFmt.string(from: note.createdAt))
                     .font(.inkCallout)
                     .foregroundStyle(Color.inkSub)
             }
@@ -190,6 +185,31 @@ struct MeetingNoteDetailView: View {
         } message: {
             Text("This permanently deletes the recording and transcript.")
         }
+    }
+
+    private var tabBar: some View {
+        HStack(spacing: 20) {
+            tabButton("Summary", isSelected: selectedTab == .summary) { selectedTab = .summary }
+            tabButton("Transcript", isSelected: selectedTab == .transcript) { selectedTab = .transcript }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func tabButton(_ title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.inkHeadline)
+                .foregroundStyle(isSelected ? Color.inkText : Color.inkFaint)
+                .padding(.bottom, 6)
+                .overlay(alignment: .bottom) {
+                    RoundedRectangle(cornerRadius: Radius.bar, style: .continuous)
+                        .fill(isSelected ? Color.inkText : Color.clear)
+                        .frame(height: 2)
+                }
+        }
+        .buttonStyle(.plain)
+        .modifier(PointingHandCursor())
+        .animation(Motion.state, value: isSelected)
     }
 
     private func deleteNoteButton(_ note: MeetingNotesStore.Note) -> some View {
@@ -214,9 +234,6 @@ struct MeetingNoteDetailView: View {
         let shape = RoundedRectangle(cornerRadius: Radius.tile, style: .continuous)
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                Text("Summary")
-                    .font(.inkHeadline)
-                    .foregroundStyle(Color.inkText)
                 Spacer(minLength: 0)
                 copySummaryButton(note)
             }
@@ -242,42 +259,54 @@ struct MeetingNoteDetailView: View {
     }
 
     @ViewBuilder private func editableSummaryLines(_ note: MeetingNotesStore.Note) -> some View {
-        let overview = note.summaryLines.filter { !$0.isActionItem }
-        let actionItems = note.summaryLines.filter { $0.isActionItem }
+        let overview = note.overviewLines
+        let actionItems = note.actionItemLines
         let speakerLabels = note.speakers.map(\.label)
-        VStack(alignment: .leading, spacing: 10) {
-            ForEach(overview) { line in
-                EditableLineRow(id: line.id, text: line.text, prefix: "-", font: .inkReading, fontSize: 17,
-                                textColor: Color.inkSub,
-                                coloredText: SummaryRendering.text(line.text, speakerLabels: speakerLabels),
-                                editCoordinator: editCoordinator,
-                                onCommit: { newText in
-                    editSession.setSummaryLineText(lineID: line.id, text: newText, previous: line.text)
-                }, onDelete: {
-                    editSession.deleteSummaryLine(lineID: line.id)
-                })
+        VStack(alignment: .leading, spacing: 5) {
+            if let tagline = overview.first {
+                summaryTextBlock(tagline.text, speakerLabels: speakerLabels)
+            }
+            ForEach(overview.dropFirst()) { line in
+                summaryLineRow(line.text, speakerLabels: speakerLabels)
             }
             if !actionItems.isEmpty {
                 Text("Action Items")
                     .font(.inkReadingEmphasized)
                     .foregroundStyle(Color.inkText)
                     .padding(.top, overview.isEmpty ? 0 : 4)
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 4) {
                     ForEach(actionItems) { line in
-                        EditableLineRow(id: line.id, text: line.text, prefix: "\u{2022}", font: .inkReading,
-                                        fontSize: 17, textColor: Color.inkSub,
-                                        coloredText: SummaryRendering.text(line.text, speakerLabels: speakerLabels),
-                                        editCoordinator: editCoordinator,
-                                        onCommit: { newText in
-                            editSession.setSummaryLineText(lineID: line.id, text: newText, previous: line.text)
-                        }, onDelete: {
-                            editSession.deleteSummaryLine(lineID: line.id)
-                        })
+                        summaryLineRow(line.text, speakerLabels: speakerLabels)
                     }
                 }
                 .padding(.leading, 12)
             }
         }
+    }
+
+    private func summaryTextBlock(_ text: String, speakerLabels: [String]) -> some View {
+        SummaryRendering.text(text, speakerLabels: speakerLabels)
+            .font(.inkReading)
+            .foregroundStyle(Color.inkSub)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 6)
+    }
+
+    private func summaryLineRow(_ text: String, speakerLabels: [String]) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Text("\u{2022}")
+                .font(.inkReading)
+                .foregroundStyle(Color.inkSub)
+            SummaryRendering.text(text, speakerLabels: speakerLabels)
+                .font(.inkReading)
+                .foregroundStyle(Color.inkSub)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 6)
     }
 
     @ViewBuilder private func transcriptSection(_ note: MeetingNotesStore.Note) -> some View {
@@ -335,9 +364,6 @@ struct MeetingNoteDetailView: View {
 
     private func transcriptHeader(_ note: MeetingNotesStore.Note) -> some View {
         HStack(spacing: 10) {
-            Text("Transcript")
-                .font(.inkHeadline)
-                .foregroundStyle(Color.inkText)
             let count = participantCount(note)
             if count > 0 {
                 Text(count == 1 ? "1 person" : "\(count) people")
@@ -440,8 +466,8 @@ struct MeetingNoteDetailView: View {
 
     private func summaryPlainText(_ note: MeetingNotesStore.Note) -> String {
         if !note.summaryLines.isEmpty {
-            let overview = note.summaryLines.filter { !$0.isActionItem }
-            let actionItems = note.summaryLines.filter { $0.isActionItem }
+            let overview = note.overviewLines
+            let actionItems = note.actionItemLines
             var parts = overview.map(\.text)
             if !actionItems.isEmpty {
                 parts.append("Action Items")
@@ -451,10 +477,4 @@ struct MeetingNoteDetailView: View {
         }
         return note.summary ?? ""
     }
-
-    private static let dateFmt: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "MMM d, h:mm a"
-        return f
-    }()
 }

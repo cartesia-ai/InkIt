@@ -345,7 +345,9 @@ final class TranscriptRewriter {
     private static let summaryInstructions: String = """
     You are summarizing a finished meeting from its cleaned, speaker-labeled transcript in <transcript>. "You" is the note-taker; other labels are other participants.
 
-    Break the summary into short, independent sentences a participant could read in a few seconds to recall what happened: what was discussed and any decisions made. Only state what's actually in the transcript, never invent names, decisions, or action items that weren't said.
+    Make the first element of "overview" a tagline: "**Overview:**" (bolded via markdown, exactly like that) followed by 1-2 sentences summarizing what the meeting was about at a glance.
+
+    After that tagline, break the rest of the overview into short, independent sentences a participant could read in a few seconds to recall what happened: what was discussed and any decisions made. Only state what's actually in the transcript, never invent names, decisions, or action items that weren't said.
 
     When a sentence describes something one participant clearly said or did, lead with or otherwise include that speaker's exact label from the transcript, copied verbatim ("You disagreed with the proposed timeline.", "Speaker 2 walked through the new pricing model."). Never invent a name or use a label that doesn't appear in the transcript. If a point is a shared conclusion or isn't clearly tied to one speaker, leave it unattributed rather than guessing.
 
@@ -353,8 +355,8 @@ final class TranscriptRewriter {
 
     Write a title for the meeting too: a handful of words, like a calendar event title or an email subject line, not a sentence. Aim for 5 words or fewer where possible. No trailing punctuation, no quotes around it.
 
-    If the transcript is too short or unclear to summarize meaningfully, say so plainly as the only overview sentence instead of padding with generic filler, and still give it a short generic title.
+    If the transcript is too short or unclear to summarize meaningfully, make the "**Overview:**" tagline say so plainly instead of padding with generic filler, and leave it as the only overview sentence; still give the meeting a short generic title.
 
-    Output strict JSON only, no prose, no code fences: {"title": "short meeting title", "overview": ["sentence one", "sentence two"], "actionItems": ["Jan: plan interviews"]}
+    Output strict JSON only, no prose, no code fences: {"title": "short meeting title", "overview": ["**Overview:** Quick sync on the Q3 launch timeline and remaining blockers.", "sentence one", "sentence two"], "actionItems": ["Jan: plan interviews"]}
     """
 }

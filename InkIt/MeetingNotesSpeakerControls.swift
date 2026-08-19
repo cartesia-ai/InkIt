@@ -10,13 +10,17 @@ struct SpeakerLabelControl: View {
     @State private var hovering = false
     @State private var showReassignMenu = false
 
+    private var colorKey: String {
+        speakers.first(where: { $0.id == speakerID })?.label ?? displayName
+    }
+
     var body: some View {
         Button {
             showReassignMenu = true
         } label: {
             Text(displayName)
                 .font(.inkBodyEmphasized)
-                .foregroundStyle(SpeakerColor.forLabel(displayName))
+                .foregroundStyle(SpeakerColor.forLabel(colorKey))
                 .padding(.horizontal, 3)
                 .background(Color.primary.opacity(hovering ? Hover.backdropOpacity : 0),
                            in: RoundedRectangle(cornerRadius: 3, style: .continuous))
@@ -104,7 +108,7 @@ private struct SpeakerRosterRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Circle()
-                .fill(SpeakerColor.forLabel(speaker.displayLabel))
+                .fill(SpeakerColor.forLabel(speaker.label))
                 .frame(width: 8, height: 8)
 
             if isRenaming {
@@ -226,7 +230,7 @@ private struct SpeakerMenuRow: View {
         Button(action: action) {
             HStack(spacing: 7) {
                 Circle()
-                    .fill(SpeakerColor.forLabel(speaker.displayLabel))
+                    .fill(SpeakerColor.forLabel(speaker.label))
                     .frame(width: 8, height: 8)
                 Text(speaker.displayLabel)
                     .font(.inkCallout)
@@ -243,7 +247,7 @@ private struct SpeakerMenuRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 shape.fill(isCurrent
-                           ? SpeakerColor.forLabel(speaker.displayLabel).opacity(0.14)
+                           ? SpeakerColor.forLabel(speaker.label).opacity(0.14)
                            : Color.primary.opacity(hovering ? Hover.backdropOpacity : 0))
             )
             .contentShape(shape)

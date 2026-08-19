@@ -12,51 +12,6 @@ enum SpeakerColor {
     }
 }
 
-enum RowSummaryHighlighter {
-    static func text(_ summary: String, speakers: [MeetingNotesStore.Speaker]) -> Text {
-        var attributed = AttributedString(summary)
-        var matchedRanges: [Range<AttributedString.Index>] = []
-
-        for speaker in speakers {
-            for range in wholeWordRanges(of: speaker.displayLabel, in: attributed) {
-                attributed[range].foregroundColor = SpeakerColor.forLabel(speaker.displayLabel)
-                matchedRanges.append(range)
-            }
-        }
-
-        for range in NameCandidateHighlighting.candidateRanges(in: attributed, excluding: matchedRanges) {
-            attributed[range].font = .inkCalloutEmphasized
-        }
-
-        return Text(attributed)
-    }
-
-    private static func wholeWordRanges(of word: String, in attributed: AttributedString) -> [Range<AttributedString.Index>] {
-        guard !word.isEmpty else { return [] }
-        var ranges: [Range<AttributedString.Index>] = []
-        var searchStart = attributed.startIndex
-        while searchStart < attributed.endIndex,
-              let range = attributed[searchStart...].range(of: word) {
-            if isWholeWord(range, in: attributed) {
-                ranges.append(range)
-            }
-            searchStart = range.upperBound
-        }
-        return ranges
-    }
-
-    private static func isWholeWord(_ range: Range<AttributedString.Index>, in attributed: AttributedString) -> Bool {
-        if range.lowerBound > attributed.startIndex {
-            let before = attributed.index(beforeCharacter: range.lowerBound)
-            if attributed.characters[before].isLetter || attributed.characters[before].isNumber { return false }
-        }
-        if range.upperBound < attributed.endIndex,
-           attributed.characters[range.upperBound].isLetter || attributed.characters[range.upperBound].isNumber {
-            return false
-        }
-        return true
-    }
-}
 
 private enum NameCandidateHighlighting {
     private static let sentenceStarters: Set<String> = [

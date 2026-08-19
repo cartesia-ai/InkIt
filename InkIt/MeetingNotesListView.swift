@@ -1,4 +1,12 @@
 import SwiftUI
+import AppKit
+
+private struct RowAnchorKey: PreferenceKey {
+    static var defaultValue: [UUID: Anchor<CGRect>] = [:]
+    static func reduce(value: inout [UUID: Anchor<CGRect>], nextValue: () -> [UUID: Anchor<CGRect>]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
 
 struct MeetingNotesView: View {
     @EnvironmentObject var meetingNotes: MeetingNotesStore
@@ -40,7 +48,6 @@ struct MeetingNotesView: View {
                 titleBlock
                 searchBar
                     .padding(.top, 16)
-                recentMeetingSummary
                 notesList
                     .padding(.top, 20)
             }
@@ -50,7 +57,41 @@ struct MeetingNotesView: View {
         .scrollIndicators(.hidden)
         .onReceive(hintTimer) { _ in rotateHint() }
         .overlay { apiKeyGateModal }
+        .overlayPreferenceValue(RowAnchorKey.self) { anchors in
+            GeometryReader { proxy in
+                if let id = hoveredNoteID,
+                   let note = meetingNotes.notes.first(where: { $0.id == id }),
+                   let anchor = anchors[id] {
+                    let rowFrame = proxy[anchor]
+                    let margin: CGFloat = 12
+                    let flipped = rowFrame.minY + HoverFlyoutCard.estimatedMaxHeight > proxy.size.height - margin
+                    let availableHeight = flipped ? rowFrame.maxY - margin : proxy.size.height - rowFrame.minY - margin
+                    let desiredX = rowFrame.maxX + Self.flyoutGap
+                    let maxX = proxy.size.width - HoverFlyoutCard.width - Self.scrollbarInset
+                    let offsetX = min(desiredX, max(0, maxX))
+                    VStack(spacing: 0) {
+                        if flipped {
+                            Spacer(minLength: 0)
+                            HoverFlyoutCard(note: note, availableHeight: availableHeight,
+                                            onOpenNote: { selectedNoteID = note.id })
+                            Color.clear.frame(height: max(0, proxy.size.height - rowFrame.maxY))
+                        } else {
+                            Color.clear.frame(height: max(0, rowFrame.minY))
+                            HoverFlyoutCard(note: note, availableHeight: availableHeight,
+                                            onOpenNote: { selectedNoteID = note.id })
+                            Spacer(minLength: 0)
+                        }
+                    }
+                    .id(note.id)
+                    .frame(width: HoverFlyoutCard.width, height: proxy.size.height, alignment: .leading)
+                    .offset(x: offsetX)
+                }
+            }
+        }
     }
+
+    private static let flyoutGap: CGFloat = 24
+    private static let scrollbarInset: CGFloat = 16
 
     private var titleBlock: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -153,54 +194,180 @@ struct MeetingNotesView: View {
         DateGrouping.byDay(meetingNotes.notes) { $0.createdAt }
     }
 
-    private var previewedNote: MeetingNotesStore.Note? {
-        meetingNotes.notes.first(where: { $0.id == hoveredNoteID }) ?? meetingNotes.notes.first
-    }
-
-    @ViewBuilder private var recentMeetingSummary: some View {
-        if let latest = previewedNote,
-           !latest.summaryLines.isEmpty || !(latest.summary ?? "").isEmpty {
-            let shape = RoundedRectangle(cornerRadius: Radius.tile, style: .continuous)
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Summary")
-                    .font(.inkReadingEmphasized)
-                    .foregroundStyle(Color.inkText)
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(latest.title)
-                        .font(.inkTitle)
-                        .foregroundStyle(Color.inkText)
-                    Text(Self.summaryDateFmt.string(from: latest.createdAt))
-                        .font(.inkCaption)
-                        .foregroundStyle(Color.inkFaint)
-                    summaryPreviewBody(latest)
+    private var notesList: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if meetingNotes.notes.isEmpty {
+                Text("Recorded meetings will show up here.")
+                    .font(.inkCallout)
+                    .foregroundStyle(Color.inkFaint)
+                    .padding(.top, 8)
+            } else {
+                ForEach(groupedNotes) { group in
+                    Section {
+                        ForEach(Array(group.items.enumerated()), id: \.element.id) { index, note in
+                            if index > 0 {
+                                Rectangle()
+                                    .fill(Color.line)
+                                    .frame(height: 1)
+                                    .padding(.horizontal, 8)
+                            }
+                            MeetingNoteRow(note: note, onTap: { selectedNoteID = note.id },
+                                          deleteNote: { meetingNotes.deleteNote(id: $0) },
+                                          onHover: { isHovering in
+                                if isHovering { hoveredNoteID = note.id }
+                            })
+                        }
+                    } header: {
+                        DayGroupHeader(title: group.title, large: true)
+                    }
                 }
-                .padding(20)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.card, in: shape)
-                .overlay(shape.stroke(Color.line, lineWidth: 1))
             }
-            .padding(.top, 20)
         }
     }
 
-    private static let summaryPreviewHeight: CGFloat = 160
+}
 
-    @ViewBuilder private func summaryPreviewBody(_ note: MeetingNotesStore.Note) -> some View {
-        summaryPreviewContent(note)
-            .frame(height: Self.summaryPreviewHeight, alignment: .top)
+private struct HoverFlyoutCard: View {
+    let note: MeetingNotesStore.Note
+    let availableHeight: CGFloat
+    let onOpenNote: () -> Void
+
+    static let width: CGFloat = 300
+    static let collapsedBodyMaxHeight: CGFloat = 110
+    private static let chromeHeight: CGFloat = 100
+    private static let expandedChromeHeight: CGFloat = chromeHeight + 34
+    static let estimatedMaxHeight: CGFloat = chromeHeight + collapsedBodyMaxHeight
+
+    private static let bodyFont = NSFont.systemFont(ofSize: 15)
+    private static let bodyEmphasizedFont = NSFont.systemFont(ofSize: 15, weight: .medium)
+    private static let innerWidth: CGFloat = width - 40
+    private static let actionItemIndent: CGFloat = 12 + 14
+
+    @State private var isExpanded = false
+
+    private var effectiveBodyMaxHeight: CGFloat {
+        let chrome = isExpanded ? Self.expandedChromeHeight : Self.chromeHeight
+        let desired = isExpanded ? availableHeight - chrome : Self.collapsedBodyMaxHeight
+        return max(60, min(desired, availableHeight - chrome))
+    }
+
+    private var naturalBodyHeight: CGFloat {
+        if !note.summaryLines.isEmpty {
+            let overview = note.overviewLines
+            let actionItems = note.actionItemLines
+            var total: CGFloat = 0
+            for (index, line) in overview.enumerated() {
+                if index > 0 { total += 8 }
+                total += Self.measuredHeight(line.text, font: Self.bodyFont, width: Self.innerWidth)
+            }
+            if !actionItems.isEmpty {
+                total += overview.isEmpty ? 0 : 4
+                total += Self.measuredHeight("Action Items", font: Self.bodyEmphasizedFont, width: Self.innerWidth)
+                for (index, line) in actionItems.enumerated() {
+                    if index > 0 { total += 6 }
+                    total += Self.measuredHeight(line.text, font: Self.bodyFont, width: Self.innerWidth - Self.actionItemIndent)
+                }
+            }
+            return total
+        } else if let summary = note.summary, !summary.isEmpty {
+            return Self.measuredHeight(summary, font: Self.bodyFont, width: Self.innerWidth)
+        }
+        return 0
+    }
+
+    private static func measuredHeight(_ text: String, font: NSFont, width: CGFloat) -> CGFloat {
+        guard width > 0, !text.isEmpty else { return 0 }
+        let attributed = NSAttributedString(string: text, attributes: [.font: font])
+        let rect = attributed.boundingRect(with: CGSize(width: width, height: .greatestFiniteMagnitude),
+                                            options: [.usesLineFragmentOrigin, .usesFontLeading])
+        return ceil(rect.height)
+    }
+
+    private var isTruncated: Bool { naturalBodyHeight > effectiveBodyMaxHeight }
+
+    var body: some View {
+        if !note.summaryLines.isEmpty || !(note.summary ?? "").isEmpty {
+            let shape = RoundedRectangle(cornerRadius: Radius.tile, style: .continuous)
+            VStack(alignment: .leading, spacing: 10) {
+                Text(note.title)
+                    .font(.inkReadingEmphasized)
+                    .foregroundStyle(Color.inkText)
+                Text(DateGrouping.timestampFmt.string(from: note.createdAt))
+                    .font(.inkCaption)
+                    .foregroundStyle(Color.inkFaint)
+                summaryBody
+                if isExpanded {
+                    expandedFooterRow
+                }
+            }
+            .padding(20)
+            .frame(width: Self.width, alignment: .topLeading)
+            .background(Color.card, in: shape)
+            .clipShape(shape)
+            .overlay(shape.stroke(Color.line, lineWidth: 1))
+            .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
+            .shadow(color: .black.opacity(0.06), radius: 3, y: 1)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    @ViewBuilder private var summaryBody: some View {
+        summaryContent
+            .frame(maxHeight: effectiveBodyMaxHeight, alignment: .top)
             .clipped()
             .overlay(alignment: .bottom) {
-                LinearGradient(colors: [Color.card.opacity(0), Color.card],
-                               startPoint: .top, endPoint: .bottom)
-                    .frame(height: 28)
-                    .allowsHitTesting(false)
+                if isTruncated {
+                    LinearGradient(colors: [Color.card.opacity(0), Color.card],
+                                   startPoint: .top, endPoint: .bottom)
+                        .frame(height: 32)
+                        .allowsHitTesting(false)
+                }
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if !isExpanded, isTruncated {
+                    pillButton(title: "Show more", systemImage: "chevron.down") {
+                        withAnimation(Motion.state) { isExpanded = true }
+                    }
+                }
             }
     }
 
-    @ViewBuilder private func summaryPreviewContent(_ note: MeetingNotesStore.Note) -> some View {
+    @ViewBuilder private var expandedFooterRow: some View {
+        HStack(spacing: 0) {
+            Spacer(minLength: 0)
+            if isTruncated {
+                pillButton(title: "Open note", systemImage: "arrow.right", action: onOpenNote)
+            } else {
+                pillButton(title: "Show less", systemImage: "chevron.up") {
+                    withAnimation(Motion.state) { isExpanded = false }
+                }
+            }
+        }
+    }
+
+    private func pillButton(title: String, systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Text(title)
+                Image(systemName: systemImage)
+                    .font(.system(size: 9, weight: .semibold))
+            }
+            .font(.inkCaption)
+            .fontWeight(.medium)
+            .foregroundStyle(Color.accentColor)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Color.card, in: Capsule())
+            .overlay(Capsule().stroke(Color.line, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .modifier(PointingHandCursor())
+    }
+
+    @ViewBuilder private var summaryContent: some View {
         if !note.summaryLines.isEmpty {
-            let overview = note.summaryLines.filter { !$0.isActionItem }
-            let actionItems = note.summaryLines.filter { $0.isActionItem }
+            let overview = note.overviewLines
+            let actionItems = note.actionItemLines
             let speakerLabels = note.speakers.map(\.label)
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(overview) { line in
@@ -237,47 +404,6 @@ struct MeetingNotesView: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
-
-    private var notesList: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("My notes")
-                .font(.inkReadingEmphasized)
-                .foregroundStyle(Color.inkText)
-                .padding(.bottom, 6)
-            if meetingNotes.notes.isEmpty {
-                Text("Recorded meetings will show up here.")
-                    .font(.inkCallout)
-                    .foregroundStyle(Color.inkFaint)
-                    .padding(.top, 8)
-            } else {
-                ForEach(groupedNotes) { group in
-                    Section {
-                        ForEach(Array(group.items.enumerated()), id: \.element.id) { index, note in
-                            if index > 0 {
-                                Rectangle()
-                                    .fill(Color.line)
-                                    .frame(height: 1)
-                                    .padding(.horizontal, 8)
-                            }
-                            MeetingNoteRow(note: note, onTap: { selectedNoteID = note.id },
-                                          deleteNote: { meetingNotes.deleteNote(id: $0) },
-                                          onHover: { isHovering in
-                                if isHovering { hoveredNoteID = note.id }
-                            })
-                        }
-                    } header: {
-                        DayGroupHeader(title: group.title, large: true)
-                    }
-                }
-            }
-        }
-    }
-
-    private static let summaryDateFmt: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "MMM d, h:mm a"
-        return f
-    }()
 }
 
 private struct MeetingNoteRow: View {
@@ -296,22 +422,14 @@ private struct MeetingNoteRow: View {
                 .foregroundStyle(Color.inkSub)
                 .frame(width: 20)
                 .padding(.top, 2)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(note.title)
-                    .font(.inkBody)
-                    .foregroundStyle(Color.inkText)
-                RowSummaryHighlighter.text(
-                    (note.summary?.isEmpty == false) ? note.summary! : "No summary yet",
-                    speakers: note.speakers
-                )
-                    .font(.inkCallout)
-                    .foregroundStyle(Color.inkSub)
-                    .lineLimit(1)
-            }
+            Text(note.title)
+                .font(.inkReading)
+                .foregroundStyle(Color.inkText)
+                .lineLimit(1)
             Spacer(minLength: 0)
-            if hovering {
-                rowActions
-            }
+            rowActions
+                .opacity(hovering ? 1 : 0)
+                .allowsHitTesting(hovering)
             Text(Self.timeFmt.string(from: note.createdAt))
                 .font(.inkCaption)
                 .foregroundStyle(Color.inkSub)
@@ -319,7 +437,7 @@ private struct MeetingNoteRow: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .containerRelativeFrame(.horizontal, alignment: .leading) { width, _ in width * 0.65 }
         .contentShape(Rectangle())
         .background(RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
             .fill(hovering ? Color.accentColor.opacity(Hover.rowTintOpacity) : Color.clear))
@@ -332,6 +450,7 @@ private struct MeetingNoteRow: View {
             if !isHovering { showDeleteAction = false }
         }
         .onTapGesture { onTap() }
+        .anchorPreference(key: RowAnchorKey.self, value: .bounds) { [note.id: $0] }
         .alert("Delete this note?", isPresented: $showDeleteConfirm) {
             Button("Cancel", role: .cancel) {}
             Button("Delete", role: .destructive) { deleteNote(note.id) }

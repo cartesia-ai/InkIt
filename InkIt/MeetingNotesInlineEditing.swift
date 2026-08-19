@@ -101,7 +101,6 @@ private struct InlineEditableText: NSViewRepresentable {
     let text: String
     let fontSize: CGFloat
     let textColor: Color
-    var showsText: Bool = true
     var minLineHeight: CGFloat? = nil
     @Binding var forceCommit: Bool
     let onCommit: (String) -> Void
@@ -149,7 +148,11 @@ private struct InlineEditableText: NSViewRepresentable {
 
     private func style(_ field: AutoGrowTextField) {
         field.font = .systemFont(ofSize: fontSize)
-        field.textColor = showsText ? NSColor(textColor) : .clear
+        let resolvedColor = NSColor(textColor)
+        field.textColor = resolvedColor
+        if let editor = field.currentEditor() as? NSTextView {
+            editor.textColor = resolvedColor
+        }
     }
 
     final class Coordinator: NSObject, NSTextFieldDelegate {
@@ -181,75 +184,6 @@ private struct InlineEditableText: NSViewRepresentable {
 }
 
 private let editableRowHoverOpacity: Double = 0.06
-
-struct EditableLineRow: View {
-    let id: UUID
-    let text: String
-    var prefix: String? = nil
-    var font: Font = .inkBody
-    var fontSize: CGFloat = 15
-    var textColor: Color = .inkText
-    var coloredText: Text?
-    @ObservedObject var editCoordinator: EditCoordinator
-    let onCommit: (String) -> Void
-    let onDelete: () -> Void
-
-    @State private var hovering = false
-    @State private var isEditing = false
-    @State private var forceCommit = false
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 6) {
-            if let prefix {
-                Text(prefix)
-                    .font(font)
-                    .foregroundStyle(textColor)
-            }
-            ZStack(alignment: .leading) {
-                (coloredText ?? Text(text))
-                    .font(font)
-                    .foregroundStyle(textColor)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .opacity(isEditing ? 0 : 1)
-                    .allowsHitTesting(false)
-                InlineEditableText(text: text, fontSize: fontSize, textColor: textColor, showsText: isEditing,
-                                   minLineHeight: fontSize + 8,
-                                   forceCommit: $forceCommit,
-                                   onCommit: commit, onBeginEditing: beginEdit, onDeleteEmptyLine: deleteAndClose)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 6)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
-        .background(RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
-            .fill(hovering && !isEditing ? Color.primary.opacity(editableRowHoverOpacity) : Color.clear))
-        .onHover { hovering = $0 }
-        .textEditCursor()
-        .dismissOnClickOutside(isActive: isEditing) { forceCommit = true }
-    }
-
-    private func beginEdit() {
-        isEditing = true
-        editCoordinator.requestEdit(id, saveAndClose: { forceCommit = true })
-    }
-
-    private func commit(_ newText: String) {
-        isEditing = false
-        editCoordinator.resignEdit(id)
-        let trimmed = newText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty, trimmed != text {
-            onCommit(trimmed)
-        }
-    }
-
-    private func deleteAndClose() {
-        isEditing = false
-        editCoordinator.resignEdit(id)
-        onDelete()
-    }
-}
 
 struct EditableTranscriptBubble: View {
     let line: MeetingNotesStore.TranscriptLine
