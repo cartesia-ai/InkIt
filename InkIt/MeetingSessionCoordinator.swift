@@ -181,6 +181,7 @@ final class MeetingSessionCoordinator: ObservableObject {
     }
 
     private func appendSegment(speaker: String, text: String, timestamp: Date) {
+        DebugLog.info("meeting segment speaker=\(speaker) ts=\(timestamp.timeIntervalSince1970) text=\(text.prefix(80))")
         let segment = Segment(speakerLabel: speaker, text: text, timestamp: timestamp)
         if let insertIndex = segments.firstIndex(where: { $0.timestamp > timestamp }) {
             segments.insert(segment, at: insertIndex)
@@ -204,7 +205,7 @@ final class MeetingSessionCoordinator: ObservableObject {
                 let summaryLines = result.overview.map { MeetingNotesStore.SummaryLine(text: $0, isActionItem: false) }
                     + result.actionItems.map { MeetingNotesStore.SummaryLine(text: $0, isActionItem: true) }
                 let flatSummary = Self.flattenSummary(overview: result.overview, actionItems: result.actionItems)
-                self.meetingNotes.updateSummary(id: noteID, summary: flatSummary, summaryLines: summaryLines)
+                self.meetingNotes.updateSummary(id: noteID, summary: flatSummary, summaryLines: summaryLines, icon: result.icon)
             }
         }
     }

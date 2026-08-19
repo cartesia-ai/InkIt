@@ -85,7 +85,12 @@ final class TranscriptRewriter {
         }
     }
 
-    func summarizeMeeting(transcript: String, timeout: TimeInterval? = nil, runID: String? = nil) async -> Result<(title: String, overview: [String], actionItems: [String]), RewriteFailure> {
+    static let iconChoices: [String] = [
+        "🎯", "🚀", "💰", "📊", "🐛", "🔧", "🎨", "🤝", "📅", "🎓",
+        "⚖️", "🔒", "🌐", "📈", "🧪", "💡", "🔥", "🎉", "🧑‍💻", "📣",
+    ]
+
+    func summarizeMeeting(transcript: String, timeout: TimeInterval? = nil, runID: String? = nil) async -> Result<(title: String, overview: [String], actionItems: [String], icon: String?), RewriteFailure> {
         guard !apiKey.isEmpty else { return .failure(.invalidKey) }
         guard !transcript.isEmpty else { return .failure(.unknown) }
 
@@ -124,7 +129,7 @@ final class TranscriptRewriter {
         return (speaker, text)
     }
 
-    private static func parseSummary(_ raw: String) -> (title: String, overview: [String], actionItems: [String])? {
+    private static func parseSummary(_ raw: String) -> (title: String, overview: [String], actionItems: [String], icon: String?)? {
         var stripped = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if stripped.hasPrefix("```") {
             stripped = stripped.drop(while: { $0 != "\n" }).dropFirst()
@@ -144,7 +149,9 @@ final class TranscriptRewriter {
         }
         let rawTitle = (json["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let title = (rawTitle.isEmpty || rawTitle.count > 80) ? "" : rawTitle
-        return (title, stringList("overview"), stringList("actionItems"))
+        let rawIcon = (json["icon"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let icon = rawIcon.flatMap { iconChoices.contains($0) ? $0 : nil }
+        return (title, stringList("overview"), stringList("actionItems"), icon)
     }
 
     private func call(system: [[String: Any]], transcript: String, userContent: String? = nil,
@@ -345,6 +352,8 @@ final class TranscriptRewriter {
     private static let summaryInstructions: String = """
     You are summarizing a finished meeting from its cleaned, speaker-labeled transcript in <transcript>. "You" is the note-taker; other labels are other participants.
 
+    Pick one emoji from this exact list that best represents the meeting's main topic: \(iconChoices.joined(separator: " ")). Return it verbatim as "icon" in the JSON. If nothing in the list clearly fits, omit "icon" entirely rather than guessing.
+
     Make the first element of "overview" a tagline: "**Overview:**" (bolded via markdown, exactly like that) followed by 1-2 sentences summarizing what the meeting was about at a glance.
 
     After that tagline, break the rest of the overview into short, independent sentences a participant could read in a few seconds to recall what happened: what was discussed and any decisions made. Only state what's actually in the transcript, never invent names, decisions, or action items that weren't said.
@@ -357,6 +366,6 @@ final class TranscriptRewriter {
 
     If the transcript is too short or unclear to summarize meaningfully, make the "**Overview:**" tagline say so plainly instead of padding with generic filler, and leave it as the only overview sentence; still give the meeting a short generic title.
 
-    Output strict JSON only, no prose, no code fences: {"title": "short meeting title", "overview": ["**Overview:** Quick sync on the Q3 launch timeline and remaining blockers.", "sentence one", "sentence two"], "actionItems": ["Jan: plan interviews"]}
+    Output strict JSON only, no prose, no code fences: {"title": "short meeting title", "icon": "🚀", "overview": ["**Overview:** Quick sync on the Q3 launch timeline and remaining blockers.", "sentence one", "sentence two"], "actionItems": ["Jan: plan interviews"]}
     """
 }

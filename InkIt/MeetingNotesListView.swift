@@ -417,9 +417,7 @@ private struct MeetingNoteRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "doc.text")
-                .font(.inkBody)
-                .foregroundStyle(Color.inkSub)
+            rowIcon
                 .frame(width: 20)
                 .padding(.top, 2)
             Text(note.title)
@@ -456,6 +454,17 @@ private struct MeetingNoteRow: View {
             Button("Delete", role: .destructive) { deleteNote(note.id) }
         } message: {
             Text("This permanently deletes the recording and transcript.")
+        }
+    }
+
+    @ViewBuilder private var rowIcon: some View {
+        if let icon = note.icon, !icon.isEmpty {
+            Text(icon)
+                .font(.inkBody)
+        } else {
+            Image(systemName: "doc.text")
+                .font(.inkBody)
+                .foregroundStyle(Color.inkSub)
         }
     }
 

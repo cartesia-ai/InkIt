@@ -64,6 +64,7 @@ final class MeetingNotesStore: ObservableObject {
         let createdAt: Date
         var summary: String?
         var summaryLines: [SummaryLine] = []
+        var icon: String? = nil
         var transcript: String?
         var lines: [TranscriptLine] = []
         var speakers: [Speaker] = []
@@ -164,13 +165,15 @@ final class MeetingNotesStore: ObservableObject {
         return note
     }
 
-    func updateSummary(id: UUID, summary: String, summaryLines: [SummaryLine] = []) {
+    func updateSummary(id: UUID, summary: String, summaryLines: [SummaryLine] = [], icon: String? = nil) {
         guard let index = notes.firstIndex(where: { $0.id == id }) else { return }
         notes[index].summary = summary
         notes[index].summaryLines = summaryLines
+        notes[index].icon = icon
         guard let record = record(id: id) else { return }
         record.summary = summary
         record.summaryLines = summaryLines
+        record.icon = icon
         saveContext()
     }
 
@@ -290,18 +293,20 @@ final class MeetingNoteRecord {
     var createdAt: Date
     var summary: String?
     var summaryLines: [MeetingNotesStore.SummaryLine] = []
+    var icon: String? = nil
     var transcript: String?
     var lines: [MeetingNotesStore.TranscriptLine] = []
     var speakers: [MeetingNotesStore.Speaker] = []
 
     init(id: UUID, title: String, createdAt: Date, summary: String?, transcript: String?,
-         summaryLines: [MeetingNotesStore.SummaryLine] = [],
+         summaryLines: [MeetingNotesStore.SummaryLine] = [], icon: String? = nil,
          lines: [MeetingNotesStore.TranscriptLine] = [], speakers: [MeetingNotesStore.Speaker] = []) {
         self.id = id
         self.title = title
         self.createdAt = createdAt
         self.summary = summary
         self.summaryLines = summaryLines
+        self.icon = icon
         self.transcript = transcript
         self.lines = lines
         self.speakers = speakers
@@ -310,12 +315,12 @@ final class MeetingNoteRecord {
     convenience init(note: MeetingNotesStore.Note) {
         self.init(id: note.id, title: note.title, createdAt: note.createdAt,
                   summary: note.summary, transcript: note.transcript, summaryLines: note.summaryLines,
-                  lines: note.lines, speakers: note.speakers)
+                  icon: note.icon, lines: note.lines, speakers: note.speakers)
     }
 
     func toNote() -> MeetingNotesStore.Note {
         MeetingNotesStore.Note(id: id, title: title, createdAt: createdAt,
-                               summary: summary, summaryLines: summaryLines, transcript: transcript,
+                               summary: summary, summaryLines: summaryLines, icon: icon, transcript: transcript,
                                lines: lines, speakers: speakers)
     }
 }
