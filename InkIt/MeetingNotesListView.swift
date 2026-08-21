@@ -20,6 +20,9 @@ struct MeetingNotesView: View {
     @State private var hoveredNoteID: UUID?
     @FocusState private var searchFocused: Bool
 
+    /// Search isn't backed by anything yet — the bar is fully built and ready, just hidden until it is.
+    private static let searchEnabled = false
+
     private let hintTimer = Timer.publish(every: 6, on: .main, in: .common).autoconnect()
 
     private static let searchHints = [
@@ -46,8 +49,10 @@ struct MeetingNotesView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 titleBlock
-                searchBar
-                    .padding(.top, 16)
+                if Self.searchEnabled {
+                    searchBar
+                        .padding(.top, 16)
+                }
                 notesList
                     .padding(.top, 20)
             }
