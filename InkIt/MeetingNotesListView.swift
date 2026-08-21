@@ -305,8 +305,8 @@ private struct HoverFlyoutCard: View {
             .background(Color.card, in: shape)
             .clipShape(shape)
             .overlay(shape.stroke(Color.line, lineWidth: 1))
-            .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
-            .shadow(color: .black.opacity(0.06), radius: 3, y: 1)
+            .shadow(color: Elevation.card, radius: 12, y: 4)
+            .shadow(color: Elevation.soft, radius: 3, y: 1)
             .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -350,7 +350,7 @@ private struct HoverFlyoutCard: View {
             HStack(spacing: 4) {
                 Text(title)
                 Image(systemName: systemImage)
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: 9, weight: .semibold))  // ds-allow: icon
             }
             .font(.inkCaption)
             .fontWeight(.medium)
