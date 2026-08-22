@@ -153,7 +153,9 @@ final class SettingsStore: ObservableObject {
     }
 
     func applyAppearance() {
-        NSApp?.appearance = appearance.nsAppearance
+        let target = appearance.nsAppearance
+        guard NSApp?.appearance?.name != target?.name else { return }
+        NSApp?.appearance = target
     }
 
     @Published var correctionEnabled: Bool {

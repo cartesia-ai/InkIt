@@ -13,7 +13,7 @@ private enum SettingsMetrics {
     static let fieldFocusBorderWidth: CGFloat = 2
 }
 
-private struct FieldSurface: ViewModifier {
+struct FieldSurface: ViewModifier {
     var focused: Bool
     func body(content: Content) -> some View {
         content
@@ -32,7 +32,7 @@ private struct FieldSurface: ViewModifier {
     }
 }
 
-private extension View {
+extension View {
     func fieldSurface(focused: Bool = false) -> some View {
         modifier(FieldSurface(focused: focused))
     }
@@ -206,7 +206,7 @@ private struct APIKeyField: View {
     }
 }
 
-private struct RevealableSecureField: NSViewRepresentable {
+struct RevealableSecureField: NSViewRepresentable {
     @Binding var text: String
     let placeholder: String
     let onFocusChange: (Bool) -> Void
@@ -245,7 +245,7 @@ private struct RevealableSecureField: NSViewRepresentable {
     }
 }
 
-private final class RevealingTextField: NSTextField {
+final class RevealingTextField: NSTextField {
     var onFocusChange: ((Bool) -> Void)?
     private(set) var isEditing = false
     private var clickMonitor: Any?
@@ -515,6 +515,8 @@ struct SettingsSearchItem: Identifiable {
               keywords: ["microphone", "mic", "permission", "privacy", "access"]),
         .init(title: "Accessibility permission", pane: .general, anchor: "perm.accessibility",
               keywords: ["accessibility", "permission", "privacy", "type", "paste", "control"]),
+        .init(title: "System Audio permission", pane: .general, anchor: "perm.systemAudio",
+              keywords: ["system audio", "audio", "permission", "privacy", "capture", "recording", "meeting"]),
     ]
 }
 
@@ -663,6 +665,12 @@ private struct SettingsSearchResults: View {
                           subtitle: "So InkIt can type for you",
                           granted: permissions.hasAccessibility) {
                 permissions.requestAccessibility()
+            }
+        case "perm.systemAudio":
+            PermissionRow(label: "System Audio",
+                          subtitle: "So InkIt can take notes during your meeting",
+                          granted: permissions.hasSystemAudioCapture) {
+                permissions.requestSystemAudioCapture()
             }
         default:
             EmptyView()
@@ -825,6 +833,11 @@ private struct GeneralSettingsPane: View {
                               subtitle: "So InkIt can type for you",
                               granted: permissions.hasAccessibility) {
                     permissions.requestAccessibility()
+                }
+                PermissionRow(label: "System Audio",
+                              subtitle: "So InkIt can hear everyone in a meeting, not just you",
+                              granted: permissions.hasSystemAudioCapture) {
+                    permissions.requestSystemAudioCapture()
                 }
             } header: {
                 Text("Permissions").settingsSectionHeader()

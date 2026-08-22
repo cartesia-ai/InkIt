@@ -273,6 +273,17 @@ private struct PermissionsStep: View {
                     enable: { permissions.requestAccessibility() },
                     openSettings: { permissions.openAccessibilitySettings() }
                 )
+
+                PermissionCard(
+                    icon: "record.circle.fill",
+                    title: "Capture meeting audio",
+                    subtitle: "So you automatically keep notes during meetings. Optional, only needed for Meeting Notes.",
+                    state: permissions.systemAudioCaptureState,
+                    manualWhy: "This lets InkIt capture system audio during a meeting note, so it can hear everyone, not just your mic.",
+                    settingsPath: "Privacy & Security ▸ Screen & System Audio Recording",
+                    enable: { permissions.requestSystemAudioCapture() },
+                    openSettings: { permissions.openSystemAudioCaptureSettings() }
+                )
             }
             .frame(maxWidth: 560)
 
@@ -363,7 +374,7 @@ private struct PermissionCard: View {
                 ManualStep(number: 2, prefix: "Turn on ", emphasis: title)
             }
 
-            Button("Open System Settings", action: openSettings)
+            Button("Open System Settings", action: enable)
                 .buttonStyle(InkButtonStyle(compact: true))
                 .modifier(PointingHandCursor())
         }
@@ -641,59 +652,6 @@ private struct PrimaryButton: View {
         .buttonStyle(InkButtonStyle())
         .disabled(!enabled)
         .modifier(PointingHandCursor())
-    }
-}
-
-struct InkButtonStyle: ButtonStyle {
-    enum Variant { case ink, destructive, accent }
-
-    var variant: Variant = .ink
-    var compact = false
-
-    func makeBody(configuration: Configuration) -> some View {
-        Surface(configuration: configuration, variant: variant, compact: compact)
-    }
-
-    private struct Surface: View {
-        let configuration: ButtonStyleConfiguration
-        let variant: Variant
-        let compact: Bool
-        @Environment(\.isEnabled) private var isEnabled
-        @State private var hovering = false
-
-        private var fill: Color {
-            switch variant {
-            case .ink:         return Color("InkFill")
-            case .destructive: return .inkDanger
-            case .accent:      return .accentColor
-            }
-        }
-
-        private var textColor: Color {
-            switch variant {
-            case .ink:         return Color("InkFillText")
-            case .destructive: return .white  // ds-allow: legible label on the red destructive fill
-            case .accent:      return .white  // ds-allow: white label on the amber accent fill, matching the accent CTA
-            }
-        }
-
-        var body: some View {
-            configuration.label
-                .font(compact ? .inkCalloutEmphasized : .inkBodyEmphasized)
-                .foregroundStyle(textColor)
-                .padding(.horizontal, compact ? 14 : 26)
-                .padding(.vertical, compact ? 6 : 11)
-                .background(
-                    RoundedRectangle(cornerRadius: compact ? 7 : 9, style: .continuous)
-                        .fill(fill)
-                        .brightness(hovering && isEnabled ? Hover.fillShift : 0)
-                        .opacity(configuration.isPressed ? 0.82 : 1)
-                        .animation(Hover.animation, value: hovering)
-                )
-                .opacity(isEnabled ? 1 : 0.4)
-                .contentShape(Rectangle())
-                .onHover { hovering = $0 }
-        }
     }
 }
 

@@ -2,13 +2,13 @@ name: InkIt
 options:
   bundleIdPrefix: ai.cartesia
   deploymentTarget:
-    macOS: "14.0"
+    macOS: "14.2"
   createIntermediateGroups: true
 
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.2"
 
 packages:
   Sparkle:
@@ -46,13 +46,14 @@ targets:
         CFBundlePackageType: APPL
         CFBundleShortVersionString: "0.1.8"
         CFBundleVersion: "10"
-        LSMinimumSystemVersion: "14.0"
+        LSMinimumSystemVersion: "14.2"
         # Show in Dock so users can always click the icon to bring up the
         # control window. (Was LSUIElement=true earlier; reverted because some
         # systems don't render the menu bar item reliably.)
         LSUIElement: false
         NSHighResolutionCapable: true
         NSMicrophoneUsageDescription: "InkIt needs microphone access to transcribe your speech to text while you hold the dictation hotkey."
+        NSAudioCaptureUsageDescription: "InkIt needs system audio access to hear everyone else in a meeting, not just you."
         NSAppleEventsUsageDescription: "InkIt pastes the transcribed text into the focused app."
         SUFeedURL: "https://github.com/cartesia-ai/InkIt/releases/latest/download/appcast.xml"
         SUPublicEDKey: "$(SPARKLE_PUBLIC_ED_KEY)"
@@ -124,4 +125,4 @@ targets:
         CODE_SIGNING_ALLOWED: NO
         SWIFT_VERSION: "5.0"
         GENERATE_INFOPLIST_FILE: YES
-        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        MACOSX_DEPLOYMENT_TARGET: "14.2"

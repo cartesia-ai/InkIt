@@ -16,6 +16,7 @@ final class AudioCaptureService {
     private let readyFallbackDelay: TimeInterval = 0.6
 
     var preferredDeviceUID: String?
+    var preferredDeviceID: AudioDeviceID?
 
     func start(onChunk: @escaping (Data) -> Void) throws {
         guard !isRunning else { return }
@@ -23,7 +24,7 @@ final class AudioCaptureService {
 
         let input = engine.inputNode
 
-        let pinnedID = preferredDeviceUID.flatMap { AudioDevices.deviceID(forUID: $0) }
+        let pinnedID = preferredDeviceID ?? preferredDeviceUID.flatMap { AudioDevices.deviceID(forUID: $0) }
         if let deviceID = pinnedID ?? AudioDevices.defaultInputDeviceID() {
             try? input.auAudioUnit.setDeviceID(deviceID)
         }

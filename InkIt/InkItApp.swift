@@ -29,6 +29,14 @@ extension Color {
 
     static let scrim = Color.black.opacity(0.18)
     static let scrimStrong = Color.black.opacity(0.5)
+
+    static let speakerYou = Color("SpeakerSage")
+    static let speakerPalette: [Color] = [
+        Color("SpeakerLavender"),
+        Color("SpeakerGold"),
+        Color("SpeakerSky"),
+        Color("SpeakerCoral"),
+    ]
 }
 
 enum Radius {
@@ -56,6 +64,71 @@ enum Elevation {
     static let lifted  = Color.black.opacity(0.18)
     static let chip    = Color.black.opacity(0.22)
     static let modal   = Color.black.opacity(0.28)
+}
+
+struct DayGroup<Item>: Identifiable {
+    let id: Date
+    let title: String
+    let items: [Item]
+}
+
+enum DateGrouping {
+    private static let dayFmt: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "EEEE, MMM d"
+        return f
+    }()
+
+    static let timestampFmt: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MMM d, h:mm a"
+        return f
+    }()
+
+    static func byDay<Item>(_ items: [Item], newestFirst: Bool = true, date: (Item) -> Date) -> [DayGroup<Item>] {
+        let calendar = Calendar.current
+        let grouped = Dictionary(grouping: items) { calendar.startOfDay(for: date($0)) }
+        return grouped.keys
+            .sorted(by: newestFirst ? (>) : (<))
+            .map { day in
+                let dayItems = grouped[day, default: []].sorted {
+                    newestFirst ? date($0) > date($1) : date($0) < date($1)
+                }
+                return DayGroup(id: day, title: title(for: day, calendar: calendar), items: dayItems)
+            }
+    }
+
+    static func title(for day: Date, calendar: Calendar = .current) -> String {
+        if calendar.isDateInToday(day) { return "Today" }
+        if calendar.isDateInYesterday(day) { return "Yesterday" }
+        return dayFmt.string(from: day)
+    }
+}
+
+struct DayGroupHeader: View {
+    let title: String
+    var large: Bool = false
+
+    var body: some View {
+        Group {
+            if large {
+                Text(title)
+                    .font(.inkReadingEmphasized)
+                    .foregroundStyle(Color.inkText)
+            } else {
+                Text(title)
+                    .font(.inkEyebrow)
+                    .tracking(1.1)
+                    .textCase(.uppercase)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, large ? 0 : 8)
+        .padding(.top, 14)
+        .padding(.bottom, 8)
+        .background(Color.canvas)
+    }
 }
 
 enum PageLayout {
@@ -115,6 +188,7 @@ enum Motion {
 enum Hover {
     static let backdropOpacity: Double = 0.08
     static let fillShift: Double = 0.07
+    static let grayTintOpacity: Double = 0.16
     static let borderOpacity: Double = 0.22
     static let rowTintOpacity: Double = 0.055
     static let animation: Animation = Motion.quick
@@ -314,6 +388,8 @@ struct InkItApp: App {
     @StateObject private var settings = SettingsStore.shared
     @StateObject private var history = TranscriptHistoryStore.shared
     @StateObject private var aggregates = UsageAggregateStore.shared
+    @StateObject private var meetingNotes = MeetingNotesStore.shared
+    @StateObject private var meetingSession = MeetingSessionCoordinator()
 
     var body: some Scene {
         WindowGroup("InkIt", id: "main") {
@@ -322,6 +398,8 @@ struct InkItApp: App {
                 .environmentObject(settings)
                 .environmentObject(history)
                 .environmentObject(aggregates)
+                .environmentObject(meetingNotes)
+                .environmentObject(meetingSession)
         }
         .modelContainer(history.modelContainer)
         .windowResizability(.contentMinSize)
@@ -363,20 +441,25 @@ struct InkItApp: App {
 
 struct RootView: View {
     @EnvironmentObject var settings: SettingsStore
+    @EnvironmentObject var meetingSession: MeetingSessionCoordinator
     var body: some View {
         Group {
-            if settings.hasCompletedOnboarding {
+            if !settings.hasCompletedOnboarding {
+                OnboardingRootView()
+                    .frame(minWidth: 620, idealWidth: 1140, maxWidth: .infinity,
+                           minHeight: 560, idealHeight: 860, maxHeight: .infinity)
+            } else if meetingSession.isSessionActive {
+                MeetingSessionView()
+                    .frame(width: MeetingSessionView.windowWidth)
+                    .frame(maxHeight: .infinity)
+            } else {
                 MainWindowView()
                     .frame(minWidth: SettingsPopover.size.width + 2 * SettingsPopover.breathingRoom,
                            minHeight: SettingsPopover.size.height + 2 * SettingsPopover.breathingRoom
                                       - MainWindowView.titlebarHeight)
-            } else {
-                OnboardingRootView()
-                    .frame(minWidth: 620, idealWidth: 1140, maxWidth: .infinity,
-                           minHeight: 560, idealHeight: 860, maxHeight: .infinity)
             }
         }
-        .background(WindowChrome())
+        .background(WindowChrome(meetingSessionActive: meetingSession.isSessionActive))
         .onAppear { settings.applyAppearance() }
     }
 }
@@ -387,6 +470,7 @@ struct MainWindowView: View {
     @EnvironmentObject var coordinator: AppCoordinator
     @EnvironmentObject var settings: SettingsStore
     @EnvironmentObject var history: TranscriptHistoryStore
+    @EnvironmentObject var meetingSession: MeetingSessionCoordinator
 
     @State private var section: MainSection =
         ProcessInfo.processInfo.arguments.contains("--open-insights") ? .insights : .home
@@ -416,6 +500,8 @@ struct MainWindowView: View {
                     InsightsView()
                 case .dictionary:
                     DictionaryView()
+                case .meetingNotes:
+                    MeetingNotesView()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -438,6 +524,12 @@ struct MainWindowView: View {
             .overlay(alignment: .bottomTrailing) { ToastOverlay() }
             .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
                 openSettings(pane: .general)
+            }
+            .onAppear {
+                if meetingSession.pendingNavigateToMeetingNotes {
+                    section = .meetingNotes
+                    meetingSession.pendingNavigateToMeetingNotes = false
+                }
             }
     }
 
@@ -1106,6 +1198,8 @@ private struct DiffLegendLabelStyle: LabelStyle {
 }
 
 private struct WindowChrome: NSViewRepresentable {
+    var meetingSessionActive: Bool = false
+
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
         DispatchQueue.main.async { [weak view] in configure(view?.window) }
@@ -1126,6 +1220,7 @@ private struct WindowChrome: NSViewRepresentable {
         }
         window.collectionBehavior.remove(.fullScreenPrimary)
         window.collectionBehavior.insert(.fullScreenNone)
+        MeetingWindowResizer.shared.apply(sessionActive: meetingSessionActive, to: window)
     }
 }
 
