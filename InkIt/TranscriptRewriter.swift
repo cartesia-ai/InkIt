@@ -85,6 +85,26 @@ final class TranscriptRewriter {
         }
     }
 
+    func detectCrossChannelDuplicates(turnsText: String, timeout: TimeInterval? = nil, runID: String? = nil) async -> Result<[String], RewriteFailure> {
+        guard !apiKey.isEmpty else { return .failure(.invalidKey) }
+        guard !turnsText.isEmpty else { return .success([]) }
+
+        let system: [[String: Any]] = [
+            ["type": "text", "text": Self.dedupInstructions]
+        ]
+        let userContent = "<turns>\n\(turnsText)\n</turns>"
+        let result = await call(system: system, transcript: turnsText, userContent: userContent,
+                                model: self.model, timeout: timeout ?? provider.rewriteTimeout,
+                                label: "dedup", runID: runID, expectsJSON: true, skipLengthSanityCheck: true)
+        switch result {
+        case .failure(let failure):
+            return .failure(failure)
+        case .success(let raw):
+            guard let tags = Self.parseDedupVerdict(raw) else { return .failure(.unknown) }
+            return .success(tags)
+        }
+    }
+
     static let iconChoices: [String] = [
         "🎯", "🚀", "💰", "📊", "🐛", "🔧", "🎨", "🤝", "📅", "🎓",
         "⚖️", "🔒", "🌐", "📈", "🧪", "💡", "🔥", "🎉", "🧑‍💻", "📣",
@@ -127,6 +147,22 @@ final class TranscriptRewriter {
             return nil
         }
         return (speaker, text)
+    }
+
+    private static func parseDedupVerdict(_ raw: String) -> [String]? {
+        var stripped = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if stripped.hasPrefix("```") {
+            stripped = stripped.drop(while: { $0 != "\n" }).dropFirst()
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if stripped.hasSuffix("```") {
+            stripped = String(stripped.dropLast(3)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard let data = stripped.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        return (json["duplicateYouTags"] as? [Any])?.compactMap { $0 as? String }
     }
 
     private static func parseSummary(_ raw: String) -> (title: String, overview: [String], actionItems: [String], icon: String?)? {
@@ -347,6 +383,17 @@ final class TranscriptRewriter {
     2. Assign a speaker label using only the conversation content in <context> — there is no audio or voice information available. Reuse an existing "Speaker N" label from <context> if <turn> continues, replies to, or reads as the same voice as a recent turn. Introduce the next unused number only when <turn> clearly reads as a different voice — a self-introduction, a reply that implies the floor changed, or content unrelated to the immediately preceding turn. When unsure, keep the previous turn's speaker rather than inventing a new one. If <context> is empty, this is the first turn: label it "Speaker 1".
 
     Output strict JSON only, no prose, no code fences: {"speaker": "Speaker N", "text": "cleaned turn text"}
+    """
+
+    private static let dedupInstructions: String = """
+    You are checking a live meeting recording for cross-channel duplicate transcription. Two independent speech-to-text feeds run in parallel: "You" is the note-taker's microphone; "Speaker N" labels are a system-audio tap capturing everyone else on the call. When the Mac's speaker output leaks acoustically into the microphone (no headphones, any real volume), the same underlying speech gets transcribed independently on both feeds — a "You" turn and a "Speaker N" turn describing the same moment of speech, close together in time (typically well under a second, sometimes a couple seconds apart), with nearly identical wording aside from minor ASR differences (capitalization, punctuation, a misheard word).
+
+    <turns> lists recent turns from both feeds, ordered by time, each tagged with a short id like [M3] or [S2], its speaker label, its timestamp in seconds since epoch, and its text.
+
+    Flag a "You" turn (an "M" tag) only when a specific "Speaker N" turn in the list is genuinely a near-duplicate of it: substantially the same words, close in time. Do not flag a "You" turn just because it sits near a Speaker turn in time — the note-taker can genuinely speak while others do, and that is not leakage. When in doubt, do not flag it.
+
+    Output strict JSON only, no prose, no code fences: {"duplicateYouTags": ["M3"]}
+    If none, output {"duplicateYouTags": []}
     """
 
     private static let summaryInstructions: String = """

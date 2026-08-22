@@ -38,6 +38,7 @@ final class MeetingSessionCoordinator: ObservableObject {
     private var micClosed = false
     private var systemClosed = false
     private var rewriter: TranscriptRewriter?
+    private var dedup: MeetingTurnDedup?
     private var systemChannelHistory: [(speaker: String, text: String)] = []
     private var pendingPolishCount = 0
     private static let maxSystemHistoryTurns = 6
@@ -69,9 +70,13 @@ final class MeetingSessionCoordinator: ObservableObject {
         systemClosed = false
         systemChannelHistory = []
         pendingPolishCount = 0
-        rewriter = TranscriptRewriter(provider: settings.rewriteProvider,
-                                      model: settings.rewriteModel,
-                                      apiKey: settings.apiKey(for: settings.rewriteProvider))
+        let rewriter = TranscriptRewriter(provider: settings.rewriteProvider,
+                                          model: settings.rewriteModel,
+                                          apiKey: settings.apiKey(for: settings.rewriteProvider))
+        self.rewriter = rewriter
+        dedup = MeetingTurnDedup(rewriter: rewriter, onDropMicSegment: { [weak self] id in
+            self?.dropSegment(withID: id)
+        })
         startTimer()
 
         startMicChannel()
@@ -100,6 +105,7 @@ final class MeetingSessionCoordinator: ObservableObject {
         systemAudio.stop()
         micClient?.finalizeAndClose()
         systemClient?.finalizeAndClose()
+        dedup?.flushImmediately()
     }
 
     private func startMicChannel() {
@@ -111,7 +117,8 @@ final class MeetingSessionCoordinator: ObservableObject {
                 guard let self else { return }
                 self.pendingPolishCount += 1
                 let cleaned = await self.polishMicTurn(text)
-                self.appendSegment(speaker: "You", text: cleaned, timestamp: timestamp)
+                let segment = self.appendSegment(speaker: "You", text: cleaned, timestamp: timestamp)
+                self.dedup?.recordMicTurn(segmentID: segment.id, text: cleaned, timestamp: timestamp)
                 self.pendingPolishCount -= 1
                 self.finalizeIfReady()
             }
@@ -135,7 +142,8 @@ final class MeetingSessionCoordinator: ObservableObject {
                 guard let self else { return }
                 self.pendingPolishCount += 1
                 let labeled = await self.labelSystemTurn(text)
-                self.appendSegment(speaker: labeled.speaker, text: labeled.text, timestamp: timestamp)
+                let segment = self.appendSegment(speaker: labeled.speaker, text: labeled.text, timestamp: timestamp)
+                self.dedup?.recordSystemTurn(segmentID: segment.id, speaker: labeled.speaker, text: labeled.text, timestamp: timestamp)
                 self.pendingPolishCount -= 1
                 self.finalizeIfReady()
             }
@@ -180,7 +188,8 @@ final class MeetingSessionCoordinator: ObservableObject {
         return labeled
     }
 
-    private func appendSegment(speaker: String, text: String, timestamp: Date) {
+    @discardableResult
+    private func appendSegment(speaker: String, text: String, timestamp: Date) -> Segment {
         DebugLog.info("meeting segment speaker=\(speaker) ts=\(timestamp.timeIntervalSince1970) text=\(text.prefix(80))")
         let segment = Segment(speakerLabel: speaker, text: text, timestamp: timestamp)
         if let insertIndex = segments.firstIndex(where: { $0.timestamp > timestamp }) {
@@ -188,6 +197,13 @@ final class MeetingSessionCoordinator: ObservableObject {
         } else {
             segments.append(segment)
         }
+        return segment
+    }
+
+    private func dropSegment(withID id: UUID) {
+        guard let index = segments.firstIndex(where: { $0.id == id }) else { return }
+        let dropped = segments.remove(at: index)
+        DebugLog.info("meeting dedup dropped mic segment id=\(id) text=\(dropped.text.prefix(80))")
     }
 
     private func channelClosed(mic: Bool) {
