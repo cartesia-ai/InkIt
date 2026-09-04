@@ -1240,6 +1240,7 @@ struct HotkeyRecorder: View {
             otherBinding: settings.handsFreeHotkey,
             title: "Hold to talk",
             idleCaption: "Hold the key while you dictate, release to stop",
+            unsetCaption: "No shortcut set, hold to talk is off",
             conflictLabel: "your hands-free shortcut"
         )
     }
@@ -1252,9 +1253,93 @@ struct HandsFreeHotkeyRecorder: View {
             binding: $settings.handsFreeHotkey,
             otherBinding: settings.hotkey,
             title: "Hands-free",
-            idleCaption: "Press to start hands-free dictation, press again to stop",
+            idleCaption: "Tap to start hands-free dictation, tap again to stop",
+            unsetCaption: "No shortcut set, hands-free is off",
             conflictLabel: "your dictation shortcut"
         )
+    }
+}
+
+private struct HotkeyDraft: Equatable {
+    var modifiers: UInt32 = 0
+    var keyCode: UInt32?
+    var isFn = false
+    /// Kept so an untouched single-modifier binding round-trips to the same physical key.
+    var modifierKeyCode: UInt32?
+
+    init(_ binding: HotkeyBinding) {
+        switch binding {
+        case .carbon(let keyCode, let modifiers):
+            self.modifiers = modifiers
+            self.keyCode = keyCode
+        case .fn:
+            isFn = true
+        case .modifierKey(let keyCode):
+            modifiers = Self.carbonBit(for: keyCode)
+            modifierKeyCode = keyCode
+        case .none:
+            break
+        }
+    }
+
+    var tokens: [String] {
+        if isFn { return HotkeyConversion.displayTokens(for: .fn) }
+        if keyCode == nil, let modifierKeyCode {
+            return [HotkeyConversion.modifierLabel(for: modifierKeyCode)]
+        }
+        return HotkeyConversion.displayTokens(modifiers: modifiers, keyCode: keyCode)
+    }
+
+    var isEmpty: Bool { tokens.isEmpty }
+
+    mutating func removeLast() {
+        if keyCode != nil {
+            keyCode = nil
+        } else if isFn {
+            isFn = false
+        } else if let bit = Self.trailingBit(in: modifiers) {
+            modifiers &= ~bit
+            modifierKeyCode = nil
+        }
+    }
+
+    /// nil when the remaining caps can't stand on their own, such as two modifiers with no key.
+    var binding: HotkeyBinding? {
+        if isFn { return .fn }
+        if let keyCode {
+            guard modifiers != 0 else { return nil }
+            return .carbon(keyCode: keyCode, modifiers: modifiers)
+        }
+        if modifiers == 0 { return HotkeyBinding.none }
+        guard let bit = Self.trailingBit(in: modifiers), bit == modifiers else { return nil }
+        return .modifierKey(keyCode: modifierKeyCode ?? Self.keyCode(for: bit))
+    }
+
+    private static func trailingBit(in modifiers: UInt32) -> UInt32? {
+        for bit in [UInt32(cmdKey), UInt32(shiftKey), UInt32(optionKey), UInt32(controlKey)]
+        where modifiers & bit != 0 {
+            return bit
+        }
+        return nil
+    }
+
+    private static func carbonBit(for keyCode: UInt32) -> UInt32 {
+        switch Int(keyCode) {
+        case kVK_Command, kVK_RightCommand: return UInt32(cmdKey)
+        case kVK_Option, kVK_RightOption:   return UInt32(optionKey)
+        case kVK_Control, kVK_RightControl: return UInt32(controlKey)
+        case kVK_Shift, kVK_RightShift:     return UInt32(shiftKey)
+        default: return 0
+        }
+    }
+
+    private static func keyCode(for bit: UInt32) -> UInt32 {
+        switch bit {
+        case UInt32(cmdKey):    return UInt32(kVK_Command)
+        case UInt32(optionKey): return UInt32(kVK_Option)
+        case UInt32(shiftKey):  return UInt32(kVK_Shift)
+        default:                return UInt32(kVK_Control)
+        }
     }
 }
 
@@ -1264,6 +1349,7 @@ private struct HotkeyRecorderRow: View {
     let otherBinding: HotkeyBinding
     let title: String
     let idleCaption: String
+    let unsetCaption: String
     let conflictLabel: String
 
     @State private var isEditing = false
@@ -1272,19 +1358,20 @@ private struct HotkeyRecorderRow: View {
     @State private var flagsMonitor: Any?
     @State private var fnCapture = FnKeyCapture()
     @State private var modifierCandidate: UInt32?
+    /// Set once the caps are edited mid-recording; committed when the row is dismissed.
+    @State private var draft: HotkeyDraft?
 
     var body: some View {
         LabeledContent {
             Button {
                 if isEditing {
-                    cancelEditing()
+                    commitEditing()
                 } else {
                     beginEditing()
                 }
             } label: {
                 ShortcutCaptureField(
                     tokens: shortcutTokens,
-                    placeholder: shortcutPlaceholder,
                     isActive: isEditing,
                     showsPencil: !isEditing
                 )
@@ -1292,11 +1379,11 @@ private struct HotkeyRecorderRow: View {
             .buttonStyle(.plain)
             .contentShape(Rectangle())
             .modifier(PointingHandCursor())
-            .dismissOnClickOutside(isActive: isEditing) { cancelEditing() }
+            .dismissOnClickOutside(isActive: isEditing) { commitEditing() }
         } label: {
             VStack(alignment: .leading, spacing: SettingsMetrics.captionSpacing) {
                 Text(title)
-                Text(isEditing ? "Press a new shortcut" : idleCaption)
+                Text(caption)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1310,23 +1397,24 @@ private struct HotkeyRecorderRow: View {
         }
     }
 
-    private var shortcutTokens: [String] {
-        if recording { return [] }
-        return HotkeyConversion.displayTokens(for: binding)
+    private var caption: String {
+        if isEditing { return "Press a new shortcut, or Delete to remove keys" }
+        return binding.isSet ? idleCaption : unsetCaption
     }
 
-    private var shortcutPlaceholder: String? {
-        if recording { return "press new shortcut" }
-        return nil
+    private var shortcutTokens: [String] {
+        (draft ?? HotkeyDraft(binding)).tokens
     }
 
     private func beginEditing() {
+        draft = nil
         coordinator.unregisterHotkey()
         isEditing = true
         startRecording()
     }
 
     private func cancelEditing() {
+        draft = nil
         stopRecording()
         isEditing = false
         coordinator.registerHotkey()
@@ -1334,15 +1422,50 @@ private struct HotkeyRecorderRow: View {
 
     private func save(_ captured: HotkeyBinding) {
         if otherBinding.conflicts(with: captured) {
-            let other = HotkeyConversion.displayTokens(for: otherBinding).joined(separator: " ")
-            ToastCenter.shared.show("Conflicts with \(conflictLabel) (\(other)). Choose a different key.", style: .error)
+            rejectConflict(with: captured)
             return
         }
         stopRecording()
+        draft = nil
         binding = captured
         coordinator.registerHotkey()
         isEditing = false
         ToastCenter.shared.show("Shortcut saved", style: .success)
+    }
+
+    private func backspace() {
+        var edited = draft ?? HotkeyDraft(binding)
+        guard !edited.isEmpty else { return }
+        edited.removeLast()
+        draft = edited
+    }
+
+    /// Dismissing the row keeps whatever caps are showing, the way leaving a text field keeps its text.
+    private func commitEditing() {
+        guard let draft else { cancelEditing(); return }
+        guard let captured = draft.binding else {
+            ToastCenter.shared.show("\(draft.tokens.joined(separator: " ")) needs a key. Shortcut unchanged.", style: .error)
+            cancelEditing()
+            return
+        }
+        guard !otherBinding.conflicts(with: captured) else {
+            rejectConflict(with: captured)
+            cancelEditing()
+            return
+        }
+        stopRecording()
+        self.draft = nil
+        isEditing = false
+        if captured != binding {
+            binding = captured
+            ToastCenter.shared.show(captured.isSet ? "Shortcut saved" : "Shortcut cleared", style: .success)
+        }
+        coordinator.registerHotkey()
+    }
+
+    private func rejectConflict(with captured: HotkeyBinding) {
+        let other = HotkeyConversion.displayTokens(for: otherBinding).joined(separator: " ")
+        ToastCenter.shared.show("Conflicts with \(conflictLabel) (\(other)). Choose a different key.", style: .error)
     }
 
     private func rejectShortcut(_ keys: String) {
@@ -1359,6 +1482,11 @@ private struct HotkeyRecorderRow: View {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             if event.keyCode == UInt16(kVK_Escape) {
                 cancelEditing()
+                return nil
+            }
+
+            if event.keyCode == UInt16(kVK_Delete) || event.keyCode == UInt16(kVK_ForwardDelete) {
+                backspace()
                 return nil
             }
 
@@ -1548,34 +1676,52 @@ private final class FnKeyCapture {
 
 private struct ShortcutCaptureField: View {
     let tokens: [String]
-    let placeholder: String?
     let isActive: Bool
     let showsPencil: Bool
 
     var body: some View {
         HStack(spacing: 8) {
-            if let placeholder {
-                Text(placeholder)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+            ForEach(tokens, id: \.self) { token in
+                ShortcutKeycap(text: token)
+            }
+
+            // Both trailing slots stay reserved so entering and leaving edit mode never reflows the row.
+            if isActive {
+                CaretBar()
             } else {
-                ForEach(tokens, id: \.self) { token in
-                    ShortcutKeycap(text: token)
-                }
+                Color.clear.frame(width: CaretBar.width, height: CaretBar.height)
             }
 
-            if showsPencil {
-                Spacer(minLength: 12)
+            Spacer(minLength: 12)
 
-                Image(systemName: "pencil")
-                    .font(.system(size: 13, weight: .semibold))  // ds-allow: icon
-                    .foregroundStyle(Color.secondary)
-            }
+            Image(systemName: "pencil")
+                .font(.system(size: 13, weight: .semibold))  // ds-allow: icon
+                .foregroundStyle(Color.secondary)
+                .opacity(showsPencil ? 1 : 0)
         }
         .padding(.horizontal, 8)
-        .frame(minWidth: 188, maxWidth: 280, alignment: placeholder == nil ? .trailing : .center)
+        .frame(minWidth: 188, maxWidth: 280, alignment: .trailing)
         .fixedSize(horizontal: true, vertical: false)
         .fieldSurface(focused: isActive)
+    }
+}
+
+private struct CaretBar: View {
+    static let width: CGFloat = 2
+    static let height: CGFloat = 18
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var dim = false
+
+    var body: some View {
+        Capsule(style: .continuous)
+            .fill(Color.accentColor)
+            .frame(width: Self.width, height: Self.height)
+            .opacity(dim ? 0.15 : 1)
+            .onAppear {
+                guard !reduceMotion else { return }
+                withAnimation(Motion.caretBlink) { dim = true }
+            }
     }
 }
 

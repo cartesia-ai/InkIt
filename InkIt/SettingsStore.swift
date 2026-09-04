@@ -9,6 +9,9 @@ enum HotkeyBinding: Equatable {
     case carbon(keyCode: UInt32, modifiers: UInt32)
     case fn
     case modifierKey(keyCode: UInt32)
+    case none
+
+    var isSet: Bool { self != .none }
 
     var isValidShortcut: Bool {
         guard case .carbon(let keyCode, let modifiers) = self else { return true }
@@ -58,6 +61,7 @@ enum HotkeyBinding: Equatable {
     ]
 
     func conflicts(with other: HotkeyBinding) -> Bool {
+        if self == .none || other == .none { return false }
         if self == other { return true }
         switch (self, other) {
         case (.modifierKey(let code), .carbon(_, let modifiers)),
@@ -359,6 +363,8 @@ final class SettingsStore: ObservableObject {
             return "🌐 fn"
         case .modifierKey(let kc):
             return HotkeyConversion.modifierLabel(for: kc)
+        case .none:
+            return ""
         }
     }
 
@@ -416,7 +422,7 @@ final class SettingsStore: ObservableObject {
         } else {
             self.notchHorizontalPosition = Self.clampedNotchPosition(defaults.double(forKey: Keys.notchHorizontalPosition))
         }
-        Self.migrateDictationModeIfNeeded(in: defaults)
+        Self.migrateHotkeysIfNeeded(in: defaults)
         self.hotkey = Self.loadBinding(kind: Keys.hotkeyKind, keyCode: Keys.hotkeyKeyCode,
                                       modifiers: Keys.hotkeyModifiers, fallback: .fn, in: defaults)
         self.handsFreeHotkey = Self.loadBinding(kind: Keys.handsFreeHotkeyKind, keyCode: Keys.handsFreeHotkeyKeyCode,
@@ -428,28 +434,47 @@ final class SettingsStore: ObservableObject {
         }
     }
 
-    private static func migrateDictationModeIfNeeded(in defaults: UserDefaults) {
-        guard let dictationMode = defaults.string(forKey: Keys.dictationMode) else { return }
+    /// Runs once, before either binding loads. Existing installs only get a key for the mode they
+    /// were already using; the other mode stays empty until they opt into it. Fresh installs get
+    /// both defaults.
+    private static func migrateHotkeysIfNeeded(in defaults: UserDefaults) {
+        let legacyMode = defaults.string(forKey: Keys.dictationMode)
         defer { defaults.removeObject(forKey: Keys.dictationMode) }
+        guard defaults.string(forKey: Keys.handsFreeHotkeyKind) == nil else { return }
 
         let existingHotkey = loadBinding(kind: Keys.hotkeyKind, keyCode: Keys.hotkeyKeyCode,
                                          modifiers: Keys.hotkeyModifiers, fallback: .fn, in: defaults)
+        let isExistingInstall = defaults.bool(forKey: Keys.hasCompletedOnboarding)
+            || defaults.string(forKey: Keys.hotkeyKind) != nil
 
-        if dictationMode == "toggle" {
-            persist(existingHotkey, kind: Keys.handsFreeHotkeyKind, keyCode: Keys.handsFreeHotkeyKeyCode,
-                   modifiers: Keys.handsFreeHotkeyModifiers, in: defaults)
-            let defaultHoldToTalk: HotkeyBinding = existingHotkey == .fn
-                ? .modifierKey(keyCode: UInt32(kVK_RightCommand))
-                : .fn
-            persist(defaultHoldToTalk, kind: Keys.hotkeyKind, keyCode: Keys.hotkeyKeyCode,
-                   modifiers: Keys.hotkeyModifiers, in: defaults)
-        } else {
-            let defaultHandsFree: HotkeyBinding = existingHotkey.conflicts(with: .modifierKey(keyCode: UInt32(kVK_RightCommand)))
-                ? .modifierKey(keyCode: UInt32(kVK_RightOption))
-                : .modifierKey(keyCode: UInt32(kVK_RightCommand))
-            persist(defaultHandsFree, kind: Keys.handsFreeHotkeyKind, keyCode: Keys.handsFreeHotkeyKeyCode,
-                   modifiers: Keys.handsFreeHotkeyModifiers, in: defaults)
+        let holdToTalk: HotkeyBinding
+        let handsFree: HotkeyBinding
+        switch (legacyMode, isExistingInstall) {
+        case ("toggle", _):
+            holdToTalk = .none
+            handsFree = existingHotkey
+        case (_, true):
+            holdToTalk = existingHotkey
+            handsFree = .none
+        case (_, false):
+            holdToTalk = existingHotkey
+            handsFree = handsFreeDefault(avoiding: existingHotkey)
         }
+
+        persist(holdToTalk, kind: Keys.hotkeyKind, keyCode: Keys.hotkeyKeyCode,
+               modifiers: Keys.hotkeyModifiers, in: defaults)
+        persist(handsFree, kind: Keys.handsFreeHotkeyKind, keyCode: Keys.handsFreeHotkeyKeyCode,
+               modifiers: Keys.handsFreeHotkeyModifiers, in: defaults)
+    }
+
+    private static func handsFreeDefault(avoiding hotkey: HotkeyBinding) -> HotkeyBinding {
+        let candidates: [HotkeyBinding] = [
+            .modifierKey(keyCode: UInt32(kVK_RightCommand)),
+            .modifierKey(keyCode: UInt32(kVK_RightOption)),
+            .modifierKey(keyCode: UInt32(kVK_RightControl)),
+            .fn
+        ]
+        return candidates.first { !$0.conflicts(with: hotkey) } ?? .none
     }
 
     private static func loadBinding(kind: String, keyCode: String, modifiers: String,
@@ -468,6 +493,8 @@ final class SettingsStore: ObservableObject {
             return .modifierKey(keyCode: UInt32(storedKey ?? kVK_Control))
         case "fn":
             return .fn
+        case "none":
+            return .none
         default:
             return fallback
         }
@@ -485,6 +512,8 @@ final class SettingsStore: ObservableObject {
         case .modifierKey(let kc):
             defaults.set("modifier", forKey: kind)
             defaults.set(Int(kc), forKey: keyCode)
+        case .none:
+            defaults.set("none", forKey: kind)
         }
     }
 
