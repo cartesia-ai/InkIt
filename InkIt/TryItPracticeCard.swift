@@ -188,17 +188,23 @@ struct TryItPracticeCard: View {
                     .font(.system(size: 19))  // ds-allow: icon
                     .foregroundStyle(.primary)
             }
-            HStack(spacing: 7) {
-                Text("Hold")
-                Text(settings.hotkeyDisplayString)
-                    .font(.system(size: 14, weight: .medium))  // ds-allow: inline keycap
-                    .foregroundStyle(Color.accentColor)
-                    .padding(.horizontal, 9).padding(.vertical, 3)
-                    .background(RoundedRectangle(cornerRadius: Radius.keycap, style: .continuous).fill(Color.accentSoft))
-                Text("to talk")
+            if settings.hotkey.isSet {
+                HStack(spacing: 7) {
+                    Text("Hold")
+                    Text(settings.hotkeyDisplayString)
+                        .font(.system(size: 14, weight: .medium))  // ds-allow: inline keycap
+                        .foregroundStyle(Color.accentColor)
+                        .padding(.horizontal, 9).padding(.vertical, 3)
+                        .background(RoundedRectangle(cornerRadius: Radius.keycap, style: .continuous).fill(Color.accentSoft))
+                    Text("to talk")
+                }
+                .font(.inkReadingEmphasized)
+                .foregroundStyle(.primary)
+            } else {
+                Text("Set a Hold to talk shortcut in Settings")
+                    .font(.inkReadingEmphasized)
+                    .foregroundStyle(.primary)
             }
-            .font(.inkReadingEmphasized)
-            .foregroundStyle(.primary)
         }
         .padding(.horizontal, 26).padding(.vertical, 13)
         .background(

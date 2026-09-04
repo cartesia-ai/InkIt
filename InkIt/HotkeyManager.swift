@@ -5,19 +5,15 @@ import Carbon.HIToolbox
 final class HotkeyManager {
     var onPress: (() -> Void)?
     var onRelease: (() -> Void)?
+    var onHandsFreePress: (() -> Void)?
 
     private var hotKeyRef: EventHotKeyRef?
+    private var handsFreeHotKeyRef: EventHotKeyRef?
     private var eventHandler: EventHandlerRef?
     private let hotKeyID = EventHotKeyID(signature: OSType(0x494E4B53), id: 1)
+    private let handsFreeHotKeyID = EventHotKeyID(signature: OSType(0x494E4B53), id: 2)
 
-    private var fnEventTap: CFMachPort?
-    private var fnRunLoopSource: CFRunLoopSource?
-    private var fnIsDown = false
-    private var fnTapThread: Thread?
-    private var fnTapRunLoop: CFRunLoop?
-
-    private var fnGlobalMonitor: Any?
-    private var fnLocalMonitor: Any?
+    private let fnKey: FnKeyManager
 
     private var modEventTap: CFMachPort?
     private var modRunLoopSource: CFRunLoopSource?
@@ -25,11 +21,19 @@ final class HotkeyManager {
     private var modTapRunLoop: CFRunLoop?
     private var modGlobalMonitor: Any?
     private var modLocalMonitor: Any?
-    private var modIsDown = false
-    private var modKeyCode: Int64 = 0
-    private var modMask: CGEventFlags = []
+    private var primaryModKeyCode: Int64?
+    private var primaryModIsDown = false
+    private var handsFreeModKeyCode: Int64?
+    private var handsFreeModIsDown = false
+    private var handsFreeModDownAt: CFAbsoluteTime = 0
+    private var handsFreeModChorded = false
 
-    init() {
+    /// A bare modifier only counts as a hands-free tap if nothing else was pressed with it and it
+    /// was released this quickly, so ⌘←, ⌘C and friends don't start a recording.
+    private static let handsFreeTapWindow: CFTimeInterval = 0.4
+
+    init(fnKey: FnKeyManager) {
+        self.fnKey = fnKey
         installCarbonHandler()
     }
 
@@ -38,15 +42,47 @@ final class HotkeyManager {
         if let h = eventHandler { RemoveEventHandler(h) }
     }
 
-    func register(binding: HotkeyBinding) {
+    /// `hotkey` and `handsFree` register fully independently; conflicts(with:) keeps them from colliding.
+    func register(hotkey: HotkeyBinding, handsFree: HotkeyBinding) {
         unregister()
-        switch binding {
+
+        switch hotkey {
         case .carbon(let keyCode, let modifiers):
-            registerCarbon(keyCode: keyCode, modifiers: modifiers)
+            var ref: EventHotKeyRef?
+            let status = RegisterEventHotKey(keyCode, modifiers, hotKeyID, GetApplicationEventTarget(), 0, &ref)
+            if status == noErr {
+                hotKeyRef = ref
+            } else {
+                NSLog("InkIt: RegisterEventHotKey failed (%d)", status)
+            }
         case .fn:
-            registerFn()
+            fnKey.onHoldPress = { [weak self] in self?.onPress?() }
+            fnKey.onHoldRelease = { [weak self] in self?.onRelease?() }
         case .modifierKey(let keyCode):
-            registerModifier(keyCode: keyCode)
+            primaryModKeyCode = Int64(keyCode)
+        case .none:
+            break
+        }
+
+        switch handsFree {
+        case .carbon(let keyCode, let modifiers):
+            var ref: EventHotKeyRef?
+            let status = RegisterEventHotKey(keyCode, modifiers, handsFreeHotKeyID, GetApplicationEventTarget(), 0, &ref)
+            if status == noErr {
+                handsFreeHotKeyRef = ref
+            } else {
+                NSLog("InkIt: RegisterEventHotKey (hands-free) failed (%d)", status)
+            }
+        case .fn:
+            fnKey.onHoldPress = { [weak self] in self?.onHandsFreePress?() }
+        case .modifierKey(let keyCode):
+            handsFreeModKeyCode = Int64(keyCode)
+        case .none:
+            break
+        }
+
+        if primaryModKeyCode != nil || handsFreeModKeyCode != nil {
+            if !installModifierEventTap() { installModifierPassiveMonitor() }
         }
     }
 
@@ -55,22 +91,12 @@ final class HotkeyManager {
             UnregisterEventHotKey(ref)
             hotKeyRef = nil
         }
-        if let tap = fnEventTap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-            if let runLoop = fnTapRunLoop {
-                if let src = fnRunLoopSource {
-                    CFRunLoopRemoveSource(runLoop, src, .commonModes)
-                }
-                CFRunLoopStop(runLoop)
-            }
-            fnEventTap = nil
-            fnRunLoopSource = nil
-            fnTapRunLoop = nil
-            fnTapThread = nil
+        if let ref = handsFreeHotKeyRef {
+            UnregisterEventHotKey(ref)
+            handsFreeHotKeyRef = nil
         }
-        if let m = fnGlobalMonitor { NSEvent.removeMonitor(m); fnGlobalMonitor = nil }
-        if let m = fnLocalMonitor { NSEvent.removeMonitor(m); fnLocalMonitor = nil }
-        fnIsDown = false
+        fnKey.onHoldPress = nil
+        fnKey.onHoldRelease = nil
         if let tap = modEventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
             if let runLoop = modTapRunLoop {
@@ -84,18 +110,10 @@ final class HotkeyManager {
         }
         if let m = modGlobalMonitor { NSEvent.removeMonitor(m); modGlobalMonitor = nil }
         if let m = modLocalMonitor { NSEvent.removeMonitor(m); modLocalMonitor = nil }
-        modIsDown = false
-    }
-
-    private func registerCarbon(keyCode: UInt32, modifiers: UInt32) {
-        var ref: EventHotKeyRef?
-        let status = RegisterEventHotKey(keyCode, modifiers, hotKeyID,
-                                         GetApplicationEventTarget(), 0, &ref)
-        if status == noErr {
-            hotKeyRef = ref
-        } else {
-            NSLog("InkIt: RegisterEventHotKey failed (%d)", status)
-        }
+        primaryModKeyCode = nil
+        primaryModIsDown = false
+        handsFreeModKeyCode = nil
+        handsFreeModIsDown = false
     }
 
     private func installCarbonHandler() {
@@ -107,111 +125,51 @@ final class HotkeyManager {
         InstallEventHandler(GetApplicationEventTarget(), { _, eventRef, userData in
             guard let eventRef, let userData else { return noErr }
             let manager = Unmanaged<HotkeyManager>.fromOpaque(userData).takeUnretainedValue()
+            var hkID = EventHotKeyID()
+            GetEventParameter(eventRef, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
+                              nil, MemoryLayout<EventHotKeyID>.size, nil, &hkID)
+            let isHandsFree = hkID.id == 2
             let kind = GetEventKind(eventRef)
             if kind == UInt32(kEventHotKeyPressed) {
-                DispatchQueue.main.async { manager.onPress?() }
-            } else if kind == UInt32(kEventHotKeyReleased) {
+                DispatchQueue.main.async { isHandsFree ? manager.onHandsFreePress?() : manager.onPress?() }
+            } else if kind == UInt32(kEventHotKeyReleased), !isHandsFree {
                 DispatchQueue.main.async { manager.onRelease?() }
             }
             return noErr
         }, 2, &spec, selfPtr, &eventHandler)
     }
 
-    private func registerFn() {
-        if installFnEventTap() { return }
-        installFnPassiveMonitor()
-    }
-
-    private func installFnEventTap() -> Bool {
-        let mask: CGEventMask = (1 << CGEventType.flagsChanged.rawValue)
-        let selfPtr = Unmanaged.passUnretained(self).toOpaque()
-
-        let callback: CGEventTapCallBack = { _, type, event, userInfo in
-            guard let userInfo else { return Unmanaged.passUnretained(event) }
-            let manager = Unmanaged<HotkeyManager>.fromOpaque(userInfo).takeUnretainedValue()
-
-            if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-                if let tap = manager.fnEventTap { CGEvent.tapEnable(tap: tap, enable: true) }
-                return Unmanaged.passUnretained(event)
-            }
-
-            guard type == .flagsChanged else { return Unmanaged.passUnretained(event) }
-
-            guard event.getIntegerValueField(.keyboardEventKeycode) == Int64(kVK_Function) else {
-                return Unmanaged.passUnretained(event)
-            }
-
-            let fnDown = event.flags.contains(.maskSecondaryFn)
-            if fnDown != manager.fnIsDown {
-                manager.fnIsDown = fnDown
-                if fnDown {
-                    DispatchQueue.main.async { manager.onPress?() }
-                } else {
-                    DispatchQueue.main.async { manager.onRelease?() }
-                }
-                return nil
-            }
-            return Unmanaged.passUnretained(event)
-        }
-
-        guard let tap = CGEvent.tapCreate(
-            tap: .cghidEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: mask,
-            callback: callback,
-            userInfo: selfPtr
-        ) else {
-            return false
-        }
-
-        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        fnEventTap = tap
-        fnRunLoopSource = source
-
-        let thread = Thread { [weak self] in
-            let runLoop = CFRunLoopGetCurrent()
-            self?.fnTapRunLoop = runLoop
-            CFRunLoopAddSource(runLoop, source, .commonModes)
-            CGEvent.tapEnable(tap: tap, enable: true)
-            CFRunLoopRun()
-        }
-        thread.name = "com.cartesia.InkIt.FnEventTap"
-        thread.qualityOfService = .userInteractive
-        fnTapThread = thread
-        thread.start()
-        return true
-    }
-
-    private func installFnPassiveMonitor() {
-        let handler: (NSEvent) -> Void = { [weak self] event in
-            guard let self, event.keyCode == UInt16(kVK_Function) else { return }
-            let fnDown = event.modifierFlags.contains(.function)
-            if fnDown && !self.fnIsDown {
-                self.fnIsDown = true
-                DispatchQueue.main.async { self.onPress?() }
-            } else if !fnDown && self.fnIsDown {
-                self.fnIsDown = false
-                DispatchQueue.main.async { self.onRelease?() }
+    private func modifierTransition(keyCode: Int64, isDown: Bool, otherModifiersDown: Bool = false) {
+        if keyCode == primaryModKeyCode, isDown != primaryModIsDown {
+            primaryModIsDown = isDown
+            if isDown {
+                DispatchQueue.main.async { [weak self] in self?.onPress?() }
+            } else {
+                DispatchQueue.main.async { [weak self] in self?.onRelease?() }
             }
         }
-        fnGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { handler($0) }
-        fnLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
-            handler(event)
-            return event
+        if keyCode == handsFreeModKeyCode {
+            if isDown, !handsFreeModIsDown {
+                handsFreeModIsDown = true
+                handsFreeModChorded = otherModifiersDown
+                handsFreeModDownAt = CFAbsoluteTimeGetCurrent()
+            } else if !isDown, handsFreeModIsDown {
+                handsFreeModIsDown = false
+                let held = CFAbsoluteTimeGetCurrent() - handsFreeModDownAt
+                guard !handsFreeModChorded, held < Self.handsFreeTapWindow else { return }
+                DispatchQueue.main.async { [weak self] in self?.onHandsFreePress?() }
+            }
         }
     }
 
-    private func registerModifier(keyCode: UInt32) {
-        modKeyCode = Int64(keyCode)
-        modMask = Self.cgFlag(forModifierKeyCode: keyCode)
-        modIsDown = false
-        if installModifierEventTap() { return }
-        installModifierPassiveMonitor()
+    private func noteChordActivity(keyCode: Int64) {
+        guard handsFreeModIsDown, keyCode != handsFreeModKeyCode else { return }
+        handsFreeModChorded = true
     }
 
     private func installModifierEventTap() -> Bool {
         let mask: CGEventMask = (1 << CGEventType.flagsChanged.rawValue)
+            | (1 << CGEventType.keyDown.rawValue)
         let selfPtr = Unmanaged.passUnretained(self).toOpaque()
 
         let callback: CGEventTapCallBack = { _, type, event, userInfo in
@@ -223,19 +181,17 @@ final class HotkeyManager {
                 return Unmanaged.passUnretained(event)
             }
 
-            guard type == .flagsChanged else { return Unmanaged.passUnretained(event) }
-
-            if event.getIntegerValueField(.keyboardEventKeycode) == manager.modKeyCode {
-                let isDown = event.flags.contains(manager.modMask)
-                if isDown != manager.modIsDown {
-                    manager.modIsDown = isDown
-                    if isDown {
-                        DispatchQueue.main.async { manager.onPress?() }
-                    } else {
-                        DispatchQueue.main.async { manager.onRelease?() }
-                    }
-                }
+            let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+            guard type == .flagsChanged,
+                  keyCode == manager.primaryModKeyCode || keyCode == manager.handsFreeModKeyCode else {
+                manager.noteChordActivity(keyCode: keyCode)
+                return Unmanaged.passUnretained(event)
             }
+            let own = HotkeyManager.cgFlag(forModifierKeyCode: UInt32(keyCode))
+            let isDown = event.flags.contains(own)
+            let others: CGEventFlags = [.maskCommand, .maskAlternate, .maskControl, .maskShift]
+            let otherModifiersDown = !event.flags.intersection(others).subtracting(own).isEmpty
+            manager.modifierTransition(keyCode: keyCode, isDown: isDown, otherModifiersDown: otherModifiersDown)
             return Unmanaged.passUnretained(event)
         }
 
@@ -269,21 +225,22 @@ final class HotkeyManager {
     }
 
     private func installModifierPassiveMonitor() {
-        let nsMask = HotkeyConversion.nsModifierFlag(for: UInt32(modKeyCode))
         let handler: (NSEvent) -> Void = { [weak self] event in
-            guard let self, event.keyCode == UInt16(self.modKeyCode) else { return }
-            let isDown = event.modifierFlags.contains(nsMask)
-            if isDown != self.modIsDown {
-                self.modIsDown = isDown
-                if isDown {
-                    DispatchQueue.main.async { self.onPress?() }
-                } else {
-                    DispatchQueue.main.async { self.onRelease?() }
-                }
+            guard let self else { return }
+            let keyCode = Int64(event.keyCode)
+            guard event.type == .flagsChanged,
+                  keyCode == self.primaryModKeyCode || keyCode == self.handsFreeModKeyCode else {
+                self.noteChordActivity(keyCode: keyCode)
+                return
             }
+            let mask = HotkeyConversion.nsModifierFlag(for: UInt32(keyCode))
+            let isDown = event.modifierFlags.contains(mask)
+            let others: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
+            let otherModifiersDown = !event.modifierFlags.intersection(others).subtracting(mask).isEmpty
+            self.modifierTransition(keyCode: keyCode, isDown: isDown, otherModifiersDown: otherModifiersDown)
         }
-        modGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { handler($0) }
-        modLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
+        modGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { handler($0) }
+        modLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { event in
             handler(event)
             return event
         }
@@ -369,19 +326,25 @@ enum HotkeyConversion {
 
     static func displayTokens(for binding: HotkeyBinding) -> [String] {
         switch binding {
+        case .none:
+            return []
         case .fn:
             return ["🌐 fn"]
         case .modifierKey(let keyCode):
             return [modifierLabel(for: keyCode)]
         case .carbon(let keyCode, let modifiers):
-            var tokens: [String] = []
-            if modifiers & UInt32(controlKey) != 0 { tokens.append("⌃ Ctrl") }
-            if modifiers & UInt32(optionKey) != 0 { tokens.append("⌥ Opt") }
-            if modifiers & UInt32(shiftKey) != 0 { tokens.append("⇧ Shift") }
-            if modifiers & UInt32(cmdKey) != 0 { tokens.append("⌘ Cmd") }
-            tokens.append(tokenName(for: keyCode))
-            return tokens
+            return displayTokens(modifiers: modifiers, keyCode: keyCode)
         }
+    }
+
+    static func displayTokens(modifiers: UInt32, keyCode: UInt32?) -> [String] {
+        var tokens: [String] = []
+        if modifiers & UInt32(controlKey) != 0 { tokens.append("⌃ Ctrl") }
+        if modifiers & UInt32(optionKey) != 0 { tokens.append("⌥ Opt") }
+        if modifiers & UInt32(shiftKey) != 0 { tokens.append("⇧ Shift") }
+        if modifiers & UInt32(cmdKey) != 0 { tokens.append("⌘ Cmd") }
+        if let keyCode { tokens.append(tokenName(for: keyCode)) }
+        return tokens
     }
 
     private static func tokenName(for keyCode: UInt32) -> String {

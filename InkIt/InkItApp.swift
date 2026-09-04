@@ -110,6 +110,7 @@ enum Motion {
     static let expand: Animation = .easeOut(duration: 0.16)
     static let step: Animation = .spring(response: 0.45, dampingFraction: 1)
     static let rotate: Animation = .easeInOut(duration: 0.5)
+    static let caretBlink: Animation = .easeInOut(duration: 0.55).repeatForever(autoreverses: true)
 }
 
 enum Hover {
@@ -435,7 +436,9 @@ struct MainWindowView: View {
             .overlay { UpdateModal() }
             .overlay { settingsModal }
             .overlay { deleteConfirmModal }
-            .overlay(alignment: .bottomTrailing) { ToastOverlay() }
+            .overlay(alignment: .bottomTrailing) {
+                if !showSettings { ToastOverlay() }
+            }
             .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
                 openSettings(pane: .general)
             }
@@ -450,6 +453,7 @@ struct MainWindowView: View {
         if showSettings {
             InkModal(onDismiss: dismissSettings) {
                 SettingsPopover(pane: $settingsPane, onClose: dismissSettings)
+                    .overlay(alignment: .bottomTrailing) { ToastOverlay() }
             }
         }
     }
@@ -615,7 +619,7 @@ struct RotatingDictateHeader: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Text(settings.dictationModeVerb)
+            Text("Hold")
                 .foregroundStyle(.primary)
             HotkeyCaps(tokens: tokens)
                 .font(.inkHeroKeycap)
@@ -693,7 +697,9 @@ struct HomeTryItPanel: View {
 
             TryItPracticeCard()
 
-            Text("Or \(settings.dictationModeVerb.lowercased()) \(settings.hotkeyDisplayString) in any app and start talking.")
+            Text(settings.hotkey.isSet
+                 ? "Or hold \(settings.hotkeyDisplayString) in any app and start talking."
+                 : "Set a Hold to talk shortcut in Settings to dictate in any app.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }

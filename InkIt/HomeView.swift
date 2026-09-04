@@ -73,8 +73,10 @@ struct HomeView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
-                RotatingDictateHeader(tokens: HotkeyConversion.displayTokens(for: settings.hotkey))
-                    .padding(.bottom, 32)
+                if settings.hotkey.isSet {
+                    RotatingDictateHeader(tokens: HotkeyConversion.displayTokens(for: settings.hotkey))
+                        .padding(.bottom, 32)
+                }
                 statBand
                     .padding(.bottom, 20)
                 if showPolishNudge {
