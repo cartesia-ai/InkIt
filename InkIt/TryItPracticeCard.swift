@@ -14,7 +14,10 @@ struct TryItPracticeCard: View {
     @State private var hasLogged = false
     @FocusState private var boxFocused: Bool
 
-    private var isRecording: Bool { coordinator.state == .recording }
+    private var isRecording: Bool {
+        if case .recording = coordinator.state { return true }
+        return false
+    }
     private var isFinalizing: Bool {
         switch coordinator.state {
         case .finalizing, .rewriting, .pasting: return true

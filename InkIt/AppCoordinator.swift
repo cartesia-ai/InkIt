@@ -2,9 +2,14 @@ import Foundation
 import AppKit
 import Combine
 
+enum RecordingMode: Equatable {
+    case held
+    case handsFree
+}
+
 enum DictationState: Equatable {
     case idle
-    case recording
+    case recording(RecordingMode)
     case finalizing
     case rewriting
     case pasting
@@ -201,12 +206,12 @@ final class AppCoordinator: ObservableObject {
     }
 
     private func handleHotkeyPress() {
-        if handsFreeSessionActive {
+        if case .recording(.handsFree) = state {
             stopDictation()
             return
         }
         isHotkeyHeld = true
-        startDictation()
+        startDictation(mode: .held)
     }
 
     private func handleHotkeyRelease() {
@@ -219,17 +224,14 @@ final class AppCoordinator: ObservableObject {
     }
 
     private func handleHandsFreeToggle() {
-        if handsFreeSessionActive {
+        if case .recording(.handsFree) = state {
             stopDictation()
             return
         }
-        startDictation()
-        if case .recording = state {
-            handsFreeSessionActive = true
-        }
+        startDictation(mode: .handsFree)
     }
 
-    func startDictation() {
+    func startDictation(mode: RecordingMode) {
         switch state {
         case .idle, .heldInHistory, .error: break
         default: return
@@ -258,7 +260,7 @@ final class AppCoordinator: ObservableObject {
             return
         }
 
-        state = .recording
+        state = .recording(mode)
         recordingStartTime = .now()
         audioReady = false
         lastError = nil
@@ -439,7 +441,6 @@ final class AppCoordinator: ObservableObject {
 
     func stopDictation() {
         guard case .recording = state else { return }
-        handsFreeSessionActive = false
         releaseTime = .now()
         state = .finalizing
         if settings.playFeedbackSounds { FeedbackSoundPlayer.shared.playStop() }
@@ -520,7 +521,6 @@ final class AppCoordinator: ObservableObject {
     }
 
     private var isHotkeyHeld = false
-    private var handsFreeSessionActive = false
 
     private var errorDismissWork: DispatchWorkItem?
 
