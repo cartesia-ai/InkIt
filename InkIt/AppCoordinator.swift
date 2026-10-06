@@ -76,6 +76,10 @@ final class AppCoordinator: ObservableObject {
         audio.onReady = { [weak self] in
             Task { @MainActor in self?.audioReady = true }
         }
+        settings.$preferredInputDeviceUID
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] uid in self?.audio.preferredDeviceUID = uid }
+            .store(in: &cancellables)
         refreshHUD()
         settings.$hasCompletedOnboarding
             .receive(on: DispatchQueue.main)
@@ -428,7 +432,6 @@ final class AppCoordinator: ObservableObject {
         client.connect()
 
         do {
-            audio.preferredDeviceUID = settings.preferredInputDeviceUID
             try audio.start { [weak self] data in
                 self?.client?.sendAudio(data)
             }
