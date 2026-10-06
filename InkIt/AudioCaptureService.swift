@@ -65,12 +65,12 @@ final class AudioCaptureService {
 
     private var hasSignaledReady = false
     private var readyFallback: DispatchWorkItem?
-    private static let readyLevelThreshold: Float = 0.03
-    private let readyFallbackDelay: TimeInterval = 0.6
+    private let readyFallbackDelay: TimeInterval = 2.0
 
     private var deviceListener: AudioObjectPropertyListenerBlock?
     private var workspaceObservers: [NSObjectProtocol] = []
     private var appObservers: [NSObjectProtocol] = []
+
 
     var preferredDeviceUID: String? {
         didSet {
@@ -137,13 +137,16 @@ final class AudioCaptureService {
             + "rate=\(Int(inputUnit.format.sampleRate)) channels=\(inputUnit.format.channelCount)"
         )
 
-        let fallback = DispatchWorkItem { [weak self] in self?.signalReadyIfNeeded() }
+        let fallback = DispatchWorkItem { [weak self] in
+            DebugLog.info("AudioCapture: no live signal after \(self?.readyFallbackDelay ?? 0)s, marking ready")
+            self?.signalReadyIfNeeded()
+        }
         readyFallback = fallback
         DispatchQueue.main.asyncAfter(deadline: .now() + readyFallbackDelay, execute: fallback)
     }
 
     private func signalReadyIfNeeded() {
-        guard !hasSignaledReady else { return }
+        guard isRunning, !hasSignaledReady else { return }
         hasSignaledReady = true
         readyFallback?.cancel()
         readyFallback = nil
@@ -184,8 +187,20 @@ final class AudioCaptureService {
     }
 
     private func targetDeviceID() -> AudioDeviceID? {
-        let pinnedID = preferredDeviceUID.flatMap { AudioDevices.deviceID(forUID: $0) }
-        return pinnedID ?? AudioDevices.defaultInputDeviceID()
+        if let pinnedID = preferredDeviceUID.flatMap({ AudioDevices.deviceID(forUID: $0) }) {
+            return pinnedID
+        }
+        guard let defaultID = AudioDevices.defaultInputDeviceID() else { return nil }
+        guard AudioDevices.isBluetooth(defaultID),
+              let outputID = AudioDevices.defaultOutputDeviceID(),
+              AudioDevices.isBluetooth(outputID),
+              AudioDevices.isOtherAppPlaying(to: outputID),
+              let builtInID = AudioDevices.builtInInputDeviceID(),
+              !AudioDevices.isLidClosed() else {
+            return defaultID
+        }
+        DebugLog.info("AudioCapture: Bluetooth playback active, using built-in mic device=\(builtInID)")
+        return builtInID
     }
 
     private func configureIfNeeded() throws {
@@ -286,9 +301,10 @@ final class AudioCaptureService {
         queue.async { [weak self] in
             guard let self, let converter = self.converter else { return }
             let level = Self.peakLevel(buffer)
+            let isLive = Self.hasSignal(buffer)
             DispatchQueue.main.async {
                 self.onLevel?(level)
-                if level > Self.readyLevelThreshold { self.signalReadyIfNeeded() }
+                if isLive { self.signalReadyIfNeeded() }
             }
             let data = converter.convert(buffer: buffer)
             if !data.isEmpty {
@@ -351,6 +367,18 @@ final class AudioCaptureService {
         appObservers.forEach { NotificationCenter.default.removeObserver($0) }
         workspaceObservers.removeAll()
         appObservers.removeAll()
+    }
+
+    private static func hasSignal(_ buffer: AVAudioPCMBuffer) -> Bool {
+        guard let channelData = buffer.floatChannelData else { return false }
+        let frames = Int(buffer.frameLength)
+        for ch in 0..<Int(buffer.format.channelCount) {
+            let samples = channelData[ch]
+            for i in 0..<frames where samples[i] != 0 {
+                return true
+            }
+        }
+        return false
     }
 
     private static func peakLevel(_ buffer: AVAudioPCMBuffer) -> Float {

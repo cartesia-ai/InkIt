@@ -18,6 +18,7 @@ struct TryItPracticeCard: View {
         if case .recording = coordinator.state { return true }
         return false
     }
+    private var isLive: Bool { isRecording && coordinator.audioReady }
     private var isFinalizing: Bool {
         switch coordinator.state {
         case .finalizing, .rewriting, .pasting: return true
@@ -181,7 +182,7 @@ struct TryItPracticeCard: View {
 
     private var keyCap: some View {
         HStack(spacing: 12) {
-            if isRecording {
+            if isLive {
                 Circle()
                     .fill(Color.recordingAmber)
                     .frame(width: 13, height: 13)
@@ -216,7 +217,7 @@ struct TryItPracticeCard: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: Radius.key, style: .continuous)
-                .stroke(isRecording ? Color.recordingAmber : Color(nsColor: .separatorColor),
+                .stroke(isLive ? Color.recordingAmber : Color(nsColor: .separatorColor),
                         lineWidth: 1.5)
         )
         .scaleEffect(isRecording ? 0.97 : 1)
