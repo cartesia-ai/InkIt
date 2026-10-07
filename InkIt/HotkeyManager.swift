@@ -2,7 +2,6 @@ import Foundation
 import AppKit
 import Carbon.HIToolbox
 
-/// Distinguishes the user's own hotkey from the fixed macro-pad key, which latches on a quick tap.
 enum HotkeyTrigger {
     case configured
     case macroPad
@@ -95,8 +94,6 @@ final class HotkeyManager {
         registerMacroPadKey(hotkey: hotkey, handsFree: handsFree)
     }
 
-    /// Fixed extra trigger for external macro pads, registered alongside the user's own keys.
-    /// Loses to any app that registered F13 first; claiming it outright would need Input Monitoring.
     private func registerMacroPadKey(hotkey: HotkeyBinding, handsFree: HotkeyBinding) {
         guard !UserDefaults.standard.bool(forKey: Self.macroPadDisableKey),
               !Self.userBinding(hotkey, or: handsFree, claims: Self.macroPadKeyCode) else { return }
@@ -110,7 +107,6 @@ final class HotkeyManager {
         }
     }
 
-    /// Only an unmodified binding collides: Carbon holds F13 and ⌘F13 as separate hotkeys.
     private static func userBinding(_ a: HotkeyBinding, or b: HotkeyBinding,
                                     claims keyCode: UInt32) -> Bool {
         [a, b].contains {

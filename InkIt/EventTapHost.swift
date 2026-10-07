@@ -1,9 +1,6 @@
 import Foundation
 import AppKit
 
-/// Owns a CGEventTap and the dedicated thread it must run on. The tap never runs on the main run
-/// loop: a stall there gets the tap killed by the system, which has previously wedged modifier keys
-/// system-wide. Handlers run on the tap thread and return true to swallow the event.
 final class EventTapHost {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?

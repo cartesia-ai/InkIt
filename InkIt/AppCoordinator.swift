@@ -232,8 +232,6 @@ final class AppCoordinator: ObservableObject {
         stopDictation()
     }
 
-    /// A macro-pad key released this fast reads as a tap, not a hold: keep recording until the
-    /// next press instead of closing a recording with no audio in it.
     private static let latchTapWindowNanos: UInt64 = 350_000_000
 
     private func handleHandsFreeToggle() {
