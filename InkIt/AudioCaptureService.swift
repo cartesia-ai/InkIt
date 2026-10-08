@@ -17,6 +17,12 @@ final class AudioCaptureService {
 
     var preferredDeviceUID: String?
 
+    var activeInput: (deviceID: AudioDeviceID, sampleRate: Double)? {
+        guard isRunning else { return nil }
+        let input = engine.inputNode
+        return (input.auAudioUnit.deviceID, input.inputFormat(forBus: 0).sampleRate)
+    }
+
     func start(onChunk: @escaping (Data) -> Void) throws {
         guard !isRunning else { return }
         self.onChunk = onChunk

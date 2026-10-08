@@ -400,6 +400,7 @@ struct MainWindowView: View {
         return pane
     }()
     @State private var showDeleteConfirm = false
+    @State private var reportingEntry: TranscriptHistoryStore.Entry?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -412,6 +413,9 @@ struct MainWindowView: View {
                     HomeView(onOpenSettings: { openSettings(pane: $0) },
                              onRequestDeleteAll: {
                                  withAnimation(Motion.quick) { showDeleteConfirm = true }
+                             },
+                             onReport: { entry in
+                                 withAnimation(Motion.quick) { reportingEntry = entry }
                              })
                 case .insights:
                     InsightsView()
@@ -436,6 +440,7 @@ struct MainWindowView: View {
             .overlay { UpdateModal() }
             .overlay { settingsModal }
             .overlay { deleteConfirmModal }
+            .overlay { reportModal }
             .overlay(alignment: .bottomTrailing) {
                 if !showSettings { ToastOverlay() }
             }
@@ -497,6 +502,20 @@ struct MainWindowView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder private var reportModal: some View {
+        if let entry = reportingEntry {
+            InkModal(onDismiss: dismissReport, dismissOnTapOutside: false) {
+                ReportIssueModal(entry: entry,
+                                 onReported: { history.markReported(entry.id) },
+                                 onClose: dismissReport)
+            }
+        }
+    }
+
+    private func dismissReport() {
+        withAnimation(Motion.quick) { reportingEntry = nil }
     }
 
     private var deleteConfirmMessage: String {
@@ -718,6 +737,9 @@ struct TranscriptHistoryRow: View {
     let failure: TranscriptHistoryStore.PolishFailure?
     let appName: String?
     let copied: Bool
+    var reportable: Bool = false
+    var reported: Bool = false
+    var report: () -> Void = {}
     let copy: () -> Void
     @State private var hovering = false
     @State private var showingDiff = false
@@ -746,7 +768,7 @@ struct TranscriptHistoryRow: View {
                 .padding(.trailing, 16)
 
             trailingControls
-                .frame(width: 88, alignment: .trailing)
+                .frame(width: 120, alignment: .trailing)
                 .padding(.top, 2)
         }
         .padding(.horizontal, 8)
@@ -772,7 +794,9 @@ struct TranscriptHistoryRow: View {
 
     private var trailingControls: some View {
         ZStack(alignment: .trailing) {
-            if let appName, !hovering, !copied {
+            if reported, !hovering, !copied {
+                reportedLabel
+            } else if let appName, !hovering, !copied {
                 Text(appName)
                     .font(.inkCaption)
                     .foregroundStyle(.tertiary)
@@ -791,8 +815,31 @@ struct TranscriptHistoryRow: View {
                 if let latency {
                     timePill(latency).opacity(hovering ? 1 : 0)
                 }
+                if reported {
+                    IconChip(systemName: "flag.fill", fg: Color.accentColor, help: "Reported")
+                        .opacity(hovering ? 1 : 0)
+                } else if reportable {
+                    reportPill.opacity(hovering ? 1 : 0)
+                }
             }
         }
+    }
+
+    private var reportedLabel: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "flag.fill")
+            Text("Reported")
+        }
+        .font(.inkCaption)
+        .foregroundStyle(Color.accentColor)
+        .lineLimit(1)
+    }
+
+    private var reportPill: some View {
+        IconChip(systemName: "flag", fg: .secondary, help: "Report issue")
+            .onTapGesture { report() }
+            .modifier(PointingHandCursor())
+            .accessibilityLabel("Report a transcription issue")
     }
 
     private var polishPill: some View {
