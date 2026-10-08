@@ -304,9 +304,20 @@ final class AppCoordinator: ObservableObject {
             warmRewriter = rewriter
         }
 
+        let keyterms = settings.validatedDictionaryTerms
         let client = CartesiaStreamingClient(apiKey: settings.cartesiaAPIKey,
-                                             keyterms: settings.validatedDictionaryTerms)
+                                             keyterms: keyterms)
         self.client = client
+        let recorder = ClipRecorder()
+        let modelName = client.modelName
+        let mic = MicSnapshot()
+        let startedAt = Date()
+        let diagnostics: (String, String?) -> DictationDiagnostics = { raw, requestID in
+            DictationDiagnostics(requestID: requestID, model: modelName, rawText: raw,
+                                 keyterms: keyterms, micName: mic.name,
+                                 micTransport: mic.transport, micSampleRate: mic.sampleRate,
+                                 startedAt: startedAt)
+        }
 
         client.onTranscriptUpdate = { [weak self, suppressLivePreview] text in
             Task { @MainActor in
@@ -317,7 +328,8 @@ final class AppCoordinator: ObservableObject {
         client.onError = { [weak self] failure in
             Task { @MainActor in self?.handleSTTFailure(failure) }
         }
-        client.onClosed = { [weak self, capturedTargetApp, capturedSnapshot, capturedRecordingStart, routeToOnboardingBox] finalText in
+        client.onClosed = { [weak self, weak client, capturedTargetApp, capturedSnapshot, capturedRecordingStart, routeToOnboardingBox] finalText in
+            let requestID = client?.requestID
             Task { @MainActor in
                 guard let self else { return }
                 let transcriptArrived = DispatchTime.now()
@@ -381,16 +393,10 @@ final class AppCoordinator: ObservableObject {
                             pasteMs: 0
                         )
                     }
-                    self.history.add(
-                        correction.text,
-                        original: correction.original,
-                        latency: latency,
-                        polish: correction.outcome,
-                        failure: correction.failure,
-                        appName: capturedSnapshot?.localizedName,
-                        appBundleID: capturedSnapshot?.bundleIdentifier,
-                        recordingMs: recordingMs
-                    )
+                    self.addToHistory(correction, latency: latency, snapshot: capturedSnapshot,
+                                      recordingMs: recordingMs,
+                                      diagnostics: diagnostics(raw, requestID),
+                                      recorder: recorder)
                     DebugLog.info("onClosed: no editable field focused at release — held in History instead of pasting")
                     self.showHeldInHistoryNotice()
                     return
@@ -412,16 +418,10 @@ final class AppCoordinator: ObservableObject {
                                     pasteMs: Self.elapsedMs(polishFinished, pasteFinished)
                                 )
                             }
-                            self.history.add(
-                                correction.text,
-                                original: correction.original,
-                                latency: latency,
-                                polish: correction.outcome,
-                                failure: correction.failure,
-                                appName: capturedSnapshot?.localizedName,
-                                appBundleID: capturedSnapshot?.bundleIdentifier,
-                                recordingMs: recordingMs
-                            )
+                            self.addToHistory(correction, latency: latency, snapshot: capturedSnapshot,
+                                              recordingMs: recordingMs,
+                                              diagnostics: diagnostics(raw, requestID),
+                                              recorder: recorder)
                             self.state = .idle
                         }
                     }
@@ -433,7 +433,13 @@ final class AppCoordinator: ObservableObject {
 
         do {
             try audio.start { [weak self] data in
+                recorder.append(data)
                 self?.client?.sendAudio(data)
+            }
+            if let input = audio.activeInput {
+                mic.name = DeviceInfo.cleanMicName(AudioDevices.name(of: input.deviceID))
+                mic.transport = AudioDevices.transport(of: input.deviceID)
+                mic.sampleRate = Int(input.sampleRate)
             }
         } catch {
             setError("Audio start failed: \(error.localizedDescription)")
@@ -449,6 +455,31 @@ final class AppCoordinator: ObservableObject {
         if settings.playFeedbackSounds { FeedbackSoundPlayer.shared.playStop() }
         audio.stop()
         client?.finalizeAndClose()
+    }
+
+    private func addToHistory(_ correction: Correction,
+                              latency: TranscriptHistoryStore.Latency?,
+                              snapshot: TargetAppSnapshot?,
+                              recordingMs: Int?,
+                              diagnostics: DictationDiagnostics,
+                              recorder: ClipRecorder) {
+        let pcm = recorder.take()
+        var diagnostics = diagnostics
+        diagnostics.clipMs = pcm.map { ClipStore.durationMs(bytes: $0.count) }
+        let id = history.add(
+            correction.text,
+            original: correction.original,
+            latency: latency,
+            polish: correction.outcome,
+            failure: correction.failure,
+            appName: snapshot?.localizedName,
+            appBundleID: snapshot?.bundleIdentifier,
+            recordingMs: recordingMs,
+            diagnostics: diagnostics
+        )
+        if let id, let pcm {
+            ClipStore.save(pcm: pcm, for: id, keeping: history.entries.map(\.id))
+        }
     }
 
     private struct Correction {
@@ -570,6 +601,12 @@ final class AppCoordinator: ObservableObject {
         guard end.uptimeNanoseconds > start.uptimeNanoseconds else { return 0 }
         return Int((end.uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000)
     }
+}
+
+private final class MicSnapshot {
+    var name: String?
+    var transport: String?
+    var sampleRate: Int?
 }
 
 #if DEBUG
