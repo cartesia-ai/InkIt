@@ -74,8 +74,12 @@ final class AppCoordinator: ObservableObject {
             Task { @MainActor in self?.inputLevel = level }
         }
         audio.onReady = { [weak self] in
-            Task { @MainActor in self?.audioReady = true }
+            Task { @MainActor in self?.handleAudioLive() }
         }
+        settings.$preferredInputDeviceUID
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] uid in self?.audio.preferredDeviceUID = uid }
+            .store(in: &cancellables)
         refreshHUD()
         settings.$hasCompletedOnboarding
             .receive(on: DispatchQueue.main)
@@ -276,7 +280,6 @@ final class AppCoordinator: ObservableObject {
         audioReady = false
         lastError = nil
         liveTranscript = ""
-        if settings.playFeedbackSounds { FeedbackSoundPlayer.shared.playStart() }
         let frontmostApp = NSWorkspace.shared.frontmostApplication
         let ownBundleID = Bundle.main.bundleIdentifier
         let routeToOnboardingBox = routesFinalTranscriptToOnboarding
@@ -439,7 +442,6 @@ final class AppCoordinator: ObservableObject {
         client.connect()
 
         do {
-            audio.preferredDeviceUID = settings.preferredInputDeviceUID
             try audio.start { [weak self] data in
                 self?.client?.sendAudio(data)
             }
@@ -450,11 +452,17 @@ final class AppCoordinator: ObservableObject {
         }
     }
 
+    private func handleAudioLive() {
+        guard case .recording = state, !audioReady else { return }
+        audioReady = true
+        if settings.playFeedbackSounds { FeedbackSoundPlayer.shared.playStart() }
+    }
+
     func stopDictation() {
         guard case .recording = state else { return }
         releaseTime = .now()
         state = .finalizing
-        if settings.playFeedbackSounds { FeedbackSoundPlayer.shared.playStop() }
+        if settings.playFeedbackSounds, audioReady { FeedbackSoundPlayer.shared.playStop() }
         audio.stop()
         client?.finalizeAndClose()
     }
