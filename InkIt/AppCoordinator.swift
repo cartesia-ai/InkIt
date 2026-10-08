@@ -61,11 +61,11 @@ final class AppCoordinator: ObservableObject {
         detectDuplicateRunningCopies()
         startTrackingActiveApps()
         seedLastExternalApp()
-        hotkey.onPress = { [weak self] in
-            Task { @MainActor in self?.handleHotkeyPress() }
+        hotkey.onPress = { [weak self] trigger in
+            Task { @MainActor in self?.handleHotkeyPress(trigger) }
         }
-        hotkey.onRelease = { [weak self] in
-            Task { @MainActor in self?.handleHotkeyRelease() }
+        hotkey.onRelease = { [weak self] trigger in
+            Task { @MainActor in self?.handleHotkeyRelease(trigger) }
         }
         hotkey.onHandsFreePress = { [weak self] in
             Task { @MainActor in self?.handleHandsFreeToggle() }
@@ -205,23 +205,34 @@ final class AppCoordinator: ObservableObject {
         }
     }
 
-    private func handleHotkeyPress() {
+    private func handleHotkeyPress(_ trigger: HotkeyTrigger) {
         if case .recording(.handsFree) = state {
             stopDictation()
             return
         }
         isHotkeyHeld = true
+        macroPadPressedAt = trigger == .macroPad ? .now() : nil
         startDictation(mode: .held)
     }
 
-    private func handleHotkeyRelease() {
+    private func handleHotkeyRelease(_ trigger: HotkeyTrigger) {
         isHotkeyHeld = false
         if case .error = state {
             armErrorDismiss()
             return
         }
+        if trigger == .macroPad, case .recording(.held) = state,
+           let pressedAt = macroPadPressedAt,
+           DispatchTime.now().uptimeNanoseconds - pressedAt.uptimeNanoseconds < Self.latchTapWindowNanos {
+            macroPadPressedAt = nil
+            state = .recording(.handsFree)
+            return
+        }
+        macroPadPressedAt = nil
         stopDictation()
     }
+
+    private static let latchTapWindowNanos: UInt64 = 350_000_000
 
     private func handleHandsFreeToggle() {
         if case .recording(.handsFree) = state {
@@ -521,6 +532,7 @@ final class AppCoordinator: ObservableObject {
     }
 
     private var isHotkeyHeld = false
+    private var macroPadPressedAt: DispatchTime?
 
     private var errorDismissWork: DispatchWorkItem?
 
