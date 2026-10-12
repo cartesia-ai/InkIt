@@ -2,7 +2,8 @@ import Foundation
 import AVFoundation
 
 final class AudioCaptureService {
-    private let engine = AVAudioEngine()
+    private var engine: AVAudioEngine?
+    private var inputNode: AVAudioInputNode?
     private var converter: AudioPCMConverter?
     private var onChunk: ((Data) -> Void)?
     var onLevel: ((Float) -> Void)?
@@ -18,14 +19,21 @@ final class AudioCaptureService {
     var preferredDeviceUID: String?
 
     func start(onChunk: @escaping (Data) -> Void) throws {
-        guard !isRunning else { return }
+        guard !isRunning, engine == nil else { return }
         self.onChunk = onChunk
 
+        let engine = AVAudioEngine()
         let input = engine.inputNode
+        self.engine = engine
+        inputNode = input
 
         let pinnedID = preferredDeviceUID.flatMap { AudioDevices.deviceID(forUID: $0) }
         if let deviceID = pinnedID ?? AudioDevices.defaultInputDeviceID() {
-            try? input.auAudioUnit.setDeviceID(deviceID)
+            do {
+                try input.auAudioUnit.setDeviceID(deviceID)
+            } catch {
+                DebugLog.error("AudioCapture: device selection failed id=\(deviceID) error=\(error.localizedDescription)")
+            }
         }
 
         let inputFormat = input.inputFormat(forBus: 0)
@@ -36,12 +44,17 @@ final class AudioCaptureService {
             channels: 1,
             interleaved: true
         ) else {
+            tearDownEngine()
             throw NSError(domain: "InkIt", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: "Failed to build target audio format"])
         }
-        converter = AudioPCMConverter(input: inputFormat, output: targetFormat)
+        guard let converter = AudioPCMConverter(input: inputFormat, output: targetFormat) else {
+            tearDownEngine()
+            throw NSError(domain: "InkIt", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "Failed to build audio converter"])
+        }
+        self.converter = converter
 
-        input.removeTap(onBus: 0)
         input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
             guard let self else { return }
             let level = Self.peakLevel(buffer)
@@ -58,9 +71,19 @@ final class AudioCaptureService {
         }
 
         hasSignaledReady = false
-        engine.prepare()
-        try engine.start()
-        isRunning = true
+        do {
+            engine.prepare()
+            try engine.start()
+            isRunning = true
+            DebugLog.info(
+                "AudioCapture: started source=\(pinnedID == nil ? "default" : "pinned") "
+                + "device=\((pinnedID ?? AudioDevices.defaultInputDeviceID()).map(String.init) ?? "unknown") "
+                + "inputRate=\(Int(inputFormat.sampleRate)) inputChannels=\(inputFormat.channelCount)"
+            )
+        } catch {
+            tearDownEngine()
+            throw error
+        }
 
         let fallback = DispatchWorkItem { [weak self] in self?.signalReadyIfNeeded() }
         readyFallback = fallback
@@ -76,17 +99,30 @@ final class AudioCaptureService {
     }
 
     func stop() {
-        guard isRunning else { return }
+        guard engine != nil else { return }
         readyFallback?.cancel()
         readyFallback = nil
         hasSignaledReady = false
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
+        tearDownEngine()
+        DispatchQueue.main.async { [weak self] in self?.onLevel?(0) }
+    }
+
+    private func tearDownEngine() {
+        let engine = engine
+        let input = inputNode
+        isRunning = false
+
+        input?.removeTap(onBus: 0)
+        engine?.stop()
+        engine?.reset()
+
         queue.sync { }
         converter = nil
         onChunk = nil
-        isRunning = false
-        DispatchQueue.main.async { [weak self] in self?.onLevel?(0) }
+        inputNode = nil
+        self.engine = nil
+
+        DebugLog.info("AudioCapture: stopped and released engine")
     }
 
     private static func peakLevel(_ buffer: AVAudioPCMBuffer) -> Float {
