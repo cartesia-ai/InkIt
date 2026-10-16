@@ -140,7 +140,12 @@ protocol IssueReportSending {
 }
 
 final class HTTPIssueReportClient: NSObject, IssueReportSending, URLSessionTaskDelegate {
-    static let endpoint = URL(string: "https://inkit-reports.preview.cartesia.ai/api/reports")!
+    static let endpoint: URL? = {
+        guard let value = Bundle.main.object(forInfoDictionaryKey: "InkItReportsURL") as? String,
+              let url = URL(string: value.trimmingCharacters(in: .whitespaces)),
+              url.scheme == "https", url.host?.isEmpty == false else { return nil }
+        return url
+    }()
 
     private lazy var session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
@@ -149,8 +154,9 @@ final class HTTPIssueReportClient: NSObject, IssueReportSending, URLSessionTaskD
     }()
 
     func send(_ payload: IssueReportPayload, audio: URL) async throws {
+        guard let endpoint = Self.endpoint else { throw IssueReportError.rejected }
         let boundary = "inkit-\(UUID().uuidString)"
-        var request = URLRequest(url: Self.endpoint)
+        var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.setValue("cartesia-inkit/\(DeviceInfo.appVersion)", forHTTPHeaderField: "User-Agent")
@@ -177,7 +183,7 @@ final class HTTPIssueReportClient: NSObject, IssueReportSending, URLSessionTaskD
         }
         guard let status = (response as? HTTPURLResponse)?.statusCode else { throw IssueReportError.network }
         switch status {
-        case 200, 201: return
+        case 200..<300: return
         case 413: throw IssueReportError.tooLarge
         case 429: throw IssueReportError.rateLimited
         case 500...599: throw IssueReportError.network
@@ -194,6 +200,7 @@ final class HTTPIssueReportClient: NSObject, IssueReportSending, URLSessionTaskD
 
 enum IssueReporter {
     static let client: IssueReportSending = HTTPIssueReportClient()
+    static var isEnabled: Bool { HTTPIssueReportClient.endpoint != nil }
 
     static func submit(entry: TranscriptHistoryStore.Entry,
                        categories: Set<IssueCategory>,

@@ -57,6 +57,7 @@ targets:
         SUFeedURL: "https://github.com/cartesia-ai/InkIt/releases/latest/download/appcast.xml"
         SUPublicEDKey: "$(SPARKLE_PUBLIC_ED_KEY)"
         SUEnableAutomaticChecks: true
+        InkItReportsURL: "$(INKIT_REPORTS_URL)"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.cartesia.InkIt

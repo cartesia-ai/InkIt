@@ -8,7 +8,8 @@ final class ClipPlayer: ObservableObject {
     @Published private(set) var elapsed: TimeInterval = 0
     @Published private(set) var bars: [Float] = Array(repeating: 0.08, count: ClipPlayer.barCount)
     let duration: TimeInterval
-    private static let barCount = 56
+    var isAvailable: Bool { player != nil }
+    nonisolated private static let barCount = 56
 
     private let player: AVAudioPlayer?
     private var timer: Timer?
@@ -34,9 +35,11 @@ final class ClipPlayer: ObservableObject {
         } else {
             player.play()
             isPlaying = true
-            timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
                 Task { @MainActor in self?.tick() }
             }
+            RunLoop.main.add(timer, forMode: .common)
+            self.timer = timer
         }
     }
 
@@ -168,7 +171,9 @@ struct ReportIssueModal: View {
             VStack(alignment: .leading, spacing: 10) {
                 disclosure
                 if showDetails { detailsPanel }
-                if let errorMessage { errorBanner(errorMessage) }
+                if let message = errorMessage ?? (player.isAvailable ? nil : Self.missingClipMessage) {
+                    errorBanner(message)
+                }
                 HStack(spacing: 8) {
                     Spacer(minLength: 0)
                     Button("Cancel", action: close)
@@ -180,7 +185,7 @@ struct ReportIssueModal: View {
                             Text(primaryLabel)
                         }
                         .buttonStyle(InkButtonStyle(variant: .ink, compact: true))
-                        .disabled(phase == .sending || categories.isEmpty)
+                        .disabled(phase == .sending || categories.isEmpty || !player.isAvailable)
                         .modifier(PointingHandCursor())
                     }
                 }
@@ -212,6 +217,7 @@ struct ReportIssueModal: View {
                         .background(Circle().fill(Color("InkFill")))
                 }
                 .buttonStyle(.plain)
+                .disabled(!player.isAvailable)
                 .modifier(PointingHandCursor())
                 .accessibilityLabel(player.isPlaying ? "Pause recording" : "Play recording")
 
@@ -225,11 +231,15 @@ struct ReportIssueModal: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("Transcript")
-                    .font(.inkSectionHeader)
-                    .foregroundStyle(Color.inkSub)
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Transcript")
+                        .font(.inkSectionHeader)
+                        .foregroundStyle(Color.inkSub)
+                    Spacer(minLength: 8)
+                    if polishBefore != nil { DiffLegend() }
+                }
                 ScrollView {
-                    Text(entry.text)
+                    Text(transcript)
                         .font(.inkBody)
                         .foregroundStyle(Color.inkText)
                         .lineSpacing(3)
@@ -255,6 +265,18 @@ struct ReportIssueModal: View {
             RoundedRectangle(cornerRadius: Radius.well, style: .continuous)
                 .strokeBorder(Color.line, lineWidth: 1)
         )
+    }
+
+    private var polishBefore: String? {
+        guard entry.polish == .polished,
+              let raw = entry.diagnostics?.rawText ?? entry.original,
+              raw != entry.text else { return nil }
+        return raw
+    }
+
+    private var transcript: AttributedString {
+        guard let before = polishBefore else { return AttributedString(entry.text) }
+        return PolishDiff.attributed(from: before, to: entry.text)
     }
 
     private var waveform: some View {
@@ -316,7 +338,7 @@ struct ReportIssueModal: View {
         Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
             detailRow("Dictated", Self.dictatedFmt.string(from: entry.diagnostics?.startedAt ?? entry.timestamp))
             detailRow("App", entry.appName ?? "Unknown")
-            detailRow("Dictionary", dictionarySummary)
+            detailRow("Dictionary", dictionarySummary, wraps: true)
             detailRow("Microphone", micSummary)
             detailRow("Mac", "\(DeviceInfo.macModel) · macOS \(DeviceInfo.osVersion)")
             detailRow("InkIt", "\(DeviceInfo.appVersion) · \(entry.diagnostics?.model ?? "ink-2") model")
@@ -332,15 +354,16 @@ struct ReportIssueModal: View {
         .transition(.opacity)
     }
 
-    private func detailRow(_ label: String, _ value: String) -> some View {
-        GridRow {
+    private func detailRow(_ label: String, _ value: String, wraps: Bool = false) -> some View {
+        GridRow(alignment: .firstTextBaseline) {
             Text(label)
                 .foregroundStyle(Color.inkSub)
                 .frame(width: 96, alignment: .leading)
             Text(value)
                 .foregroundStyle(Color.inkText)
-                .lineLimit(1)
+                .lineLimit(wraps ? nil : 1)
                 .truncationMode(.tail)
+                .fixedSize(horizontal: false, vertical: wraps)
         }
     }
 
@@ -437,6 +460,9 @@ struct ReportIssueModal: View {
         case IssueReportError.tooLarge:
             errorMessage = "This recording is too long to send."
             canRetry = false
+        case ClipStoreError.missingClip:
+            errorMessage = Self.missingClipMessage
+            canRetry = false
         default:
             errorMessage = "Couldn’t send this report."
             canRetry = false
@@ -445,6 +471,7 @@ struct ReportIssueModal: View {
     }
 
     private static let transcriptMaxHeight: CGFloat = 126
+    private static let missingClipMessage = "The recording for this dictation is no longer available."
 
     private static func clock(_ t: TimeInterval) -> String {
         let s = Int(t.rounded(.down))

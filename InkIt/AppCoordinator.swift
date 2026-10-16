@@ -482,8 +482,8 @@ final class AppCoordinator: ObservableObject {
             recordingMs: recordingMs,
             diagnostics: diagnostics
         )
-        if let id, let pcm {
-            ClipStore.save(pcm: pcm, for: id, keeping: history.entries.map(\.id))
+        if let id, let pcm, IssueReporter.isEnabled {
+            ClipStore.save(pcm: pcm, for: id, keeping: ClipStore.retainedIDs(history.entries))
         }
     }
 

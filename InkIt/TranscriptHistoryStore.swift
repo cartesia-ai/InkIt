@@ -69,6 +69,7 @@ final class TranscriptHistoryStore: ObservableObject {
         migrateLegacyHistoryIfNeeded()
         loadEntries()
         loadLifetimeWords()
+        if isPersistent { ClipStore.prune(keeping: ClipStore.retainedIDs(entries)) }
     }
 
     @discardableResult
@@ -227,8 +228,12 @@ final class TranscriptRecord {
     var appBundleID: String?
     var wordCount: Int?
     var recordingMs: Int?
-    var diagnostics: DictationDiagnostics?
+    var diagnosticsData: Data?
     var reportedAt: Date?
+
+    var diagnostics: DictationDiagnostics? {
+        diagnosticsData.flatMap { try? JSONDecoder().decode(DictationDiagnostics.self, from: $0) }
+    }
 
     init(id: UUID,
          text: String,
@@ -254,7 +259,7 @@ final class TranscriptRecord {
         self.appBundleID = appBundleID
         self.wordCount = wordCount
         self.recordingMs = recordingMs
-        self.diagnostics = diagnostics
+        self.diagnosticsData = diagnostics.flatMap { try? JSONEncoder().encode($0) }
         self.reportedAt = reportedAt
     }
 

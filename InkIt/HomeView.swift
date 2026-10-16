@@ -49,12 +49,6 @@ struct HomeView: View {
         return f
     }()
 
-    private var reportableIDs: Set<UUID> {
-        Set(history.entries.prefix(ClipStore.keepCount)
-            .filter { $0.diagnostics?.clipMs != nil }
-            .map(\.id))
-    }
-
     private var filteredEntries: [TranscriptHistoryStore.Entry] {
         let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return history.entries }
@@ -226,7 +220,7 @@ struct HomeView: View {
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.top, 56)
         }
-        let reportable = reportableIDs
+        let reportable = IssueReporter.isEnabled ? ClipStore.reportableIDs(history.entries) : []
         ForEach(groupedEntries) { group in
             Section {
                 ForEach(Array(group.entries.enumerated()), id: \.element.id) { index, entry in

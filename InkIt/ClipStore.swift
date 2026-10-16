@@ -39,6 +39,8 @@ enum ClipStore {
     static let uploadLimitBytes = 4 * 1024 * 1024
     static let maxReportableMs = 180_000
     static let maxReportableBytes = maxReportableMs * sampleRate * 2 / 1000
+    static let minReportableMs = 250
+    static let maxAge: TimeInterval = 7 * 86_400 - 3_600
 
     private static let headerSize = 44
     private static let queue = DispatchQueue(label: "inkit.clips", qos: .utility)
@@ -60,19 +62,42 @@ enum ClipStore {
         bytes * 1000 / (sampleRate * 2)
     }
 
-    static func save(pcm: Data, for id: UUID, keeping ids: [UUID]) {
+    static func retainedIDs(_ entries: [TranscriptHistoryStore.Entry], now: Date = Date()) -> Set<UUID> {
+        let cutoff = now.addingTimeInterval(-maxAge)
+        return Set(entries.prefix(keepCount)
+            .filter { ($0.diagnostics?.startedAt ?? $0.timestamp) > cutoff }
+            .map(\.id))
+    }
+
+    static func reportableIDs(_ entries: [TranscriptHistoryStore.Entry], now: Date = Date()) -> Set<UUID> {
+        let retained = retainedIDs(entries, now: now)
+        return Set(entries.prefix(keepCount).filter { entry in
+            guard retained.contains(entry.id), let ms = entry.diagnostics?.clipMs else { return false }
+            return ms >= minReportableMs
+        }.map(\.id))
+    }
+
+    static func save(pcm: Data, for id: UUID, keeping ids: Set<UUID>) {
         guard !pcm.isEmpty else { return }
         queue.async {
             do {
-                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                var file = wavHeader(dataBytes: pcm.count)
-                file.append(pcm)
-                try file.write(to: url(for: id), options: .atomic)
-                prune(keeping: Set(ids.prefix(keepCount)))
+                try write(pcm: pcm, for: id)
+                removeClips(notIn: ids)
             } catch {
                 DebugLog.error("ClipStore: save failed — \(error)")
             }
         }
+    }
+
+    static func write(pcm: Data, for id: UUID) throws {
+        try prepareDirectory()
+        var file = wavHeader(dataBytes: pcm.count)
+        file.append(pcm)
+        try file.write(to: url(for: id), options: .atomic)
+    }
+
+    static func prune(keeping ids: Set<UUID>) {
+        queue.async { removeClips(notIn: ids) }
     }
 
     static func deleteAll() {
@@ -83,9 +108,10 @@ enum ClipStore {
 
     static func samples(for id: UUID) -> [Int16] {
         guard let data = try? Data(contentsOf: url(for: id)), data.count > headerSize else { return [] }
-        return data.dropFirst(headerSize).withUnsafeBytes { raw in
-            Array(raw.bindMemory(to: Int16.self))
-        }
+        let body = data.dropFirst(headerSize)
+        var samples = [Int16](repeating: 0, count: body.count / 2)
+        _ = samples.withUnsafeMutableBytes { body.copyBytes(to: $0) }
+        return samples
     }
 
     static func waveform(for id: UUID, bars: Int) -> [Float] {
@@ -109,8 +135,7 @@ enum ClipStore {
     static func encodeFLAC(for id: UUID) throws -> URL {
         let pcm = samples(for: id)
         guard !pcm.isEmpty else { throw ClipStoreError.missingClip }
-        let out = FileManager.default.temporaryDirectory.appendingPathComponent("\(id.uuidString).flac")
-        try? FileManager.default.removeItem(at: out)
+        let out = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).flac")
 
         var flac = AudioStreamBasicDescription(
             mSampleRate: Double(sampleRate), mFormatID: kAudioFormatFLAC,
@@ -143,7 +168,16 @@ enum ClipStore {
         return out
     }
 
-    private static func prune(keeping ids: Set<UUID>) {
+    private static func prepareDirectory() throws {
+        var dir = directory
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true,
+                                                attributes: [.posixPermissions: 0o700])
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? dir.setResourceValues(values)
+    }
+
+    private static func removeClips(notIn ids: Set<UUID>) {
         let names = Set(ids.map { "\($0.uuidString).wav" })
         guard let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else { return }
         for file in files where !names.contains(file.lastPathComponent) {

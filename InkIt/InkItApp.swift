@@ -977,27 +977,33 @@ private struct DiffPopover: View {
                 .textCase(.uppercase)
                 .foregroundStyle(.secondary)
 
-            Text(Self.diff(from: before, to: after))
+            Text(PolishDiff.attributed(from: before, to: after))
                 .font(.callout)
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(width: 280, alignment: .leading)
 
-            if changed {
-                HStack(spacing: 12) {
-                    Label("added", systemImage: "circle.fill")
-                        .foregroundStyle(Self.addColor)
-                    Label("removed", systemImage: "circle.fill")
-                        .foregroundStyle(.secondary)
-                }
-                .font(.caption2)
-                .labelStyle(DiffLegendLabelStyle())
-            }
+            if changed { DiffLegend() }
         }
         .padding(14)
         .frame(maxWidth: 308, alignment: .leading)
     }
+}
 
+struct DiffLegend: View {
+    var body: some View {
+        HStack(spacing: 12) {
+            Label("added", systemImage: "circle.fill")
+                .foregroundStyle(Color.diffAdd)
+            Label("removed", systemImage: "circle.fill")
+                .foregroundStyle(.secondary)
+        }
+        .font(.caption2)
+        .labelStyle(DiffLegendLabelStyle())
+    }
+}
+
+enum PolishDiff {
     private static let addColor = Color.diffAdd
 
     private enum Kind { case same, added, removed }
@@ -1012,7 +1018,7 @@ private struct DiffPopover: View {
         word.lowercased().filter { $0.isLetter || $0.isNumber }
     }
 
-    private static func diff(from before: String, to after: String) -> AttributedString {
+    static func attributed(from before: String, to after: String) -> AttributedString {
         let tokens = wordTokens(from: before, to: after)
         var result = AttributedString()
         for (i, token) in tokens.enumerated() {
