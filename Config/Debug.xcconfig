@@ -4,6 +4,7 @@
 // and tools/make-dmg.sh for the notarized Release path.
 
 #include "Sparkle.xcconfig"
+#include "Reports.xcconfig"
 
 CODE_SIGN_STYLE = Manual
 CODE_SIGN_IDENTITY = -

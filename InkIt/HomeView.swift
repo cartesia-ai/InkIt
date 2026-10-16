@@ -21,6 +21,7 @@ struct HomeView: View {
 
     let onOpenSettings: (SettingsView.Pane) -> Void
     let onRequestDeleteAll: () -> Void
+    let onReport: (TranscriptHistoryStore.Entry) -> Void
 
     @State private var copiedID: UUID?
     @State private var searchExpanded = false
@@ -219,6 +220,7 @@ struct HomeView: View {
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.top, 56)
         }
+        let reportable = IssueReporter.isEnabled ? ClipStore.reportableIDs(history.entries) : []
         ForEach(groupedEntries) { group in
             Section {
                 ForEach(Array(group.entries.enumerated()), id: \.element.id) { index, entry in
@@ -228,7 +230,7 @@ struct HomeView: View {
                             .frame(height: 1)
                             .padding(.horizontal, 8)
                     }
-                    transcriptRow(entry)
+                    transcriptRow(entry, reportable: reportable.contains(entry.id))
                 }
             } header: {
                 dayHeader(group.title)
@@ -450,7 +452,7 @@ struct HomeView: View {
         InsightsMath.averageWordsPerMinute(entries: history.entries).map(String.init) ?? "—"
     }
 
-    private func transcriptRow(_ entry: TranscriptHistoryStore.Entry) -> some View {
+    private func transcriptRow(_ entry: TranscriptHistoryStore.Entry, reportable: Bool) -> some View {
         TranscriptHistoryRow(
             text: entry.text,
             timestamp: Self.timeFmt.string(from: entry.timestamp),
@@ -459,7 +461,10 @@ struct HomeView: View {
             polish: entry.polish,
             failure: entry.failure,
             appName: entry.appName,
-            copied: copiedID == entry.id
+            copied: copiedID == entry.id,
+            reportable: reportable,
+            reported: entry.reportedAt != nil,
+            report: { onReport(entry) }
         ) {
             copy(entry)
         }

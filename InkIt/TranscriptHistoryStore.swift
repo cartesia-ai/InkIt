@@ -45,6 +45,8 @@ final class TranscriptHistoryStore: ObservableObject {
         var appBundleID: String?
         var wordCount: Int?
         var recordingMs: Int?
+        var diagnostics: DictationDiagnostics?
+        var reportedAt: Date?
     }
 
     static let shared = TranscriptHistoryStore()
@@ -67,18 +69,21 @@ final class TranscriptHistoryStore: ObservableObject {
         migrateLegacyHistoryIfNeeded()
         loadEntries()
         loadLifetimeWords()
+        if isPersistent { ClipStore.prune(keeping: ClipStore.retainedIDs(entries)) }
     }
 
+    @discardableResult
     func add(_ text: String, original: String? = nil, latency: Latency? = nil,
              polish: PolishOutcome? = nil, failure: PolishFailure? = nil,
              appName: String? = nil, appBundleID: String? = nil,
-             recordingMs: Int? = nil) {
+             recordingMs: Int? = nil, diagnostics: DictationDiagnostics? = nil) -> UUID? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty else { return nil }
         let entry = Entry(text: trimmed, timestamp: Date(), latency: latency,
                           original: original, polish: polish, failure: failure,
                           appName: appName, appBundleID: appBundleID,
-                          wordCount: Self.wordCount(trimmed), recordingMs: recordingMs)
+                          wordCount: Self.wordCount(trimmed), recordingMs: recordingMs,
+                          diagnostics: diagnostics)
         context.insert(TranscriptRecord(entry: entry))
         let saved = saveContext()
         entries.insert(entry, at: 0)
@@ -93,6 +98,19 @@ final class TranscriptHistoryStore: ObservableObject {
                                               fillersRemoved: fillers,
                                               on: entry.timestamp)
         }
+        return entry.id
+    }
+
+    func markReported(_ id: UUID) {
+        guard let index = entries.firstIndex(where: { $0.id == id }) else { return }
+        let now = Date()
+        var descriptor = FetchDescriptor<TranscriptRecord>(predicate: #Predicate { $0.id == id })
+        descriptor.fetchLimit = 1
+        if let record = try? context.fetch(descriptor).first {
+            record.reportedAt = now
+            saveContext()
+        }
+        entries[index].reportedAt = now
     }
 
     nonisolated static func wordCount(_ text: String) -> Int {
@@ -108,6 +126,7 @@ final class TranscriptHistoryStore: ObservableObject {
         }
         guard saveContext() else { return }
         entries.removeAll()
+        ClipStore.deleteAll()
     }
 
     private static func makeContainer() -> (container: ModelContainer, isPersistent: Bool) {
@@ -209,6 +228,12 @@ final class TranscriptRecord {
     var appBundleID: String?
     var wordCount: Int?
     var recordingMs: Int?
+    var diagnosticsData: Data?
+    var reportedAt: Date?
+
+    var diagnostics: DictationDiagnostics? {
+        diagnosticsData.flatMap { try? JSONDecoder().decode(DictationDiagnostics.self, from: $0) }
+    }
 
     init(id: UUID,
          text: String,
@@ -220,7 +245,9 @@ final class TranscriptRecord {
          appName: String? = nil,
          appBundleID: String? = nil,
          wordCount: Int? = nil,
-         recordingMs: Int? = nil) {
+         recordingMs: Int? = nil,
+         diagnostics: DictationDiagnostics? = nil,
+         reportedAt: Date? = nil) {
         self.id = id
         self.text = text
         self.timestamp = timestamp
@@ -232,6 +259,8 @@ final class TranscriptRecord {
         self.appBundleID = appBundleID
         self.wordCount = wordCount
         self.recordingMs = recordingMs
+        self.diagnosticsData = diagnostics.flatMap { try? JSONEncoder().encode($0) }
+        self.reportedAt = reportedAt
     }
 
     convenience init(entry: TranscriptHistoryStore.Entry) {
@@ -239,7 +268,8 @@ final class TranscriptRecord {
                   latency: entry.latency, original: entry.original,
                   polish: entry.polish, failure: entry.failure,
                   appName: entry.appName, appBundleID: entry.appBundleID,
-                  wordCount: entry.wordCount, recordingMs: entry.recordingMs)
+                  wordCount: entry.wordCount, recordingMs: entry.recordingMs,
+                  diagnostics: entry.diagnostics, reportedAt: entry.reportedAt)
     }
 
     func toEntry() -> TranscriptHistoryStore.Entry {
@@ -247,6 +277,7 @@ final class TranscriptRecord {
                                      latency: latency, original: original,
                                      polish: polish, failure: failure,
                                      appName: appName, appBundleID: appBundleID,
-                                     wordCount: wordCount, recordingMs: recordingMs)
+                                     wordCount: wordCount, recordingMs: recordingMs,
+                                     diagnostics: diagnostics, reportedAt: reportedAt)
     }
 }
