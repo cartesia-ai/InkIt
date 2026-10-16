@@ -59,6 +59,7 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
     private let apiKey: String
     private let keyterms: [String]
     private let model = "ink-2"
+    var modelName: String { model }
     private let cartesiaVersion = "2026-03-01"
     private let sampleRate = 16_000
 
@@ -75,6 +76,12 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
     private var closeRequestedAt: Date?
 
     private var isConnected = false
+    private var serverRequestID: String?
+    var requestID: String? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return serverRequestID
+    }
     private var pendingAudio: [Data] = []
     private var pendingClose = false
     var awaitingClose = false
@@ -224,6 +231,12 @@ final class CartesiaStreamingClient: NSObject, URLSessionWebSocketDelegate {
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let type = json["type"] as? String else {
             return
+        }
+
+        if let id = json["request_id"] as? String, !id.isEmpty {
+            stateLock.lock()
+            if serverRequestID == nil { serverRequestID = id }
+            stateLock.unlock()
         }
 
         switch type {

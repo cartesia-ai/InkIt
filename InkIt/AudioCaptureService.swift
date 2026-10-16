@@ -71,6 +71,9 @@ final class AudioCaptureService {
     private var workspaceObservers: [NSObjectProtocol] = []
     private var appObservers: [NSObjectProtocol] = []
 
+    var activeInput: (deviceID: AudioDeviceID, sampleRate: Double)? {
+        inputUnit.map { ($0.deviceID, $0.format.sampleRate) }
+    }
 
     var preferredDeviceUID: String? {
         didSet {
